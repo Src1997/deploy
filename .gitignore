@@ -1,6 +1,5 @@
-# 构建产物
-dist/packages/
-dist/financial-api-*.tar.gz
+# 构建产物（dist/ 下全部由 build.ps1 生成，源文件在 scripts/ 和 configs/）
+dist/
 
 # 本地/服务器真实密码（禁止提交）
 deploy.env

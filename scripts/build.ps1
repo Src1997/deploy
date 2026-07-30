@@ -92,8 +92,8 @@ function Build-ProjectList {
 
 # ── 构建单个项目 ──
 function Build-One([string]$name) {
-    $proj = $ProjectList | Where-Object { $_.Name -eq $name }
-    if (-not $proj) { W-Err "Unknown project: $name (not in projects.json)"; return $false }
+    $proj = @($ProjectList | Where-Object { $_.Name -eq $name })
+    if ($proj.Count -eq 0) { W-Err "Unknown project: $name (not in projects.json)"; return $false }
 
     $p = $proj[0]
     W-Step "Build: $($p.Name) ($($p.Desc))..."

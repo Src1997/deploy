@@ -100,10 +100,11 @@ $codeRoot = if ($usePackagePrefix) {
 }
 New-Item -ItemType Directory -Path $codeRoot -Force | Out-Null
 
-# 源码 → codeRoot（排除运行时目录）
+# 源码 → codeRoot（排除运行时目录和敏感文件）
+# /XD 排除目录，/XF 排除文件 — .env 是文件不是目录，必须用 /XF 排除
 robocopy $SourceDir $codeRoot /E `
-    /XD .env .venv venv logs __pycache__ .git node_modules `
-    /XF *.pyc `
+    /XD .venv venv logs __pycache__ .git node_modules `
+    /XF *.pyc .env `
     /NFL /NDL /NJH /NJS /NC /NS 2>$null | Out-Null
 if ($LASTEXITCODE -gt 7) {
     Write-Error "robocopy failed (exit $LASTEXITCODE)"

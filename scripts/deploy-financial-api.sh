@@ -350,12 +350,32 @@ if $DO_EXTRACT; then
     # ── Sync code to PKG_DIR if we found a source ──
     if [[ -n "$SRC_DIR" && -d "$SRC_DIR" ]]; then
         mkdir -p "$PKG_DIR"
+
+        # 备份生产 .env（cp -a 可能用包内 .env 覆盖它）
+        local env_preserve=""
+        if [[ -f "$ENV_FILE" ]]; then
+            env_preserve=$(mktemp)
+            cp "$ENV_FILE" "$env_preserve"
+        fi
+
         # Remove old code (preserve .env, .venv, logs/)
         find "$PKG_DIR" -mindepth 1 -maxdepth 1 \
             ! -name '.env' ! -name '.venv' ! -name 'logs' \
             -exec rm -rf {} + 2>/dev/null || true
+
+        # 删除包内可能携带的 .env（防止开发者本地 .env 污染生产）
+        rm -f "${SRC_DIR}/.env" 2>/dev/null || true
+
         # Copy new code
         cp -a "${SRC_DIR%/}/." "$PKG_DIR/"
+
+        # 恢复生产 .env
+        if [[ -n "$env_preserve" ]]; then
+            cp "$env_preserve" "$ENV_FILE"
+            rm -f "$env_preserve"
+            ok ".env 已保护（未被包内文件覆盖）"
+        fi
+
         # Clean runtime artifacts（扩大清理范围：含 alembic/versions/__pycache__）
         find "$PKG_DIR" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
         find "$PKG_DIR" -type f -name '*.pyc' -delete 2>/dev/null || true
@@ -444,6 +464,8 @@ fi
 
 # ── 2.5 .env 增量同步（补缺失的 env var）───────────────────────────────
 # 对比 .env.example 的 key 列表，将 .env 中缺失的 key 追加（用 example 的默认值）
+# 安全保证：只追加 .env 中确实不存在的 key，绝不覆盖已有值
+# 跳过含 __PLACEHOLDER__ 的值（如 __PG_PASSWORD__），这些只在首次生成时由 sed 渲染
 sync_env() {
     local example="$PKG_DIR/.env.example"
     local env_file="$ENV_FILE"
@@ -451,12 +473,18 @@ sync_env() {
         return
     fi
     local missing=()
+    local skipped_placeholder=0
     while IFS='=' read -r key val; do
         # 跳过注释、空行
         [[ "$key" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$key" ]] && continue
         key=$(echo "$key" | xargs)  # trim
-        # 检查 .env 中是否有此 key
+        # 跳过含占位符的值（如 __PG_PASSWORD__），追加无意义
+        if [[ "$val" =~ __[A-Z_]+__ ]]; then
+            skipped_placeholder=$((skipped_placeholder + 1))
+            continue
+        fi
+        # 检查 .env 中是否有此 key（精确匹配行首 KEY=）
         if ! grep -q "^${key}=" "$env_file" 2>/dev/null; then
             missing+=("$key=$val")
         fi
@@ -472,6 +500,9 @@ sync_env() {
         ok ".env 已补充 ${#missing[@]} 个缺失变量"
     else
         ok ".env 变量完整，无需同步"
+    fi
+    if [ $skipped_placeholder -gt 0 ]; then
+        warn ".env.example 中有 ${skipped_placeholder} 个变量仍含占位符（如 __PG_PASSWORD__），已跳过；如需补充请手动设置"
     fi
 }
 

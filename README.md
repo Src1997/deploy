@@ -1,20 +1,35 @@
 # 多项目宝塔部署指南
 
-> 从零开始：**先清理 Docker** → 安装宝塔面板 → 宝塔原生部署四个项目。
->
-> 参考现有 Docker 部署配置 `financial-api/deploy/docker/`，精准清理所有 Docker 资源后，全量切换到宝塔 systemd + Nginx 方案。
+> 从零：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`projects.yaml`）→ systemd + Nginx。  
+> 本地 Windows 构建，服务器 Ubuntu/宝塔运行。**密码只放 `deploy.env`，禁止写进脚本或本文。**
+
+## 文档怎么读
+
+| 你想… | 看哪一节 |
+|--------|----------|
+| 了解有哪些站、怎么路由 | [项目概览](#项目概览) |
+| 加项目 / 换工作区根 | [仓库结构与项目清单](#仓库结构与项目清单ssot) |
+| 配密码、连库 | [密钥与连接](#密钥与连接deployenv) |
+| **第一次**装服务器 | [完整部署步骤](#完整部署步骤从零开始) |
+| **以后**发版 / 回滚 | [增量发版](#增量发版首次全量部署后) · [回滚](#回滚) |
+| 查日志、重启、备份 | [日常运维](#日常运维) |
+| 本机连远程库开发 | [远程开发](#远程开发) |
+| 报错对照 | [常见问题](#常见问题) · [附录排障记录](#附录部署排障记录历史) |
 
 ---
 
 ## 项目概览
 
-| 项目 | 本地路径 | 服务器路径 | 端口 | 类型 |
-|------|---------|-----------|------|------|
-| financial-api | `financial/financial-api` | `/www/wwwroot/project/financial/financial-api/package` | 5001 | FastAPI 后端 (systemd) |
-| financial-web | `financial/financial-web` | `/www/wwwroot/project/financial/financial-web/dist` | — | Vue 3 静态站点 |
-| official-site | `official-site` | `/www/wwwroot/project/official-site/dist` | — | Vue 3 静态站点 |
-| QuantDinger 后端 | `deep/deepquant/backend_api_python` | `/www/wwwroot/project/deepquant/backend/package` | 5000 | Flask 后端 (systemd) |
-| QuantDinger 前端 | `deep/deepquant_vue` | `/www/wwwroot/project/deepquant/web/dist` | — | Vue 2 静态站点 |
+| 项目 ID | 本地路径 (`sourcePath`) | 服务器路径 (`deployPath`) | 端口 | 类型 |
+|---------|-------------------------|---------------------------|------|------|
+| `financial-web` | `financial/financial-web` | `financial/financial-web/dist` | — | Vue 3 静态 |
+| `financial-api` | `financial/financial-api` | `financial/financial-api/package` | 5001 | FastAPI (systemd) |
+| `official-site` | `official-site` | `official-site/dist` | — | Vue 3 静态 |
+| `deepquant-web` | `deepquant/deepquant_vue` | `deepquant/web/dist` | — | Vue 2 静态 |
+| `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask (systemd) |
+
+> 服务器绝对路径 = `PROJECT_BASE`（默认 `/www/wwwroot/project`）+ `deployPath`。  
+> 清单 SSOT：`projects.yaml` → `python3 scripts/sync-projects.py` → `projects.json`。
 
 ## URL 路由
 
@@ -44,10 +59,147 @@ official-site (/qd/) ────→  QuantDinger 前端 (/quant/) [启动应用
 
 | 服务 | 数据库 | Redis |
 |------|--------|-------|
-| financial-api | `quant_zc` (user: root) | 共享实例，key 前缀 `fin_*` |
-| QuantDinger | `quantdinger` (user: root) | 共享实例，自身前缀 |
+| financial-api | `quant_zc`（用户见 `deploy.env`） | 共享实例，key 前缀 `fin_*` |
+| QuantDinger | `quantdinger` | 共享实例，自身前缀 |
 
-> 两个后端共享宝塔管理的 PostgreSQL 和 Redis 实例，通过不同数据库隔离。
+> 两后端共用宝塔 PostgreSQL / Redis，用不同库隔离。密码只写在 `deploy.env`，详见下文「密钥与连接」。
+
+## 仓库结构与项目清单（SSOT）
+
+> 构建 / 部署以 `projects.yaml`（人改）+ `projects.json`（机器读）为准，**不要**再往 `build.ps1` / `deploy.sh` 里写死项目路径。
+
+> 项目清单是 `projects.yaml`（人类编辑源）+ `projects.json`（机器读取源），所有构建/部署脚本从清单读取项目路径、产物名、服务名等。
+
+### 文件结构
+
+```
+deploy/
+├── projects.yaml        # 人类编辑源（可读性好）
+├── projects.json         # 机器读取源（build.ps1 / deploy.sh 加载）
+└── scripts/
+    ├── sync-projects.py  # yaml → json 同步脚本（需 Python3，WSL 或服务器）
+    ├── lib/
+    │   ├── load-projects.ps1   # PowerShell 加载器
+    │   ├── load-projects.sh    # Bash 加载器
+    │   ├── _probe-projects.ps1 # 验证脚本
+    │   └── _probe-projects.sh  # 验证脚本（WSL）
+    └── pack-generic.ps1        # 通用后端打包器（参数化，不写死路径）
+```
+
+### 登记新项目
+
+1. 在工作区放好源码
+2. 编辑 `projects.yaml` 增加一条 `id` + `sourcePath` + `deployPath` + build/deploy 字段
+3. 同步：`python3 scripts/sync-projects.py`（WSL）或手动编辑 `projects.json`
+4. 前端：确保有 `pnpm build`；后端：按需补 `deployHook` / systemd
+5. `.\scripts\build.ps1 {id}` → 上传 → `bash deploy.sh {id}`
+
+### 换工作区根目录
+
+```bash
+# 方式一：环境变量（临时）
+export WORKSPACE_ROOT=/path/to/new/workspace
+.\scripts\build.ps1 discover   # 验证路径是否正确
+
+# 方式二：deploy.env
+WORKSPACE_ROOT=/path/to/new/workspace
+```
+
+### 扫描未登记项目
+
+```powershell
+.\scripts\build.ps1 discover
+# 报告工作区存在但未登记到 projects.json 的项目目录
+```
+
+### 解析优先级
+
+```
+WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
+PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
+```
+
+---
+
+### 仓库文件树
+
+```
+deploy/
+├── README.md                         # 本文档
+├── projects.yaml                    # 项目清单 SSOT（人类编辑源）
+├── projects.json                    # 项目清单 SSOT（机器读取源）
+├── scripts/                          # 所有执行脚本
+│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理 + 系统冲突
+│   ├── 01b-baota-exclusive.sh        # 冲突清理实现
+│   ├── detect-status.sh              # 探测各阶段是否已完成
+│   ├── 01-install-baota.sh           # 服务器 SSH：安装宝塔面板
+│   ├── 02-server-setup.sh            # 服务器 SSH：创建数据库、目录结构
+│   ├── build.ps1                     # Windows 本地：从 projects.json 加载 + 构建
+│   ├── pack-generic.ps1              # 通用后端打包器（参数化，读清单）
+│   ├── pack-financial-api.ps1        # financial-api 打包（薄封装 → pack-generic）
+│   ├── pack-financial-api.sh          # Linux/macOS：financial-api 打包
+│   ├── deploy-financial-api.sh        # 服务器：financial-api 一键部署
+│   ├── sync-projects.py              # yaml → json 同步脚本（需 Python3）
+│   ├── deploy.sh                     # 服务器：部署 + 回滚（从 projects.json 加载）
+│   └── lib/                          # 共享库
+│       ├── load-deploy-env.sh        # deploy.env 加载器
+│       ├── load-projects.ps1         # PowerShell 项目清单加载器
+│       ├── load-projects.sh          # Bash 项目清单加载器
+│       ├── _probe-projects.ps1       # 验证脚本（PowerShell）
+│       └── _probe-projects.sh        # 验证脚本（WSL）
+├── configs/                          # 所有配置文件
+│   ├── nginx-all-sites.conf          # Nginx 站点配置（无 SSL，IP 部署 / 服务器 A 旧）
+│   ├── nginx-all-sites-ssl.conf      # Nginx 站点配置（SSL，服务器 B www.deepquant.club）
+│   ├── nginx-servera-ssl.conf        # Nginx 站点配置（SSL，服务器 A www.zhuochouacedemy.com）
+│   ├── deepquant.env.example         # QuantDinger 后端 .env 模板
+│   ├── official-site.env             # official-site 构建环境变量
+│   ├── quantdinger-backend.service   # QuantDinger systemd 服务文件
+│   └── systemd/                      # financial-api systemd 服务文件
+│       ├── financial-api.service
+│       ├── financial-crawler.service
+│       ├── financial-worker.service
+│       └── financial-streaming.service
+└── dist/                             # 构建产出（上传到服务器）
+    ├── packages/                     # 构建产物（tar.gz）
+    └── configs/                      # 服务器端配置文件
+```
+
+> 各项目内不再维护 deploy/ 目录和 Docker 配置，所有部署相关文件集中在此目录。
+
+## 密钥与连接（deploy.env）
+
+密码**不写在 README**。统一写在 `deploy.env`（由 `deploy.env.example` 复制）。
+
+### PostgreSQL
+
+| 项目 | 值 |
+|------|-----|
+| 主机 | `localhost`（服务器内，勿对公网开放 5432） |
+| 端口 | `5432`（或 `PG_PORT`） |
+| 用户名 | `PG_USER`（默认 `root`） |
+| 密码 | `PG_PASSWORD`（见 `deploy.env`） |
+
+| 数据库 | 用途 |
+|--------|------|
+| `quant_zc` | financial-api（行情/社区） |
+| `quantdinger` | QuantDinger（交易系统） |
+
+### Redis
+
+| 项目 | 值 |
+|------|-----|
+| 主机 | `localhost`（勿对公网开放 6379） |
+| 端口 | `6379` |
+| 密码 | `REDIS_PASSWORD`（见 `deploy.env`） |
+
+### 配置文件位置
+
+| 文件 | 路径 / 说明 |
+|------|-------------|
+| 部署总配置 | `deploy/deploy.env`（本地）或 `/www/wwwroot/project/deploy.env`（服务器） |
+| 模板 | `deploy.env.example`、`configs/financial-api.env.example`、`configs/deepquant.env.example` |
+| financial-api 运行时 | `$PROJECT_BASE/financial/financial-api/package/.env`（首次由脚本渲染） |
+| QuantDinger 运行时 | `$PROJECT_BASE/deepquant/backend/package/.env`（首次由脚本渲染） |
 
 ---
 
@@ -310,7 +462,6 @@ bash deploy.sh --nginx
 > - 服务器 B：`NGINX_CONF_NAME=nginx-all-sites-ssl.conf`
 > - IP 部署（无 SSL）：留空或 `NGINX_CONF_NAME=nginx-all-sites.conf`
 
-
 **方式二：手动操作**
 
 如果未使用 `--nginx`，手动操作：
@@ -505,207 +656,6 @@ nginx -t
 
 ---
 
-## 常见问题
-
-### Q: 宝塔面板忘记密码
-
-```bash
-bt 5     # 重置面板密码
-bt 14    # 查看面板默认信息
-bt default  # 查看面板登录信息
-```
-
-### Q: Nginx 报 502 Bad Gateway
-
-```bash
-# 检查后端服务是否运行
-systemctl status financial-api
-systemctl status quantdinger-backend
-
-# 检查端口监听
-ss -tlnp | grep -E '5000|5001'
-
-# 查看后端日志
-journalctl -u financial-api -n 50 --no-pager
-journalctl -u quantdinger-backend -n 50 --no-pager
-```
-
-### Q: financial-web 跳转 official-site 404
-
-检查数据库配置：
-```bash
-PGPASSWORD='root1.0' psql -U root -d quant_zc -c \
-  "SELECT config_value FROM fin_app_configs WHERE namespace='links' AND config_key='deepquant';"
-```
-
-预期结果：`{"siteUrl": "/qd", "appBaseUrl": "/quant"}`
-
-如不正确，执行：
-```bash
-PGPASSWORD='root1.0' psql -U root -d quant_zc -c \
-  "UPDATE fin_app_configs SET config_value='{\"siteUrl\":\"/qd\",\"appBaseUrl\":\"/quant\"}'::jsonb WHERE namespace='links' AND config_key='deepquant';"
-```
-
-### Q: WebSocket 连接失败
-
-确保 Nginx 的 `/api/ws` location 在 `/api/` 之前（最长前缀匹配）：
-```nginx
-location ^~ /api/ws { ... }  # 必须在前
-location ^~ /api/ { ... }   # 在后
-```
-
-### Q: 更换域名时需要做什么
-
-> 本项目已配置化，只需改 `deploy.env` 然后重新部署即可。
-
-1. **deploy.env**：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
-2. **DNS**：在域名商处将裸域和 www 的 A 记录指向服务器 IP
-3. **SSL 证书**：按 [Phase 7b](#phase-7b-ssl-证书--宝塔邮局申请域名部署) 流程申请
-4. **Nginx**：`deploy.env` 设 `NGINX_CONF_NAME=nginx-servera-ssl.conf`，执行 `bash deploy.sh --nginx`（自动渲染 `__DOMAIN__` / `__WWW_DOMAIN__` 占位符）
-5. **financial-api**：执行 `bash deploy.sh financial-api`（自动渲染 `CORS_ORIGINS` / `SMTP` 占位符）
-6. **QuantDinger**：执行 `bash deploy.sh deepquant-backend`（自动渲染 `__FRONTEND_URL__`）
-7. **邮局**：按 [Phase 7b 步骤 3](#3-配置宝塔邮局) 配置宝塔邮局 + DNS 记录
-8. **重启**：`systemctl restart financial-api quantdinger-backend` + `nginx -s reload`
-
----
-
-## 项目清单与换工作区（projects.yaml SSOT）
-
-> 项目清单是 `projects.yaml`（人类编辑源）+ `projects.json`（机器读取源），所有构建/部署脚本从清单读取项目路径、产物名、服务名等。
-
-### 文件结构
-
-```
-deploy/
-├── projects.yaml        # 人类编辑源（可读性好）
-├── projects.json         # 机器读取源（build.ps1 / deploy.sh 加载）
-└── scripts/
-    ├── sync-projects.py  # yaml → json 同步脚本（需 Python3，WSL 或服务器）
-    ├── lib/
-    │   ├── load-projects.ps1   # PowerShell 加载器
-    │   ├── load-projects.sh    # Bash 加载器
-    │   ├── _probe-projects.ps1 # 验证脚本
-    │   └── _probe-projects.sh  # 验证脚本（WSL）
-    └── pack-generic.ps1        # 通用后端打包器（参数化，不写死路径）
-```
-
-### 登记新项目
-
-1. 在工作区放好源码
-2. 编辑 `projects.yaml` 增加一条 `id` + `sourcePath` + `deployPath` + build/deploy 字段
-3. 同步：`python3 scripts/sync-projects.py`（WSL）或手动编辑 `projects.json`
-4. 前端：确保有 `pnpm build`；后端：按需补 `deployHook` / systemd
-5. `.\scripts\build.ps1 {id}` → 上传 → `bash deploy.sh {id}`
-
-### 换工作区根目录
-
-```bash
-# 方式一：环境变量（临时）
-export WORKSPACE_ROOT=/path/to/new/workspace
-.\scripts\build.ps1 discover   # 验证路径是否正确
-
-# 方式二：deploy.env
-WORKSPACE_ROOT=/path/to/new/workspace
-```
-
-### 扫描未登记项目
-
-```powershell
-.\scripts\build.ps1 discover
-# 报告工作区存在但未登记到 projects.json 的项目目录
-```
-
-### 解析优先级
-
-```
-WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
-PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
-```
-
----
-
-## 文件清单
-
-```
-deploy/
-├── README.md                         # 本文档
-├── projects.yaml                    # 项目清单 SSOT（人类编辑源）
-├── projects.json                    # 项目清单 SSOT（机器读取源）
-├── scripts/                          # 所有执行脚本
-│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理 + 系统冲突
-│   ├── 01b-baota-exclusive.sh        # 冲突清理实现
-│   ├── detect-status.sh              # 探测各阶段是否已完成
-│   ├── 01-install-baota.sh           # 服务器 SSH：安装宝塔面板
-│   ├── 02-server-setup.sh            # 服务器 SSH：创建数据库、目录结构
-│   ├── build.ps1                     # Windows 本地：从 projects.json 加载 + 构建
-│   ├── pack-generic.ps1              # 通用后端打包器（参数化，读清单）
-│   ├── pack-financial-api.ps1        # financial-api 打包（薄封装 → pack-generic）
-│   ├── pack-financial-api.sh          # Linux/macOS：financial-api 打包
-│   ├── deploy-financial-api.sh        # 服务器：financial-api 一键部署
-│   ├── sync-projects.py              # yaml → json 同步脚本（需 Python3）
-│   ├── deploy.sh                     # 服务器：部署 + 回滚（从 projects.json 加载）
-│   └── lib/                          # 共享库
-│       ├── load-deploy-env.sh        # deploy.env 加载器
-│       ├── load-projects.ps1         # PowerShell 项目清单加载器
-│       ├── load-projects.sh          # Bash 项目清单加载器
-│       ├── _probe-projects.ps1       # 验证脚本（PowerShell）
-│       └── _probe-projects.sh        # 验证脚本（WSL）
-├── configs/                          # 所有配置文件
-│   ├── nginx-all-sites.conf          # Nginx 站点配置（无 SSL，IP 部署 / 服务器 A 旧）
-│   ├── nginx-all-sites-ssl.conf      # Nginx 站点配置（SSL，服务器 B www.deepquant.club）
-│   ├── nginx-servera-ssl.conf        # Nginx 站点配置（SSL，服务器 A www.zhuochouacedemy.com）
-│   ├── deepquant.env.example         # QuantDinger 后端 .env 模板
-│   ├── official-site.env             # official-site 构建环境变量
-│   ├── quantdinger-backend.service   # QuantDinger systemd 服务文件
-│   └── systemd/                      # financial-api systemd 服务文件
-│       ├── financial-api.service
-│       ├── financial-crawler.service
-│       ├── financial-worker.service
-│       └── financial-streaming.service
-└── dist/                             # 构建产出（上传到服务器）
-    ├── packages/                     # 构建产物（tar.gz）
-    └── configs/                      # 服务器端配置文件
-```
-
-> 各项目内不再维护 deploy/ 目录和 Docker 配置，所有部署相关文件集中在此目录。
-
-## 数据库与 Redis 连接信息
-
-密码**不写在 README**。统一写在 `deploy.env`（由 `deploy.env.example` 复制）。
-
-### PostgreSQL
-
-| 项目 | 值 |
-|------|-----|
-| 主机 | `localhost`（服务器内，勿对公网开放 5432） |
-| 端口 | `5432`（或 `PG_PORT`） |
-| 用户名 | `PG_USER`（默认 `root`） |
-| 密码 | `PG_PASSWORD`（见 `deploy.env`） |
-
-| 数据库 | 用途 |
-|--------|------|
-| `quant_zc` | financial-api（行情/社区） |
-| `quantdinger` | QuantDinger（交易系统） |
-
-### Redis
-
-| 项目 | 值 |
-|------|-----|
-| 主机 | `localhost`（勿对公网开放 6379） |
-| 端口 | `6379` |
-| 密码 | `REDIS_PASSWORD`（见 `deploy.env`） |
-
-### 配置文件位置
-
-| 文件 | 路径 / 说明 |
-|------|-------------|
-| 部署总配置 | `deploy/deploy.env`（本地）或 `/www/wwwroot/project/deploy.env`（服务器） |
-| 模板 | `deploy.env.example`、`configs/financial-api.env.example`、`configs/deepquant.env.example` |
-| financial-api 运行时 | `$PROJECT_BASE/financial/financial-api/package/.env`（首次由脚本渲染） |
-| QuantDinger 运行时 | `$PROJECT_BASE/deepquant/backend/package/.env`（首次由脚本渲染） |
-
----
-
 ## 增量发版（首次全量部署后）
 
 首次部署使用 `build.ps1 all` + `deploy.sh all` 全量构建和部署。
@@ -716,62 +666,36 @@ deploy/
 | 项目名 | 说明 | 构建方式 | 重启服务 |
 |--------|------|----------|----------|
 | `financial-web` | 行情/社区前端 | pnpm build | nginx reload |
-| `financial-api` | FastAPI 后端 | pack.ps1 | financial-api + crawler + worker + streaming |
+| `financial-api` | FastAPI 后端 | `pack-generic.ps1` | financial-api + crawler + worker + streaming |
 | `official-site` | 卓筹介绍站 | pnpm build | nginx reload |
 | `deepquant-web` | QuantDinger 前端 | pnpm build | nginx reload |
-| `deepquant-backend` | QuantDinger 后端 | tar 打包 | quantdinger-backend |
+| `deepquant-backend` | QuantDinger 后端 | `pack-generic` / source-tar | quantdinger-backend |
 
 ### 发版流程（三步）
 
 #### Step 1: 本地构建打包
 
-`build.ps1` 启动时自动扫描 `D:\Workspace` 下的项目，按名称排序展示：
-
-```text
-[OK] Found 8 projects:
-    financial-api      (Python 后端 (uv))
-    financial-admin    (前端)
-    financial-web      (前端)
-    deepquant-backend  (Python 后端 (pip))
-    deepquant-web      (前端)
-    ...
-
-  含子模块（不可独立部署，随父项目打包）:
-    mcp_server  (子模块 (Python, 属 deepquant))
-```
-
-**项目发现规则**：
-
-| 标志文件 | 类型 | 打包方式 |
-|---|---|---|
-| `package.json` + `scripts.build` | 前端 | `pnpm build` → `{name}-dist.tar.gz` |
-| `pyproject.toml` + `scripts/pack-{name}.ps1` | 后端 (uv) | 调用对应 pack 脚本 |
-| `requirements.txt` | 后端 (pip) | `tar -czf` → `{name}-package.tar.gz` |
-| `pyproject.toml` 无对应 pack 脚本 | 子模块 | 随父项目打包，不独立列出 |
-
-> 目录名与部署名不一致时通过 `$NameMapping` 映射（如 `deepquant_vue` → `deepquant-web`）。
-> 新增可部署后端只需创建 `scripts/pack-{name}.ps1`，下次扫描自动发现。
+项目列表来自 `projects.json`（`enabled: true`），不是扫描工作区「猜」出来的。新增项目请改 `projects.yaml` 后执行 `python3 scripts/sync-projects.py`。
 
 ```powershell
 cd D:\Workspace\deploy
 
-# 单项目构建
+# 单项目
 .\scripts\build.ps1 financial-web
 .\scripts\build.ps1 financial-api
 .\scripts\build.ps1 official-site
 .\scripts\build.ps1 deepquant-web
 .\scripts\build.ps1 deepquant-backend
 
-# 多项目构建（逗号分隔）
+# 多项目 / 全量
 .\scripts\build.ps1 financial-web,official-site
-
-# 或全量构建
 .\scripts\build.ps1 all
 
-.\scripts\build.ps1 official-site
+# 可选：扫描工作区，报告「存在但未登记」的目录
+.\scripts\build.ps1 discover
 ```
 
-产物输出到 `dist/packages/<项目>-*.tar.gz`。
+产物：`dist/packages/<项目>-*.tar.gz`；部署资产会拷到 `dist/`（含 `projects.json`）。
 
 #### Step 2: 上传到服务器
 
@@ -923,118 +847,6 @@ bash deploy.sh
 
 ---
 
-## 远程开发
-
-本地开发时直连远程服务器数据库/后端，无需在本地启动 PostgreSQL/Redis/后端服务。
-
-### SSH 免密配置
-
-已配置 `~/.ssh/config`，可直接用别名连接：
-
-```bash
-ssh serverA    # → root@47.86.32.234:22
-ssh serverB    # → root@103.100.211.12:3142
-```
-
-### 服务器信息
-
-| | 服务器 A | 服务器 B |
-|---|---------|---------|
-| **别名** | `serverA` | `serverB` |
-| **IP** | 47.86.32.234 | 103.100.211.12 |
-| **SSH 端口** | 22 | 3142 |
-| **域名** | `www.zhuochouacedemy.com`（裸域 301→www） | `www.deepquant.club` |
-| **Nginx 模板** | `nginx-servera-ssl.conf`（SSL） | `nginx-all-sites-ssl.conf`（SSL） |
-| **PostgreSQL** | 见服务器 `deploy.env` 的 `PG_*` | 同左（若两机密码不同则各自 `deploy.env`） |
-| **数据库** | quant_zc, quantdinger | quant_zc, quantdinger |
-| **Redis 密码** | 见 `REDIS_PASSWORD` | 见 `REDIS_PASSWORD` |
-| **SMTP** | 宝塔邮局 `noreply@zhuochouacedemy.com` | — |
-
-### 远程开发启动命令
-
-#### financial-api（后端直连远程 DB）
-
-```powershell
-cd D:\Workspace\financial\financial-api
-
-# 连接服务器 A 的数据库
-$env:ENV_FILE=".env.remoteA"; uv run uvicorn app.main:app --reload
-
-# 连接服务器 B 的数据库
-$env:ENV_FILE=".env.remoteB"; uv run uvicorn app.main:app --reload
-```
-
-> 远程模式自动设为 `APP_ROLE=api`，不启动爬虫和实时推送，只读查询远程 DB。
-
-#### financial-admin（后台直连远程后端）
-
-```powershell
-cd D:\Workspace\financial\financial-admin
-pnpm dev:remoteA    # 连接服务器 A 后端
-pnpm dev:remoteB    # 连接服务器 B 后端
-```
-
-#### financial-web（C 端直连远程后端）
-
-```powershell
-cd D:\Workspace\financial\financial-web
-pnpm dev:remoteA    # 连接服务器 A 后端
-pnpm dev:remoteB    # 连接服务器 B 后端
-```
-
-#### deepquant_vue（QuantDinger 前端直连远程后端）
-
-```powershell
-cd D:\Workspace\deep\deepquant_vue
-pnpm dev:remoteA    # 连接服务器 A 的 QuantDinger 后端
-pnpm dev:remoteB    # 连接服务器 B 的 QuantDinger 后端
-```
-
-### 配置文件清单
-
-| 项目 | 文件 | 连接目标 |
-|------|------|----------|
-| financial-api | `.env.remoteA` | 47.86.32.234 PostgreSQL + Redis |
-| financial-api | `.env.remoteB` | 103.100.211.12 PostgreSQL + Redis |
-| financial-admin | `.env.remoteA` | http://47.86.32.234/api |
-| financial-admin | `.env.remoteB` | http://103.100.211.12/api |
-| financial-web | `.env.remoteA` | 47.86.32.234 /api + WebSocket |
-| financial-web | `.env.remoteB` | 103.100.211.12 /api + WebSocket |
-| deepquant_vue | `.env.remoteA` | 47.86.32.234 /quant/api |
-| deepquant_vue | `.env.remoteB` | 103.100.211.12 /quant/api |
-
-### 服务器端 PostgreSQL 远程访问
-
-首次使用需在服务器上配置 PostgreSQL 允许远程连接（SSH 到服务器执行）：
-
-```bash
-# ── 1. 修改 postgresql.conf ──
-PG_CONF=$(find /www/server/ -name "postgresql.conf" 2>/dev/null | head -1)
-cp "$PG_CONF" "$PG_CONF.bak"
-sed -i "s/^#listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
-grep -q "^listen_addresses" "$PG_CONF" || echo "listen_addresses = '*'" >> "$PG_CONF"
-
-# ── 2. 修改 pg_hba.conf ──
-PG_HBA=$(find /www/server/ -name "pg_hba.conf" 2>/dev/null | head -1)
-cp "$PG_HBA" "$PG_HBA.bak"
-cat >> "$PG_HBA" << 'EOF'
-host    all    all    0.0.0.0/0    md5
-host    all    all    ::/0         md5
-EOF
-
-# ── 3. 设置 root 密码 ──
-su - postgres -c "psql -c \"ALTER USER root WITH PASSWORD 'root1.0';\""
-su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE quant_zc TO root;\""
-su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE quantdinger TO root;\""
-
-# ── 4. 重启（不要用系统防火墙放行 5432/6379）──
-/etc/init.d/postgresql restart
-# 远程开发如需连库：仅对你的办公 IP 在「云安全组」临时放行 5432，
-# 或优先用 SSH 隧道，不要 0.0.0.0 开放。
-```
-
----
-
 ## 日常运维
 
 ### 服务管理
@@ -1140,35 +952,35 @@ nginx -t && nginx -s reload
 
 ```bash
 # ── 连接数据库 ──
-PGPASSWORD='root1.0' psql -U root -h localhost -d quant_zc
-PGPASSWORD='root1.0' psql -U root -h localhost -d quantdinger
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quantdinger
 
 # ── 查看数据库列表 ──
-PGPASSWORD='root1.0' psql -U root -h localhost -d postgres -c "\l"
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d postgres -c "\l"
 
 # ── 查看表列表 ──
-PGPASSWORD='root1.0' psql -U root -h localhost -d quant_zc -c "\dt"
-PGPASSWORD='root1.0' psql -U root -h localhost -d quantdinger -c "\dt"
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "\dt"
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quantdinger -c "\dt"
 
 # ── 查看表结构 ──
-PGPASSWORD='root1.0' psql -U root -h localhost -d quant_zc -c "\d fin_app_configs"
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "\d fin_app_configs"
 
 # ── 执行 SQL 查询 ──
-PGPASSWORD='root1.0' psql -U root -h localhost -d quant_zc -c "SELECT count(*) FROM fin_news;"
+PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "SELECT count(*) FROM fin_news;"
 
 # ── 数据库备份 ──
-PGPASSWORD='root1.0' pg_dump -U root -h localhost quant_zc | gzip > /root/backup_quant_zc_$(date +%Y%m%d).sql.gz
-PGPASSWORD='root1.0' pg_dump -U root -h localhost quantdinger | gzip > /root/backup_quantdinger_$(date +%Y%m%d).sql.gz
+PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quant_zc | gzip > /root/backup_quant_zc_$(date +%Y%m%d).sql.gz
+PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quantdinger | gzip > /root/backup_quantdinger_$(date +%Y%m%d).sql.gz
 
 # ── 数据库恢复 ──
-gunzip -c /root/backup_quant_zc_20260728.sql.gz | PGPASSWORD='root1.0' psql -U root -h localhost -d quant_zc
-gunzip -c /root/backup_quantdinger_20260728.sql.gz | PGPASSWORD='root1.0' psql -U root -h localhost -d quantdinger
+gunzip -c /root/backup_quant_zc_20260728.sql.gz | PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc
+gunzip -c /root/backup_quantdinger_20260728.sql.gz | PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quantdinger
 
 # ── 从远程服务器迁移数据 ──
 # 旧服务器导出
 PGPASSWORD='旧密码' pg_dump -U 旧用户 -h 旧服务器IP -d quant_zc | gzip > /root/quant_zc.sql.gz
 # 新服务器导入
-gunzip -c /root/quant_zc.sql.gz | PGPASSWORD='root1.0' psql -U root -h localhost -d quant_zc
+gunzip -c /root/quant_zc.sql.gz | PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc
 
 # ── 数据库迁移（financial-api Alembic）──
 cd /www/wwwroot/project/financial/financial-api/package
@@ -1185,25 +997,25 @@ cd /www/wwwroot/project/financial/financial-api/package
 
 ```bash
 # ── 连接 Redis ──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD
 
 # ── 测试连接 ──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df ping
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD ping
 
 # ── 查看 Redis 信息 ──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df info
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD info
 
 # ── 查看内存使用 ──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df info memory | grep used_memory_human
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD info memory | grep used_memory_human
 
 # ── 查看所有 key 数量 ──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df dbsize
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD dbsize
 
 # ── 查看 key 列表（谨慎使用，生产环境不要 KEYS *）──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df --scan --pattern 'fin_*' | head -20
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD --scan --pattern 'fin_*' | head -20
 
 # ── 清除 financial-api 缓存 ──
-redis-cli -h localhost -p 6379 -a 7d7ced854319d1df --scan --pattern 'fin_*' | xargs -r redis-cli -h localhost -p 6379 -a 7d7ced854319d1df del
+redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD --scan --pattern 'fin_*' | xargs -r redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD del
 
 # ── Redis 迁移（从旧服务器）──
 # 旧服务器导出 RDB
@@ -1216,42 +1028,12 @@ cp /root/dump.rdb /www/server/redis/dump.rdb
 
 ### 更新部署
 
+日常发版请走上文 **「增量发版」**（`build.ps1` → `scp` → `deploy.sh`），不要手搓旧路径的 `tar`/`scp` 命令。
+
 ```bash
-# ── 更新前端（只需重新构建上传）──
-# 本地执行：
-#   cd D:\Workspace\financial\financial-web && pnpm build
-#   tar -czf financial-web-dist.tar.gz -C dist .
-#   scp financial-web-dist.tar.gz root@47.86.32.234:/www/wwwroot/project/uploads/dist/
-# 服务器执行：
-cd /www/wwwroot/project/uploads/dist
-rm -rf /www/wwwroot/project/financial/financial-web/dist/*
-tar xzf financial-web-dist.tar.gz -C /www/wwwroot/project/financial/financial-web/dist/
-nginx -s reload
-
-# ── 更新 financial-api 后端 ──
-# 本地执行：
-#   cd financial-api\deploy\baota\scripts && .\pack.ps1
-#   scp deploy\dist\financial-api-*.tar.gz root@服务器IP:/www/wwwroot/project/financial/financial-api/
-# 服务器执行：
-cd /www/wwwroot/project/financial/financial-api
-bash package/deploy.sh
-systemctl restart financial-api financial-crawler financial-worker financial-streaming
-
-# ── 更新 QuantDinger 后端 ──
-# 本地执行：
-#   tar -czf deepquant-backend-package.tar.gz -C backend_api_python --exclude=.venv --exclude=__pycache__ .
-#   scp deepquant-backend-package.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/
-# 服务器执行：
-cd /www/wwwroot/project/uploads/dist
-PKG_DIR=/www/wwwroot/project/deepquant/backend/package
-find "$PKG_DIR" -mindepth 1 -maxdepth 1 ! -name '.env' ! -name '.venv' ! -name 'logs' -exec rm -rf {} +
-tar xzf deepquant-backend-package.tar.gz -C "$PKG_DIR"
-"$PKG_DIR/.venv/bin/pip" install -r "$PKG_DIR/requirements.txt" -q
-systemctl restart quantdinger-backend
-
-# ── 更新 Nginx 配置 ──
-cp /www/wwwroot/project/uploads/dist/nginx-all-sites.conf /www/server/panel/vhost/nginx/default.conf
-nginx -t && nginx -s reload
+# 仅更新 Nginx 配置示例
+bash deploy.sh --nginx
+# 或手动：拷贝 dist/configs 中对应 conf 后 nginx -t && nginx -s reload
 ```
 
 ### 磁盘与系统检查
@@ -1331,8 +1113,8 @@ mkdir -p "$BACKUP_DIR"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 # 数据库备份
-PGPASSWORD='root1.0' pg_dump -U root -h localhost quant_zc | gzip > "$BACKUP_DIR/quant_zc_$DATE.sql.gz"
-PGPASSWORD='root1.0' pg_dump -U root -h localhost quantdinger | gzip > "$BACKUP_DIR/quantdinger_$DATE.sql.gz"
+PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quant_zc | gzip > "$BACKUP_DIR/quant_zc_$DATE.sql.gz"
+PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quantdinger | gzip > "$BACKUP_DIR/quantdinger_$DATE.sql.gz"
 
 # 保留最近 7 天的备份
 find "$BACKUP_DIR" -name "*.sql.gz" -mtime +7 -delete
@@ -1350,7 +1132,183 @@ bash /root/backup.sh
 
 ---
 
-## 部署排障记录
+## 远程开发
+
+本地开发时直连远程服务器数据库/后端，无需在本地启动 PostgreSQL/Redis/后端服务。
+
+### SSH 免密配置
+
+已配置 `~/.ssh/config`，可直接用别名连接：
+
+```bash
+ssh serverA    # → root@47.86.32.234:22
+ssh serverB    # → root@103.100.211.12:3142
+```
+
+### 服务器信息
+
+| | 服务器 A | 服务器 B |
+|---|---------|---------|
+| **别名** | `serverA` | `serverB` |
+| **IP** | 47.86.32.234 | 103.100.211.12 |
+| **SSH 端口** | 22 | 3142 |
+| **域名** | `www.zhuochouacedemy.com`（裸域 301→www） | `www.deepquant.club` |
+| **Nginx 模板** | `nginx-servera-ssl.conf`（SSL） | `nginx-all-sites-ssl.conf`（SSL） |
+| **PostgreSQL** | 见服务器 `deploy.env` 的 `PG_*` | 同左（若两机密码不同则各自 `deploy.env`） |
+| **数据库** | quant_zc, quantdinger | quant_zc, quantdinger |
+| **Redis 密码** | 见 `REDIS_PASSWORD` | 见 `REDIS_PASSWORD` |
+| **SMTP** | 宝塔邮局 `noreply@zhuochouacedemy.com` | — |
+
+### 远程开发启动命令
+
+#### financial-api（后端直连远程 DB）
+
+```powershell
+cd D:\Workspace\financial\financial-api
+
+# 连接服务器 A 的数据库
+$env:ENV_FILE=".env.remoteA"; uv run uvicorn app.main:app --reload
+
+# 连接服务器 B 的数据库
+$env:ENV_FILE=".env.remoteB"; uv run uvicorn app.main:app --reload
+```
+
+> 远程模式自动设为 `APP_ROLE=api`，不启动爬虫和实时推送，只读查询远程 DB。
+
+#### financial-admin（后台直连远程后端）
+
+```powershell
+cd D:\Workspace\financial\financial-admin
+pnpm dev:remoteA    # 连接服务器 A 后端
+pnpm dev:remoteB    # 连接服务器 B 后端
+```
+
+#### financial-web（C 端直连远程后端）
+
+```powershell
+cd D:\Workspace\financial\financial-web
+pnpm dev:remoteA    # 连接服务器 A 后端
+pnpm dev:remoteB    # 连接服务器 B 后端
+```
+
+#### deepquant_vue（QuantDinger 前端直连远程后端）
+
+```powershell
+cd D:\Workspace\deep\deepquant_vue
+pnpm dev:remoteA    # 连接服务器 A 的 QuantDinger 后端
+pnpm dev:remoteB    # 连接服务器 B 的 QuantDinger 后端
+```
+
+### 配置文件清单
+
+| 项目 | 文件 | 连接目标 |
+|------|------|----------|
+| financial-api | `.env.remoteA` | 47.86.32.234 PostgreSQL + Redis |
+| financial-api | `.env.remoteB` | 103.100.211.12 PostgreSQL + Redis |
+| financial-admin | `.env.remoteA` | http://47.86.32.234/api |
+| financial-admin | `.env.remoteB` | http://103.100.211.12/api |
+| financial-web | `.env.remoteA` | 47.86.32.234 /api + WebSocket |
+| financial-web | `.env.remoteB` | 103.100.211.12 /api + WebSocket |
+| deepquant_vue | `.env.remoteA` | 47.86.32.234 /quant/api |
+| deepquant_vue | `.env.remoteB` | 103.100.211.12 /quant/api |
+
+### 服务器端 PostgreSQL 远程访问
+
+首次使用需在服务器上配置 PostgreSQL 允许远程连接（SSH 到服务器执行）：
+
+```bash
+# ── 1. 修改 postgresql.conf ──
+PG_CONF=$(find /www/server/ -name "postgresql.conf" 2>/dev/null | head -1)
+cp "$PG_CONF" "$PG_CONF.bak"
+sed -i "s/^#listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
+grep -q "^listen_addresses" "$PG_CONF" || echo "listen_addresses = '*'" >> "$PG_CONF"
+
+# ── 2. 修改 pg_hba.conf ──
+PG_HBA=$(find /www/server/ -name "pg_hba.conf" 2>/dev/null | head -1)
+cp "$PG_HBA" "$PG_HBA.bak"
+cat >> "$PG_HBA" << 'EOF'
+host    all    all    0.0.0.0/0    md5
+host    all    all    ::/0         md5
+EOF
+
+# ── 3. 设置 root 密码 ──
+su - postgres -c "psql -c \"ALTER USER root WITH PASSWORD '$PG_PASSWORD';\""
+su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE quant_zc TO root;\""
+su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE quantdinger TO root;\""
+
+# ── 4. 重启（不要用系统防火墙放行 5432/6379）──
+/etc/init.d/postgresql restart
+# 远程开发如需连库：仅对你的办公 IP 在「云安全组」临时放行 5432，
+# 或优先用 SSH 隧道，不要 0.0.0.0 开放。
+```
+
+---
+
+## 常见问题
+
+### Q: 宝塔面板忘记密码
+
+```bash
+bt 5     # 重置面板密码
+bt 14    # 查看面板默认信息
+bt default  # 查看面板登录信息
+```
+
+### Q: Nginx 报 502 Bad Gateway
+
+```bash
+# 检查后端服务是否运行
+systemctl status financial-api
+systemctl status quantdinger-backend
+
+# 检查端口监听
+ss -tlnp | grep -E '5000|5001'
+
+# 查看后端日志
+journalctl -u financial-api -n 50 --no-pager
+journalctl -u quantdinger-backend -n 50 --no-pager
+```
+
+### Q: financial-web 跳转 official-site 404
+
+检查数据库配置：
+```bash
+PGPASSWORD="$PG_PASSWORD" psql -U root -d quant_zc -c \
+  "SELECT config_value FROM fin_app_configs WHERE namespace='links' AND config_key='deepquant';"
+```
+
+预期结果：`{"siteUrl": "/qd", "appBaseUrl": "/quant"}`
+
+如不正确，执行：
+```bash
+PGPASSWORD="$PG_PASSWORD" psql -U root -d quant_zc -c \
+  "UPDATE fin_app_configs SET config_value='{\"siteUrl\":\"/qd\",\"appBaseUrl\":\"/quant\"}'::jsonb WHERE namespace='links' AND config_key='deepquant';"
+```
+
+### Q: WebSocket 连接失败
+
+确保 Nginx 的 `/api/ws` location 在 `/api/` 之前（最长前缀匹配）：
+```nginx
+location ^~ /api/ws { ... }  # 必须在前
+location ^~ /api/ { ... }   # 在后
+```
+
+### Q: 更换域名时需要做什么
+
+> 本项目已配置化，只需改 `deploy.env` 然后重新部署即可。
+
+1. **deploy.env**：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
+2. **DNS**：在域名商处将裸域和 www 的 A 记录指向服务器 IP
+3. **SSL 证书**：按 [Phase 7b](#phase-7b-ssl-证书--宝塔邮局申请域名部署) 流程申请
+4. **Nginx**：`deploy.env` 设 `NGINX_CONF_NAME=nginx-servera-ssl.conf`，执行 `bash deploy.sh --nginx`（自动渲染 `__DOMAIN__` / `__WWW_DOMAIN__` 占位符）
+5. **financial-api**：执行 `bash deploy.sh financial-api`（自动渲染 `CORS_ORIGINS` / `SMTP` 占位符）
+6. **QuantDinger**：执行 `bash deploy.sh deepquant-backend`（自动渲染 `__FRONTEND_URL__`）
+7. **邮局**：按 [Phase 7b 步骤 3](#3-配置宝塔邮局) 配置宝塔邮局 + DNS 记录
+8. **重启**：`systemctl restart financial-api quantdinger-backend` + `nginx -s reload`
+
+---
+
+## 附录：部署排障记录（历史）
 
 ### 1. Nginx 配置统一（2026-07-28）
 
@@ -1583,6 +1541,45 @@ curl -sf https://www.zhuochouacedemy.com/qd/        # official-site
 curl -sf https://www.zhuochouacedemy.com/quant/     # QuantDinger 前端
 curl -sI https://zhuochouacedemy.com                # 应返回 301 → www
 ```
+
+### 15. .env 被包内文件覆盖导致登录 401（2026-07-30）
+
+**问题**：服务器 B 部署 financial-api 后，financial-web 登录返回 401，数据库连接报错。
+
+**现象**：
+- `AUTH_MODE` 从 `upstream` 被覆盖成 `local` → 登录查本地 `fin_users` 表而非转发 QuantDinger
+- `DATABASE_URL` 从正确的库账号密码被覆盖成 `quantdinger:quantdinger123` → 数据库连接错误
+- `AUTH_UPSTREAM_URL` 从 `127.0.0.1:5000` 被覆盖成 `https://www.deepquant.club` → 认证绕外网
+- `AUTH_SECRET_KEY` 被换 → 旧 JWT token 全部失效
+- `REDIS_URL` 丢失密码
+
+**根因（双重缺陷）**：
+
+1. **`pack-generic.ps1`（根因）**：robocopy 的 `/XD .env` 只排除名为 `.env` 的**目录**，不排除**文件**。`financial/financial-api/` 下存在开发者本地 `.env` 文件，被误打包进 tar.gz。
+2. **`deploy-financial-api.sh`（防线缺失）**：代码同步时 `cp -a "${SRC_DIR%/}/." "$PKG_DIR/"` 会把包内 `.env` 覆盖服务器生产 `.env`。`find` 只保护了删除阶段（`! -name '.env'`），没保护 `cp -a` 阶段。
+
+**紧急修复（服务器 B 现场）**：
+```bash
+# 恢复关键字段
+sed -i 's|^AUTH_MODE=.*|AUTH_MODE=upstream|' /www/wwwroot/project/financial/financial-api/package/.env
+sed -i 's|^DATABASE_URL=.*|DATABASE_URL=postgresql+psycopg2://root:$PG_PASSWORD@localhost:5432/quant_zc|' /www/wwwroot/project/financial/financial-api/package/.env
+sed -i 's|^AUTH_UPSTREAM_URL=.*|AUTH_UPSTREAM_URL=http://127.0.0.1:5000|' /www/wwwroot/project/financial/financial-api/package/.env
+# REDIS_URL / AUTH_SECRET_KEY 按实际值恢复
+systemctl restart financial-api
+```
+
+**永久修复（已合入）**：
+
+| 文件 | 修复内容 |
+|------|----------|
+| `scripts/pack-generic.ps1` | robocopy `/XD .env` → `/XF .env`（从排除目录改为排除文件） |
+| `scripts/deploy-financial-api.sh` | 代码同步阶段：备份 `.env` → `cp -a` → 恢复 `.env`；额外 `rm -f "${SRC_DIR}/.env"` 删除包内残留 |
+| `scripts/deploy-financial-api.sh` | `sync_env` 增加占位符检测：跳过含 `__PLACEHOLDER__` 的值（如 `__PG_PASSWORD__`），避免追加无意义默认值 |
+
+**教训**：
+- `.env` 是文件不是目录，robocopy `/XD` 排目录、`/XF` 排文件，两者不可混用。
+- `cp -a src/. dest/` 会覆盖 dest 中同名文件，即使前面 `find` 保护了删除阶段也无效。
+- 部署脚本的 `.env` 保护必须是「备份 → 复制 → 恢复」三步，不能只靠 `find ! -name`。
 
 ### 部署后验证清单
 

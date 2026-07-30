@@ -43,7 +43,7 @@ echo ""
 info "DEPLOY_DIR    = $DEPLOY_DIR"
 info "WORKSPACE_DIR = $WORKSPACE_DIR"
 info "SCRIPTS_DIR   = $SCRIPTS_DIR"
-h
+hr
 
 # ── T-L0: bash 语法 ─────────────────────────────────────────────
 info "T-L0-01: bash -n on scripts/*.sh"
@@ -68,11 +68,10 @@ else
   bad "cannot resolve workspace from deploy location"
 fi
 
-# pack 脚本是否用相对路径（读脚本内容）
-if grep -q 'Split-Path -Parent \$DeployDir\|WORKSPACE_DIR=.*DEPLOY_DIR' \
-     "$SCRIPTS_DIR/pack-financial-api.sh" 2>/dev/null \
-  || grep -q 'WORKSPACE_DIR=.*DEPLOY_DIR\|DEPLOY_DIR/\.\.' "$SCRIPTS_DIR/pack-financial-api.sh"; then
-  ok "pack-financial-api.sh derives workspace relatively"
+# pack 脚本是否用相对路径 / 清单（读脚本内容）
+if grep -qE 'load-projects\.sh|WORKSPACE_ROOT|SOURCE_DIR=.*WORKSPACE' \
+     "$SCRIPTS_DIR/pack-financial-api.sh" 2>/dev/null; then
+  ok "pack-financial-api.sh derives workspace from projects.json / WORKSPACE_ROOT"
 else
   warn "pack-financial-api.sh relative path pattern not detected (check manually)"
 fi
@@ -146,28 +145,36 @@ else
     warn "no financial-api-*.tar.gz — run: bash tests/wsl-smoke.sh --pack"
   else
     ok "found archive: $latest"
-    listing=$(tar -tzf "$latest" | tr -d '\r')
-    if echo "$listing" | grep -qE '^(\./)?package/'; then
+    # 大包勿整表进变量再 echo（会撞 ARG_MAX）。
+    # 注意：pipefail + grep -q 提前退出会使 tar 收到 SIGPIPE 误报失败，故取 PIPESTATUS[grep]。
+    tar_has() {
+      local pat="$1"
+      # grep 写完即退出时 tar 可能 SIGPIPE；只认 grep 的退出码
+      tar -tzf "$latest" 2>/dev/null | tr -d '\r' | grep -E "$pat" >/dev/null 2>&1
+      local gr="${PIPESTATUS[2]:-1}"
+      [ "$gr" -eq 0 ]
+    }
+    if tar_has '^(\./)?package/'; then
       ok "archive top-level contains package/"
     else
       bad "archive missing package/ prefix"
     fi
-    if echo "$listing" | grep -qE '^(\./)?package/VERSION$'; then
+    if tar_has '^(\./)?package/VERSION$'; then
       ok "archive contains package/VERSION"
     else
       warn "archive missing package/VERSION (check pack script order bug)"
     fi
     # 部署资产应保留相对路径，禁止拍扁到 package/ 根
-    if echo "$listing" | grep -qE '^(\./)?scripts/deploy-financial-api\.sh$'; then
+    if tar_has '^(\./)?scripts/deploy-financial-api\.sh$'; then
       ok "archive contains scripts/deploy-financial-api.sh (hierarchical)"
-    elif echo "$listing" | grep -qE '^(\./)?package/deploy-financial-api\.sh$'; then
+    elif tar_has '^(\./)?package/deploy-financial-api\.sh$'; then
       warn "archive has flattened package/deploy-financial-api.sh (legacy)"
     else
       bad "archive missing scripts/deploy-financial-api.sh"
     fi
-    if echo "$listing" | grep -qE '^(\./)?configs/systemd/financial-api\.service$'; then
+    if tar_has '^(\./)?configs/systemd/financial-api\.service$'; then
       ok "archive contains configs/systemd/ (hierarchical)"
-    elif echo "$listing" | grep -qE 'financial-api\.service$'; then
+    elif tar_has 'financial-api\.service$'; then
       warn "systemd unit present but not under configs/systemd/"
     else
       warn "archive missing financial-api.service"
@@ -196,7 +203,7 @@ else
   info "could not confirm Frontend fallback text (manual review Build-One)"
 fi
 
-h
+hr
 echo ""
 echo "  Result: PASS=$PASS  FAIL=$FAIL  WARN=$WARN"
 echo ""
