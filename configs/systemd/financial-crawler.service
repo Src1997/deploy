@@ -1,0 +1,22 @@
+[Unit]
+Description=卓筹商学院 Crawler Enqueue Scheduler
+After=network.target bt-postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+Environment=APP_ROLE=crawler
+Environment=CRAWLER_ENABLED=true
+Environment=CRAWLER_ENQUEUE_ENABLED=true
+ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m app.crawler scheduler
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fastbull-crawler
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=卓筹商学院 Streaming (flash_news_ws)
+After=network.target bt-postgresql.service redis.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+Environment=APP_ROLE=crawler
+Environment=CRAWLER_ENABLED=true
+ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m worker.streaming
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=financial-streaming
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

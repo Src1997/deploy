@@ -1,0 +1,6 @@
+# 构建产物
+dist/packages/
+dist/financial-api-*.tar.gz
+
+# 本地/服务器真实密码（禁止提交）
+deploy.env

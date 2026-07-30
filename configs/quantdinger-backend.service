@@ -1,0 +1,22 @@
+[Unit]
+Description=QuantDinger Backend API Server
+After=network.target bt-postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/project/deepquant/backend/package
+Environment=PYTHON_API_HOST=127.0.0.1
+Environment=PYTHON_API_PORT=5000
+Environment=PYTHON_API_DEBUG=false
+ExecStart=/www/wwwroot/project/deepquant/backend/package/.venv/bin/gunicorn -c gunicorn_config.py "run:app"
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quantdinger-backend
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

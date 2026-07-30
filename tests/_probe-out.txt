@@ -1,0 +1,32 @@
+=== OS ===
+Linux DESKTOP-E0EV0GB 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64 GNU/Linux
+=== cmds ===
+bash           OK GNU bash, version 5.3.9(1)-release (x86_64-pc-linu
+tar            OK tar (GNU tar) 1.35
+gzip           OK gzip 1.14
+curl           OK curl 8.18.0 (x86_64-pc-linux-gnu) libcurl/8.18.0 O
+python3        OK Python 3.14.4
+pip3           OK pip 25.1.1 from /usr/lib/python3/dist-packages/pip
+git            OK git version 2.53.0
+node           OK v24.18.0
+pnpm           OK 11.13.1
+npm            OK 11.16.0
+flock          OK flock from util-linux 2.41.3
+ss             OK ss utility, iproute2-6.19.0
+redis-cli      MISSING
+psql           MISSING
+nginx          MISSING
+envsubst       OK envsubst (GNU gettext-runtime) 0.23.2
+dos2unix       OK dos2unix 7.5.4 (2026-01-30)
+=== python3 -m venv ===
+OK
+=== apt ===
+curl 8.18.0-1ubuntu2.3
+gettext-base 0.23.2-1
+git 1:2.53.0-1ubuntu1
+gzip 1.14-1~exp2ubuntu1.1
+python3 3.14.3-0ubuntu2
+python3-venv 3.14.3-0ubuntu2
+tar 1.35+dfsg-4ubuntu0.4
+util-linux 2.41.3-3ubuntu2
+=== done ===
