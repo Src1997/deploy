@@ -43,7 +43,7 @@ echo ""
 info "DEPLOY_DIR    = $DEPLOY_DIR"
 info "WORKSPACE_DIR = $WORKSPACE_DIR"
 info "SCRIPTS_DIR   = $SCRIPTS_DIR"
-hr
+h
 
 # ── T-L0: bash 语法 ─────────────────────────────────────────────
 info "T-L0-01: bash -n on scripts/*.sh"
@@ -147,21 +147,30 @@ else
   else
     ok "found archive: $latest"
     listing=$(tar -tzf "$latest" | tr -d '\r')
-    if echo "$listing" | grep -q '^package/'; then
+    if echo "$listing" | grep -qE '^(\./)?package/'; then
       ok "archive top-level contains package/"
     else
       bad "archive missing package/ prefix"
     fi
-    if echo "$listing" | grep -qE '^package/VERSION$'; then
+    if echo "$listing" | grep -qE '^(\./)?package/VERSION$'; then
       ok "archive contains package/VERSION"
     else
-      # 已知 bug：ps1 版 VERSION 可能失败；sh 版应有
       warn "archive missing package/VERSION (check pack script order bug)"
     fi
-    if echo "$listing" | grep -q 'package/deploy-financial-api.sh'; then
-      ok "archive contains deploy-financial-api.sh"
+    # 部署资产应保留相对路径，禁止拍扁到 package/ 根
+    if echo "$listing" | grep -qE '^(\./)?scripts/deploy-financial-api\.sh$'; then
+      ok "archive contains scripts/deploy-financial-api.sh (hierarchical)"
+    elif echo "$listing" | grep -qE '^(\./)?package/deploy-financial-api\.sh$'; then
+      warn "archive has flattened package/deploy-financial-api.sh (legacy)"
     else
-      bad "archive missing deploy-financial-api.sh"
+      bad "archive missing scripts/deploy-financial-api.sh"
+    fi
+    if echo "$listing" | grep -qE '^(\./)?configs/systemd/financial-api\.service$'; then
+      ok "archive contains configs/systemd/ (hierarchical)"
+    elif echo "$listing" | grep -qE 'financial-api\.service$'; then
+      warn "systemd unit present but not under configs/systemd/"
+    else
+      warn "archive missing financial-api.service"
     fi
   fi
 fi
@@ -187,7 +196,7 @@ else
   info "could not confirm Frontend fallback text (manual review Build-One)"
 fi
 
-hr
+h
 echo ""
 echo "  Result: PASS=$PASS  FAIL=$FAIL  WARN=$WARN"
 echo ""

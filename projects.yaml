@@ -31,6 +31,7 @@ projects:
     sourcePath: financial/financial-api
     build:
       packer: scripts/pack-generic.ps1
+      # 非 source-tar：源码进 package/；include 保留 scripts/、configs/ 相对路径（不拍扁）
       artifactPattern: financial-api-*.tar.gz
       include:
         - scripts/deploy-financial-api.sh
@@ -98,5 +99,5 @@ projects:
     deployPath: deepquant/backend/package
     services:
       - quantdinger-backend
-    healthUrl: http://127.0.0.1:5000/health
+    healthUrl: http://127.0.0.1:5000/api/health
     nginxReload: false

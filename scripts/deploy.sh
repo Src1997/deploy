@@ -174,31 +174,24 @@ else
     exit 1
 fi
 
-# 从加载器结果构建 deploy.sh 兼容变量
+# 项目列表（路径/产物/服务均用 loader 的 DEPLOY_PATH / ARTIFACT_NAME / …）
 declare -a PROJECTS=($PROJECT_IDS)
-declare -A PROJECT_NAMES=()
-declare -A PROJECT_DIST=()
-declare -A PROJECT_TAR=()
-for p in "${PROJECTS[@]}"; do
-    PROJECT_NAMES[$p]="${PROJECT_DISPLAY_NAME[$p]}"
-    PROJECT_DIST[$p]="${DEPLOY_PATH[$p]}"
-    PROJECT_TAR[$p]="${ARTIFACT_NAME[$p]}"
-done
-# 从清单加载 PROJECT_SERVICE（取第一个服务）和 PROJECT_HEALTH
+# 日志菜单用：每个后端的「主」服务名（services 列表第一个）
 declare -A PROJECT_SERVICE=()
-declare -A PROJECT_HEALTH=()
 for p in "${PROJECTS[@]}"; do
-    PROJECT_HEALTH[$p]="${HEALTH_URL[$p]}"
-    _svcs="${SERVICES[$p]}"
+    _svcs="${SERVICES[$p]:-}"
     PROJECT_SERVICE[$p]="${_svcs%% *}"
 done
 
-# 向后兼容目录变量（deploy 函数内仍在使用）
-FINANCIAL_API_DIR="${PROJECT_BASE}/financial/financial-api"
-FINANCIAL_WEB_DIR="${PROJECT_BASE}/financial/financial-web"
-OFFICIAL_SITE_DIR="${PROJECT_BASE}/official-site"
-DEEPQUANT_BACKEND_DIR="${PROJECT_BASE}/deepquant/backend"
-DEEPQUANT_WEB_DIR="${PROJECT_BASE}/deepquant/web"
+is_known_project() {
+    local token="$1" known
+    [ "$token" = "all" ] && return 0
+    [[ "$token" == *","* ]] && return 0
+    for known in "${PROJECTS[@]}"; do
+        [ "$known" = "$token" ] && return 0
+    done
+    return 1
+}
 
 # ── 参数解析 ────────────────────────────────────────────────────────
 PROJECT=""
@@ -264,8 +257,6 @@ parse_project_token() {
 
 for arg in "$@"; do
     case "$arg" in
-        financial-web|financial-api|official-site|deepquant-web|deepquant-backend|all|*,*)
-            parse_project_token "$arg" ;;
         --ip=*)              SERVER_IP="${arg#--ip=}" ;;
         --no-restart)        NO_RESTART=true ;;
         --rollback)          DO_ROLLBACK=true ;;
@@ -278,7 +269,15 @@ for arg in "$@"; do
         --yes|-y|--ci)        ASSUME_YES=true ;;
         --nginx)             DEPLOY_NGINX=true ;;
         --help|-h)           SHOW_HELP=true ;;
-        *) err "Unknown: $arg (try --help)"; exit 1 ;;
+        -*)
+            err "Unknown: $arg (try --help)"; exit 1 ;;
+        *)
+            if is_known_project "$arg"; then
+                parse_project_token "$arg"
+            else
+                err "Unknown: $arg (try --help)"; exit 1
+            fi
+            ;;
     esac
 done
 
@@ -296,6 +295,11 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 preflight() {
     local errors=0
     banner "Pre-flight 检查"
+
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        warn "DEPLOY_DRY_RUN=1：跳过密钥与系统检查"
+        return 0
+    fi
 
     if ! require_deploy_secrets; then
         return 1
@@ -349,7 +353,7 @@ preflight() {
     local py_ver
     py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
     if [ "$py_ver" != "0.0" ]; then
-        local py_major py_minor
+        local py_major py_mino
         py_major=$(echo "$py_ver" | cut -d. -f1)
         py_minor=$(echo "$py_ver" | cut -d. -f2)
         if [ "$py_major" -ge 3 ] && [ "$py_minor" -ge 11 ]; then
@@ -617,16 +621,17 @@ resolve_rollback_archive() {
 apply_rollback_one() {
     local name="$1"
     local archive="$2"
-    local target_dir="${PROJECT_DIST[$name]}"
+    local target_dir="${DEPLOY_PATH[$name]}"
     local ts
     ts=$(basename "$archive" .tar.gz)
 
     log "回滚 $name → $ts ..."
 
     # 回滚前备份当前线上版本
-    case "$name" in
-        financial-web|official-site|deepquant-web) backup_frontend "$name" "$target_dir" ;;
-        financial-api|deepquant-backend)            backup_backend "$name" "$target_dir" ;;
+    case "${PROJECT_KIND[$name]}" in
+        frontend) backup_frontend "$name" "$target_dir" ;;
+        backend)  backup_backend "$name" "$target_dir" ;;
+        *)        backup_frontend "$name" "$target_dir" ;;
     esac
 
     local parent_dir
@@ -644,16 +649,17 @@ apply_rollback_one() {
         warn "DEPLOY_DRY_RUN=1：跳过服务重启"
         return 0
     fi
-    case "$name" in
-        financial-web|official-site|deepquant-web) nginx_reload ;;
-        financial-api)
-            restart_service "financial-api"; restart_service "financial-crawler"
-            restart_service "financial-worker"; restart_service "financial-streaming"
-            sleep 3; health_check "financial-api" "http://127.0.0.1:5001/api/health" ;;
-        deepquant-backend)
-            restart_service "quantdinger-backend"
-            sleep 3; health_check "QuantDinger" "http://127.0.0.1:5000/api/health" ;;
-    esac
+    if [ "${NGINX_RELOAD[$name]}" = "true" ]; then
+        nginx_reload
+    fi
+    local svc
+    for svc in ${SERVICES[$name]}; do
+        [ -n "$svc" ] && restart_service "$svc"
+    done
+    if [ -n "${HEALTH_URL[$name]:-}" ]; then
+        sleep 3
+        health_check "$name" "${HEALTH_URL[$name]}"
+    fi
     return 0
 }
 
@@ -699,7 +705,7 @@ rollback_projects() {
     local names=() archives=()
     local p archive
     for p in "${projects[@]}"; do
-        if [ -z "${PROJECT_DIST[$p]:-}" ]; then
+        if [ -z "${DEPLOY_PATH[$p]:-}" ]; then
             err "未知项目: $p"; return 1
         fi
         archive=$(resolve_rollback_archive "$p") || {
@@ -734,67 +740,110 @@ rollback_projects() {
     [ ${#failed[@]} -eq 0 ]
 }
 
-# 兼容旧调用：do_rollback name target_dir
+# 兼容旧调用：do_rollback name target_di
 do_rollback() {
     local name="$1"
     rollback_projects "$name"
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 部署函数
+# 部署函数（路径 / 产物 / 服务均来自 projects.json）
 # ═══════════════════════════════════════════════════════════════════════
 
-deploy_financial_web() {
-    log "部署 financial-web..."
-    local tar=$(find_file "financial-web-dist.tar.gz")
-    [ -z "$tar" ] && { err "未找到 financial-web-dist.tar.gz"; err "请先本地执行: .\scripts\build.ps1 financial-web"; return 1; }
-    backup_frontend "financial-web" "$FINANCIAL_WEB_DIR/dist"
-    mkdir -p "$FINANCIAL_WEB_DIR/dist"
-    rm -rf "$FINANCIAL_WEB_DIR/dist"/*
-    tar xzf "$tar" -C "$FINANCIAL_WEB_DIR/dist"
-    ok "financial-web 已部署"; nginx_reload
+# 通用：按清单部署前端（解压到 DEPLOY_PATH[id]）
+deploy_frontend_by_id() {
+    local id="$1"
+    local target="${DEPLOY_PATH[$id]:-}"
+    local tar_pat="${ARTIFACT_NAME[$id]:-}"
+    local label="${PROJECT_DISPLAY_NAME[$id]:-$id}"
+
+    [ -z "$target" ] && { err "projects.json 缺少 $id.deployPath"; return 1; }
+    [ -z "$tar_pat" ] && { err "projects.json 缺少 $id.build.artifact"; return 1; }
+
+    log "部署 $id ($label)..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] $id → $target (artifact=$tar_pat)"
+        return 0
+    fi
+    local tar
+    tar=$(find_file "$tar_pat")
+    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
+    backup_frontend "$id" "$target"
+    mkdir -p "$target"
+    rm -rf "${target:?}"/*
+    tar xzf "$tar" -C "$target"
+    ok "$id 已部署到 $target"
+    if [ "${NGINX_RELOAD[$id]}" = "true" ]; then
+        nginx_reload
+    fi
 }
 
+# financial-api：清单路径 + 既有钩子 / CORS / 多服务重启
 deploy_financial_api() {
-    log "部署 financial-api..."
-    local tar=$(find_file "financial-api-*.tar.gz")
-    [ -z "$tar" ] && { err "未找到 financial-api-*.tar.gz"; err "请先本地执行: .\scripts\build.ps1 financial-api"; return 1; }
-    backup_backend "financial-api" "$FINANCIAL_API_DIR/package"
-    # 复制 tar 包到部署目录，同时清理旧包
-    find "$FINANCIAL_API_DIR" -maxdepth 1 -name 'financial-api-*.tar.gz' -delete 2>/dev/null || true
-    cp "$tar" "$FINANCIAL_API_DIR/"
+    local id="financial-api"
+    local pkg_dir="${DEPLOY_PATH[$id]:-}"
+    local api_parent
+    api_parent="$(dirname "$pkg_dir")"
+    local tar_pat="${ARTIFACT_NAME[$id]:-financial-api-*.tar.gz}"
+
+    log "部署 financial-api → $pkg_dir ..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] financial-api → $pkg_dir (artifact=$tar_pat hook=${DEPLOY_HOOK[$id]:-})"
+        return 0
+    fi
+    local tar
+    tar=$(find_file "$tar_pat")
+    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 financial-api"; return 1; }
+    backup_backend "financial-api" "$pkg_dir"
+    # 复制 tar 包到部署父目录，同时清理旧包
+    find "$api_parent" -maxdepth 1 -name 'financial-api-*.tar.gz' -delete 2>/dev/null || true
+    mkdir -p "$api_parent"
+    cp "$tar" "$api_parent/"
     mkdir -p "$DEPLOY_TMP_DIR/fin-api-extract"
     tar xzf "$tar" -C "$DEPLOY_TMP_DIR/fin-api-extract"
     local DEPLOY_SCRIPT=""
-    [ -f "$DEPLOY_TMP_DIR/fin-api-extract/package/deploy-financial-api.sh" ] && DEPLOY_SCRIPT="$DEPLOY_TMP_DIR/fin-api-extract/package/deploy-financial-api.sh"
-    [ -z "$DEPLOY_SCRIPT" ] && [ -f "$FINANCIAL_API_DIR/package/deploy-financial-api.sh" ] && DEPLOY_SCRIPT="$FINANCIAL_API_DIR/package/deploy-financial-api.sh"
+    # 优先：归档内保留的 scripts/ 层次；兼容旧包：package/ 根下拍扁脚本
+    for cand in \
+        "$DEPLOY_TMP_DIR/fin-api-extract/scripts/deploy-financial-api.sh" \
+        "$DEPLOY_TMP_DIR/fin-api-extract/package/scripts/deploy-financial-api.sh" \
+        "$DEPLOY_TMP_DIR/fin-api-extract/package/deploy-financial-api.sh" \
+        "$pkg_dir/scripts/deploy-financial-api.sh" \
+        "$pkg_dir/deploy-financial-api.sh"; do
+        [ -f "$cand" ] && DEPLOY_SCRIPT="$cand" && break
+    done
+    # 若清单指定 deployHook 且包内无脚本，尝试 dist/scripts 下的钩子
+    if [ -z "$DEPLOY_SCRIPT" ] && [ -n "${DEPLOY_HOOK[$id]:-}" ]; then
+        local hook_rel="${DEPLOY_HOOK[$id]}"
+        for cand in "$DIST_ROOT/$hook_rel" "$SCRIPT_DIR_DEPLOY/../$hook_rel" "$SCRIPT_DIR/$hook_rel"; do
+            [ -f "$cand" ] && DEPLOY_SCRIPT="$cand" && break
+        done
+    fi
     if [ -n "$DEPLOY_SCRIPT" ]; then
         local yes_flag=""
         $ASSUME_YES && yes_flag="--yes"
-        bash "$DEPLOY_SCRIPT" --web-path=/ --no-restart $yes_flag || warn "deploy-financial-api.sh 有警告"
+        # 路径注入钩子，避免钩子内硬编码 PROJECT_BASE/.../financial-api
+        DEPLOY_ROOT="$api_parent" PKG_DIR="$pkg_dir" \
+            bash "$DEPLOY_SCRIPT" --web-path=/ --no-restart $yes_flag || warn "deploy-financial-api.sh 有警告"
         ok "financial-api 代码已同步"
     else
         rm -rf "$DEPLOY_TMP_DIR/fin-api-extract"
         err "未找到 deploy-financial-api.sh"; return 1
-fi
+    fi
     rm -rf "$DEPLOY_TMP_DIR/fin-api-extract"
     # 更新 .env
-    local env_file="$FINANCIAL_API_DIR/package/.env"
+    local env_file="$pkg_dir/.env"
     if [ -f "$env_file" ] && [ -n "$SERVER_IP" ]; then
         log "更新 .env (CORS 追加 $SERVER_IP)..."
-        # 追加服务器 IP 到 CORS，保留已有的 localhost 条目
         local current_cors
         current_cors=$(grep '^CORS_ORIGINS=' "$env_file" | head -1 | cut -d= -f2-)
         if echo "$current_cors" | grep -q "$SERVER_IP"; then
             ok "CORS 已包含 $SERVER_IP，跳过"
         else
-            # 追加 IP 到已有 CORS（保留域名等已有 origin），不覆盖
             local new_cors="${current_cors},http://${SERVER_IP}"
             sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=${new_cors}|" "$env_file"
             ok "CORS 已追加 $SERVER_IP（保留已有 origin）"
         fi
         sed -i "s|^AUTH_UPSTREAM_URL=.*|AUTH_UPSTREAM_URL=http://127.0.0.1:5000|" "$env_file"
-        # 确保 ARQ_REDIS_URL 带密码（从 REDIS_URL 提取密码，避免 arq 连接认证失败）
         local redis_pass
         redis_pass=$(grep '^REDIS_URL=' "$env_file" | head -1 | sed -n 's|.*://:\([^@]*\)@.*|\1|p')
         if [ -n "$redis_pass" ]; then
@@ -813,39 +862,31 @@ fi
         ok ".env 已更新"
     fi
     if ! $NO_RESTART; then
-        restart_service "financial-api"; restart_service "financial-crawler"
-        restart_service "financial-worker"; restart_service "financial-streaming"
-        sleep 3; health_check "financial-api" "http://127.0.0.1:5001/api/health"
+        local svc
+        for svc in ${SERVICES[$id]}; do
+            [ -n "$svc" ] && restart_service "$svc"
+        done
+        if [ -n "${HEALTH_URL[$id]:-}" ]; then
+            sleep 3
+            health_check "financial-api" "${HEALTH_URL[$id]}"
+        fi
     fi
 }
 
-deploy_official_site() {
-    log "部署 official-site..."
-    local tar=$(find_file "official-site-dist.tar.gz")
-    [ -z "$tar" ] && { err "未找到 official-site-dist.tar.gz"; err "请先本地执行: .\scripts\build.ps1 official-site"; return 1; }
-    backup_frontend "official-site" "$OFFICIAL_SITE_DIR/dist"
-    mkdir -p "$OFFICIAL_SITE_DIR/dist"
-    rm -rf "$OFFICIAL_SITE_DIR/dist"/*
-    tar xzf "$tar" -C "$OFFICIAL_SITE_DIR/dist"
-    ok "official-site 已部署"; nginx_reload
-}
-
-deploy_deepquant_web() {
-    log "部署 QuantDinger 前端..."
-    local tar=$(find_file "deepquant-web-dist.tar.gz")
-    [ -z "$tar" ] && { err "未找到 deepquant-web-dist.tar.gz"; err "请先本地执行: .\scripts\build.ps1 deepquant-web"; return 1; }
-    backup_frontend "deepquant-web" "$DEEPQUANT_WEB_DIR/dist"
-    mkdir -p "$DEEPQUANT_WEB_DIR/dist"
-    rm -rf "$DEEPQUANT_WEB_DIR/dist"/*
-    tar xzf "$tar" -C "$DEEPQUANT_WEB_DIR/dist"
-    ok "QuantDinger 前端已部署"; nginx_reload
-}
-
 deploy_deepquant_backend() {
-    log "部署 QuantDinger 后端..."
-    local tar=$(find_file "deepquant-backend-package.tar.gz")
-    [ -z "$tar" ] && { err "未找到 deepquant-backend-package.tar.gz"; err "请先本地执行: .\scripts\build.ps1 deepquant-backend"; return 1; }
-    local pkg_dir="$DEEPQUANT_BACKEND_DIR/package" venv_dir="$pkg_dir/.venv" env_file="$pkg_dir/.env"
+    local id="deepquant-backend"
+    local pkg_dir="${DEPLOY_PATH[$id]:-}"
+    local tar_pat="${ARTIFACT_NAME[$id]:-deepquant-backend-package.tar.gz}"
+    local venv_dir="$pkg_dir/.venv" env_file="$pkg_dir/.env"
+
+    log "部署 QuantDinger 后端 → $pkg_dir ..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] deepquant-backend → $pkg_dir (artifact=$tar_pat)"
+        return 0
+    fi
+    local tar
+    tar=$(find_file "$tar_pat")
+    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 deepquant-backend"; return 1; }
     backup_backend "deepquant-backend" "$pkg_dir"
     mkdir -p "$pkg_dir"
     # 备份 .env
@@ -926,37 +967,70 @@ deploy_deepquant_backend() {
     fi
 
     mkdir -p "$pkg_dir/logs" "$pkg_dir/data/memory"
-    # FRONTEND_URL: keep original domain value, do not override with IP
     if [ -n "$SERVER_IP" ]; then ok ".env FRONTEND_URL preserved"; fi
     if ! $NO_RESTART; then
-        restart_service "quantdinger-backend"
-        sleep 3; health_check "QuantDinger" "http://127.0.0.1:5000/api/health"
+        local svc
+        for svc in ${SERVICES[$id]}; do
+            [ -n "$svc" ] && restart_service "$svc"
+        done
+        if [ -n "${HEALTH_URL[$id]:-}" ]; then
+            sleep 3
+            health_check "QuantDinger" "${HEALTH_URL[$id]}"
+        fi
     fi
 }
+
+# 通用入口：前端走清单解压；后端保留专用逻辑（路径仍来自清单）
+deploy_by_id() {
+    local id="$1"
+    if [ -z "${DEPLOY_PATH[$id]:-}" ]; then
+        err "未知项目或不在 projects.json: $id"
+        return 1
+    fi
+    case "${PROJECT_KIND[$id]}" in
+        frontend)
+            deploy_frontend_by_id "$id"
+            ;;
+        backend)
+            case "$id" in
+                financial-api)     deploy_financial_api ;;
+                deepquant-backend) deploy_deepquant_backend ;;
+                *)
+                    err "后端 $id 未实现专用部署（请补 deployHook 或专用函数）"
+                    return 1
+                    ;;
+            esac
+            ;;
+        *)
+            err "未知 kind: ${PROJECT_KIND[$id]:-?} ($id)"
+            return 1
+            ;;
+    esac
+}
+
+# 兼容旧函数名
+deploy_financial_web() { deploy_frontend_by_id financial-web; }
+deploy_official_site()  { deploy_frontend_by_id official-site; }
+deploy_deepquant_web()  { deploy_frontend_by_id deepquant-web; }
 
 # 部署调度
 deploy_one() {
     local p="$1"
-    case "$p" in
-        financial-web)      deploy_financial_web ;;
-        financial-api)      deploy_financial_api ;;
-        official-site)      deploy_official_site ;;
-        deepquant-web)      deploy_deepquant_web ;;
-        deepquant-backend)  deploy_deepquant_backend ;;
-        *) err "未知项目: $p"; return 1 ;;
-    esac
+    deploy_by_id "$p"
 }
 
-# 按依赖关系排序部署列表：前端 → 后端
+# 按清单 kind 排序：前端 → 后端
 sort_deploy_order() {
-    local frontends=() backends=()
+    local frontends=() backends=() other=()
+    local p
     for p in "$@"; do
-        case "$p" in
-            financial-web|official-site|deepquant-web) frontends+=("$p") ;;
-            financial-api|deepquant-backend)          backends+=("$p") ;;
+        case "${PROJECT_KIND[$p]}" in
+            frontend) frontends+=("$p") ;;
+            backend)  backends+=("$p") ;;
+            *)        other+=("$p") ;;
         esac
     done
-    echo "${frontends[@]} ${backends[@]}"
+    echo "${frontends[@]} ${backends[@]} ${other[@]}"
 }
 
 # 批量部署（容错：单个失败不中断后续）
@@ -1032,7 +1106,7 @@ interactive_deploy() {
     echo ""
     local i=1
     for p in "${PROJECTS[@]}"; do
-        echo "  ${BOLD}$i)${NC} $p  ${DIM}${PROJECT_NAMES[$p]}${NC}"
+        echo "  ${BOLD}$i)${NC} $p  ${DIM}${PROJECT_DISPLAY_NAME[$p]}${NC}"
         ((i++))
     done
     echo "  ${BOLD}a)${NC} 全选"
@@ -1103,7 +1177,7 @@ interactive_rollback() {
     for p in "${PROJECTS[@]}"; do
         local mark="无备份"
         has_backups "$p" && mark="有备份"
-        echo "  ${BOLD}$i)${NC} $p  ${DIM}${PROJECT_NAMES[$p]}${NC}  [$mark]"
+        echo "  ${BOLD}$i)${NC} $p  ${DIM}${PROJECT_DISPLAY_NAME[$p]}${NC}  [$mark]"
         i=$((i + 1))
     done
     echo "  ${BOLD}a)${NC} 全部（仅回滚「有备份」的项目）"
@@ -1157,7 +1231,7 @@ interactive_list_backups() {
     for p in "${PROJECTS[@]}"; do
         if has_backups "$p"; then
             any=true
-            echo "  ${BOLD}$p${NC} (${PROJECT_NAMES[$p]}):"
+            echo "  ${BOLD}$p${NC} (${PROJECT_DISPLAY_NAME[$p]}):"
             local f
             for f in $(ls -t "$BACKUP_BASE/$p"/*.tar.gz 2>/dev/null); do
                 local ts size
@@ -1266,10 +1340,16 @@ needs_deploy_lock() {
     if $SHOW_HELP || $SHOW_STATUS || $SHOW_LOGS || $LIST_BACKUPS; then
         return 1
     fi
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        return 1
+    fi
     return 0
 }
 
 acquire_deploy_lock() {
+    if ! needs_deploy_lock; then
+        return 0
+    fi
     exec 200>"$LOCK_FILE"
     if ! flock -n 200; then
         err "另一个 deploy 进程正在运行（锁文件: $LOCK_FILE）"

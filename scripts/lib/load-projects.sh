@@ -13,9 +13,9 @@ _load_projects() {
     projects_file="${PROJECTS_FILE:-}"
     if [ -z "$projects_file" ]; then
         for f in "$deploy_dir/projects.json" \
-                 "$DIST_ROOT/projects.json" \
+                 "${DIST_ROOT:-}/projects.json" \
                  "/www/wwwroot/project/uploads/dist/projects.json"; do
-            [ -f "$f" ] && projects_file="$f" && break
+            [ -n "$f" ] && [ "$f" != "/projects.json" ] && [ -f "$f" ] && projects_file="$f" && break
         done
     fi
 
@@ -53,8 +53,12 @@ _load_projects() {
 
     for id in $PROJECT_IDS; do
         DEPLOY_PATH[$id]="${PROJECT_BASE}/$(_json_project_field "$projects_file" "$id" deployPath)"
-        ARTIFACT_NAME[$id]=$(_json_project_field "$projects_file" "$id" build.artifact)
-        SERVICES[$id]=$(_json_project_field "$projects_file" "$id" services | tr -d '[]"' | sed 's/,/ /g')
+        # artifact 优先；后端常用 artifactPattern（如 financial-api-*.tar.gz）
+        local art pat
+        art=$(_json_project_field "$projects_file" "$id" build.artifact)
+        pat=$(_json_project_field "$projects_file" "$id" build.artifactPattern)
+        ARTIFACT_NAME[$id]="${art:-$pat}"
+        SERVICES[$id]=$(_json_project_services "$projects_file" "$id")
         HEALTH_URL[$id]=$(_json_project_field "$projects_file" "$id" healthUrl)
         NGINX_RELOAD[$id]=$(_json_project_field "$projects_file" "$id" nginxReload)
         DEPLOY_HOOK[$id]=$(_json_project_field "$projects_file" "$id" deployHook)
@@ -102,7 +106,31 @@ for p in d.get('projects',[]):
         v=p
         for k in '${field}'.split('.'):
             v=v.get(k,'') if isinstance(v,dict) else ''
-        print(v)
+        if isinstance(v, list):
+            print(' '.join(str(x) for x in v))
+        elif isinstance(v, bool):
+            print('true' if v else 'false')
+        elif v is None:
+            print('')
+        else:
+            print(v)
+        break
+" 2>/dev/null
+    fi
+}
+
+# services 数组 → 空格分隔
+_json_project_services() {
+    local file="$1" id="$2"
+    if command -v jq &>/dev/null; then
+        jq -r ".projects[] | select(.id==\"$id\") | (.services // []) | join(\" \")" "$file" 2>/dev/null
+    else
+        python3 -c "
+import json
+d=json.load(open('$file'))
+for p in d.get('projects',[]):
+    if p.get('id')=='$id':
+        print(' '.join(p.get('services') or []))
         break
 " 2>/dev/null
     fi

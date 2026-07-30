@@ -84,7 +84,13 @@ def parse_projects(lines, start):
 
                 if key == 'enabled':
                     proj[key] = val.lower() == 'true'
-                elif key == 'services':
+                    i += 1
+                    continue
+                if key == 'nginxReload':
+                    proj[key] = val.lower() == 'true'
+                    i += 1
+                    continue
+                if key == 'services':
                     proj[key] = []
                     i += 1
                     while i < len(lines):
@@ -95,7 +101,7 @@ def parse_projects(lines, start):
                         else:
                             break
                     continue
-                elif key == 'exclude':
+                if key == 'exclude':
                     proj.setdefault('build', {})['exclude'] = []
                     i += 1
                     while i < len(lines):
@@ -106,7 +112,7 @@ def parse_projects(lines, start):
                         else:
                             break
                     continue
-                elif key == 'include':
+                if key == 'include':
                     proj.setdefault('build', {})['include'] = []
                     i += 1
                     while i < len(lines):
@@ -117,22 +123,21 @@ def parse_projects(lines, start):
                         else:
                             break
                     continue
-                elif val:
+                if val:
                     if val.startswith('"') or val.startswith("'"):
                         val = val.strip('"').strip("'")
-                    if key in ('sourcePath', 'deployPath', 'healthUrl',
-                               'nginxReload', 'deployHook', 'packer',
-                               'artifactPattern', 'artifact', 'distDir',
-                               'packageManager', 'script', 'envFile',
-                               'mode', 'kind', 'displayName'):
-                        if key in ('packer', 'artifactPattern', 'artifact',
-                                   'distDir', 'packageManager', 'script',
-                                   'envFile', 'mode'):
-                            proj.setdefault('build', {})[key] = val
-                        else:
-                            proj[key] = val
-                    elif key == 'nginxReload':
-                        proj[key] = val.lower() == 'true'
+                    build_keys = (
+                        'packer', 'artifactPattern', 'artifact', 'distDir',
+                        'packageManager', 'script', 'envFile', 'mode',
+                    )
+                    top_keys = (
+                        'sourcePath', 'deployPath', 'healthUrl',
+                        'deployHook', 'kind', 'displayName',
+                    )
+                    if key in build_keys:
+                        proj.setdefault('build', {})[key] = val
+                    elif key in top_keys:
+                        proj[key] = val
             i += 1
 
         projects.append(proj)
