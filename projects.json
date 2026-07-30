@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "workspaceRoot": "",
+  "projectBase": "/www/wwwroot/project",
+  "projects": [
+    {
+      "id": "financial-web",
+      "enabled": true,
+      "kind": "frontend",
+      "displayName": "行情/社区前端",
+      "sourcePath": "financial/financial-web",
+      "build": {
+        "packageManager": "pnpm",
+        "script": "build",
+        "distDir": "dist",
+        "artifact": "financial-web-dist.tar.gz"
+      },
+      "deployPath": "financial/financial-web/dist",
+      "services": [],
+      "healthUrl": "",
+      "nginxReload": true
+    },
+    {
+      "id": "financial-api",
+      "enabled": true,
+      "kind": "backend",
+      "displayName": "FastAPI 后端",
+      "sourcePath": "financial/financial-api",
+      "build": {
+        "packer": "scripts/pack-generic.ps1",
+        "artifactPattern": "financial-api-*.tar.gz",
+        "include": [
+          "scripts/deploy-financial-api.sh",
+          "configs/systemd/financial-api.service",
+          "configs/systemd/financial-crawler.service",
+          "configs/systemd/financial-worker.service",
+          "configs/systemd/financial-streaming.service",
+          "configs/financial-api.env.example"
+        ]
+      },
+      "deployPath": "financial/financial-api/package",
+      "services": [
+        "financial-api",
+        "financial-crawler",
+        "financial-worker",
+        "financial-streaming"
+      ],
+      "healthUrl": "http://127.0.0.1:5001/api/health",
+      "nginxReload": false,
+      "deployHook": "scripts/deploy-financial-api.sh"
+    },
+    {
+      "id": "official-site",
+      "enabled": true,
+      "kind": "frontend",
+      "displayName": "卓筹介绍站",
+      "sourcePath": "official-site",
+      "build": {
+        "packageManager": "pnpm",
+        "script": "build",
+        "distDir": "dist",
+        "artifact": "official-site-dist.tar.gz",
+        "envFile": "configs/official-site.env"
+      },
+      "deployPath": "official-site/dist",
+      "services": [],
+      "healthUrl": "",
+      "nginxReload": true
+    },
+    {
+      "id": "deepquant-web",
+      "enabled": true,
+      "kind": "frontend",
+      "displayName": "QuantDinger 前端",
+      "sourcePath": "deepquant/deepquant_vue",
+      "build": {
+        "packageManager": "pnpm",
+        "script": "build",
+        "distDir": "dist",
+        "artifact": "deepquant-web-dist.tar.gz"
+      },
+      "deployPath": "deepquant/web/dist",
+      "services": [],
+      "healthUrl": "",
+      "nginxReload": true
+    },
+    {
+      "id": "deepquant-backend",
+      "enabled": true,
+      "kind": "backend",
+      "displayName": "QuantDinger 后端",
+      "sourcePath": "deepquant/deepquant/backend_api_python",
+      "build": {
+        "mode": "source-tar",
+        "artifact": "deepquant-backend-package.tar.gz",
+        "exclude": [
+          ".env",
+          ".venv",
+          "venv",
+          "logs",
+          "__pycache__",
+          ".git"
+        ]
+      },
+      "deployPath": "deepquant/backend/package",
+      "services": [
+        "quantdinger-backend"
+      ],
+      "healthUrl": "http://127.0.0.1:5000/health",
+      "nginxReload": false
+    }
+  ]
+}

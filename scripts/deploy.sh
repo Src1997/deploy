@@ -137,11 +137,6 @@ PACKAGES_DIR="${PACKAGES_DIR:-$PROJECT_BASE/uploads/dist/packages}"
 DIST_ROOT="${DIST_ROOT:-$PROJECT_BASE/uploads/dist}"
 CONFIGS_SRC="${CONFIGS_SRC:-$DIST_ROOT/configs}"
 
-FINANCIAL_API_DIR="$PROJECT_BASE/financial/financial-api"
-FINANCIAL_WEB_DIR="$PROJECT_BASE/financial/financial-web"
-OFFICIAL_SITE_DIR="$PROJECT_BASE/official-site"
-DEEPQUANT_BACKEND_DIR="$PROJECT_BASE/deepquant/backend"
-DEEPQUANT_WEB_DIR="$PROJECT_BASE/deepquant/web"
 BACKUP_BASE="${BACKUP_BASE:-$PROJECT_BASE/backup}"
 MAX_BACKUPS="${MAX_BACKUPS:-5}"
 PG_USER="${PG_USER:-root}"
@@ -168,37 +163,42 @@ audit_log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$DEPLOY_LOG"
 }
 
-# ── 项目元数据 ────────────────────────────────────────────────────
-declare -a PROJECTS=("financial-web" "financial-api" "official-site" "deepquant-web" "deepquant-backend")
-declare -A PROJECT_NAMES=(
-    ["financial-web"]="行情/社区前端"
-    ["financial-api"]="FastAPI 后端"
-    ["official-site"]="卓筹介绍站"
-    ["deepquant-web"]="QuantDinger 前端"
-    ["deepquant-backend"]="QuantDinger 后端"
-)
-declare -A PROJECT_DIST=(
-    ["financial-web"]="$FINANCIAL_WEB_DIR/dist"
-    ["financial-api"]="$FINANCIAL_API_DIR/package"
-    ["official-site"]="$OFFICIAL_SITE_DIR/dist"
-    ["deepquant-web"]="$DEEPQUANT_WEB_DIR/dist"
-    ["deepquant-backend"]="$DEEPQUANT_BACKEND_DIR/package"
-)
-declare -A PROJECT_TAR=(
-    ["financial-web"]="financial-web-dist.tar.gz"
-    ["financial-api"]="financial-api-*.tar.gz"
-    ["official-site"]="official-site-dist.tar.gz"
-    ["deepquant-web"]="deepquant-web-dist.tar.gz"
-    ["deepquant-backend"]="deepquant-backend-package.tar.gz"
-)
-declare -A PROJECT_SERVICE=(
-    ["financial-api"]="financial-api"
-    ["deepquant-backend"]="quantdinger-backend"
-)
-declare -A PROJECT_HEALTH=(
-    ["financial-api"]="http://127.0.0.1:5001/api/health"
-    ["deepquant-backend"]="http://127.0.0.1:5000/api/health"
-)
+# ── 项目清单：从 projects.json 加载（SSOT）──
+SCRIPT_DIR_DEPLOY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR_DEPLOY/lib/load-projects.sh" ]; then
+    source "$SCRIPT_DIR_DEPLOY/lib/load-projects.sh"
+elif [ -f "$DIST_ROOT/lib/load-projects.sh" ]; then
+    source "$DIST_ROOT/lib/load-projects.sh"
+else
+    echo "[ERR] load-projects.sh not found" >&2
+    exit 1
+fi
+
+# 从加载器结果构建 deploy.sh 兼容变量
+declare -a PROJECTS=($PROJECT_IDS)
+declare -A PROJECT_NAMES=()
+declare -A PROJECT_DIST=()
+declare -A PROJECT_TAR=()
+for p in "${PROJECTS[@]}"; do
+    PROJECT_NAMES[$p]="${PROJECT_DISPLAY_NAME[$p]}"
+    PROJECT_DIST[$p]="${DEPLOY_PATH[$p]}"
+    PROJECT_TAR[$p]="${ARTIFACT_NAME[$p]}"
+done
+# 从清单加载 PROJECT_SERVICE（取第一个服务）和 PROJECT_HEALTH
+declare -A PROJECT_SERVICE=()
+declare -A PROJECT_HEALTH=()
+for p in "${PROJECTS[@]}"; do
+    PROJECT_HEALTH[$p]="${HEALTH_URL[$p]}"
+    _svcs="${SERVICES[$p]}"
+    PROJECT_SERVICE[$p]="${_svcs%% *}"
+done
+
+# 向后兼容目录变量（deploy 函数内仍在使用）
+FINANCIAL_API_DIR="${PROJECT_BASE}/financial/financial-api"
+FINANCIAL_WEB_DIR="${PROJECT_BASE}/financial/financial-web"
+OFFICIAL_SITE_DIR="${PROJECT_BASE}/official-site"
+DEEPQUANT_BACKEND_DIR="${PROJECT_BASE}/deepquant/backend"
+DEEPQUANT_WEB_DIR="${PROJECT_BASE}/deepquant/web"
 
 # ── 参数解析 ────────────────────────────────────────────────────────
 PROJECT=""

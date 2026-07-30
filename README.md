@@ -569,22 +569,87 @@ location ^~ /api/ { ... }   # 在后
 
 ---
 
+## 项目清单与换工作区（projects.yaml SSOT）
+
+> 项目清单是 `projects.yaml`（人类编辑源）+ `projects.json`（机器读取源），所有构建/部署脚本从清单读取项目路径、产物名、服务名等。
+
+### 文件结构
+
+```
+deploy/
+├── projects.yaml        # 人类编辑源（可读性好）
+├── projects.json         # 机器读取源（build.ps1 / deploy.sh 加载）
+└── scripts/
+    ├── sync-projects.py  # yaml → json 同步脚本（需 Python3，WSL 或服务器）
+    ├── lib/
+    │   ├── load-projects.ps1   # PowerShell 加载器
+    │   ├── load-projects.sh    # Bash 加载器
+    │   ├── _probe-projects.ps1 # 验证脚本
+    │   └── _probe-projects.sh  # 验证脚本（WSL）
+    └── pack-generic.ps1        # 通用后端打包器（参数化，不写死路径）
+```
+
+### 登记新项目
+
+1. 在工作区放好源码
+2. 编辑 `projects.yaml` 增加一条 `id` + `sourcePath` + `deployPath` + build/deploy 字段
+3. 同步：`python3 scripts/sync-projects.py`（WSL）或手动编辑 `projects.json`
+4. 前端：确保有 `pnpm build`；后端：按需补 `deployHook` / systemd
+5. `.\scripts\build.ps1 {id}` → 上传 → `bash deploy.sh {id}`
+
+### 换工作区根目录
+
+```bash
+# 方式一：环境变量（临时）
+export WORKSPACE_ROOT=/path/to/new/workspace
+.\scripts\build.ps1 discover   # 验证路径是否正确
+
+# 方式二：deploy.env
+WORKSPACE_ROOT=/path/to/new/workspace
+```
+
+### 扫描未登记项目
+
+```powershell
+.\scripts\build.ps1 discover
+# 报告工作区存在但未登记到 projects.json 的项目目录
+```
+
+### 解析优先级
+
+```
+WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
+PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
+```
+
+---
+
 ## 文件清单
 
 ```
 deploy/
 ├── README.md                         # 本文档
+├── projects.yaml                    # 项目清单 SSOT（人类编辑源）
+├── projects.json                    # 项目清单 SSOT（机器读取源）
 ├── scripts/                          # 所有执行脚本
-│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理 + 系统冲突（原 0b 已并入）
-│   ├── 01b-baota-exclusive.sh        # 冲突清理实现（也可单独 --check；00 会调用）
-│   ├── detect-status.sh              # 探测各阶段是否已完成 / 下一步建议
+│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理 + 系统冲突
+│   ├── 01b-baota-exclusive.sh        # 冲突清理实现
+│   ├── detect-status.sh              # 探测各阶段是否已完成
 │   ├── 01-install-baota.sh           # 服务器 SSH：安装宝塔面板
-│   ├── 02-server-setup.sh            # 服务器 SSH：创建数据库、目录结构（校验宝塔二进制）
-│   ├── build.ps1                     # Windows 本地：自动扫描项目 + 交互式构建
-│   ├── deploy.sh                     # 服务器 SSH：部署 + 回滚（支持单项目 / all）
-│   ├── pack-financial-api.ps1        # Windows 本地：financial-api 打包
+│   ├── 02-server-setup.sh            # 服务器 SSH：创建数据库、目录结构
+│   ├── build.ps1                     # Windows 本地：从 projects.json 加载 + 构建
+│   ├── pack-generic.ps1              # 通用后端打包器（参数化，读清单）
+│   ├── pack-financial-api.ps1        # financial-api 打包（薄封装 → pack-generic）
 │   ├── pack-financial-api.sh          # Linux/macOS：financial-api 打包
-│   └── deploy-financial-api.sh        # 服务器：financial-api 一键部署（打包进 tar）
+│   ├── deploy-financial-api.sh        # 服务器：financial-api 一键部署
+│   ├── sync-projects.py              # yaml → json 同步脚本（需 Python3）
+│   ├── deploy.sh                     # 服务器：部署 + 回滚（从 projects.json 加载）
+│   └── lib/                          # 共享库
+│       ├── load-deploy-env.sh        # deploy.env 加载器
+│       ├── load-projects.ps1         # PowerShell 项目清单加载器
+│       ├── load-projects.sh          # Bash 项目清单加载器
+│       ├── _probe-projects.ps1       # 验证脚本（PowerShell）
+│       └── _probe-projects.sh        # 验证脚本（WSL）
 ├── configs/                          # 所有配置文件
 │   ├── nginx-all-sites.conf          # Nginx 站点配置（无 SSL，IP 部署 / 服务器 A 旧）
 │   ├── nginx-all-sites-ssl.conf      # Nginx 站点配置（SSL，服务器 B www.deepquant.club）

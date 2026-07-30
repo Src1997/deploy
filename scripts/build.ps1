@@ -4,13 +4,15 @@
     Build & deploy helper for all projects (Windows PowerShell)
 
 .DESCRIPTION
-    Interactive build tool with project selection, or direct CLI mode.
+    项目清单来自 projects.json（SSOT），不再扫描工作区目录作为可部署全集。
+    扫描仅用于 --discover 报告未登记项目。
 
 .EXAMPLE
     .\scripts\build.ps1                           # Interactive menu
     .\scripts\build.ps1 financial-web              # Build one project
     .\scripts\build.ps1 all                        # Build all
     .\scripts\build.ps1 financial-web,official-site # Build selected
+    .\scripts\build.ps1 --discover                 # Scan & report unregistered
 #>
 
 param(
@@ -21,9 +23,16 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptsDir  = $PSScriptRoot
 $DeployDir   = Split-Path $ScriptsDir -Parent
-$Workspace   = if ($env:WORKSPACE_ROOT) { $env:WORKSPACE_ROOT } else { Split-Path $DeployDir -Parent }
-$ConfigsDir  = Join-Path $DeployDir 'configs'
+$ConfigsDir   = Join-Path $DeployDir 'configs'
 $PackagesDir = Join-Path $DeployDir 'dist\packages'
+
+# ── 加载项目清单 ──
+. (Join-Path $ScriptsDir 'lib\load-projects.ps1')
+$projects = Load-Projects
+if (-not $projects) {
+    Write-Host "[ERR] Failed to load projects.json" -ForegroundColor Red
+    exit 1
+}
 
 function W-Step  { param($msg) Write-Host "`n[*] $msg" -ForegroundColor Cyan }
 function W-OK    { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
@@ -38,129 +47,53 @@ function Ensure-OutputDir {
     }
 }
 
-# ── 名称映射（目录名 → 部署项目名）──────────────────────────────
-$NameMapping = @{
-    "deepquant_vue"       = "deepquant-web"
-    "backend_api_python"  = "deepquant-backend"
-}
-
-# ── 自动扫描工作区 ────────────────────────────────────────────────
-$ExcludeDirs = @("node_modules", ".venv", "venv", ".git", "dist", "__pycache__", ".pnpm-store", "deploy", ".cursor", ".agents", ".codex", "codex", ".vscode")
-
-function Map-Name([string]$dirName) {
-    if ($NameMapping.ContainsKey($dirName)) { return $NameMapping[$dirName] }
-    return $dirName
-}
-
-function Test-ProjectDir([string]$path) {
-    $dirName = Split-Path $path -Leaf
-
-    # 前端：package.json + build script
-    $pkgPath = Join-Path $path "package.json"
-    if (Test-Path $pkgPath) {
-        try {
-            $pkg = Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($pkg.scripts.build -or $pkg.scripts.'build:prod') {
-                $projName = Map-Name $dirName
-                $buildCmd = if ($pkg.scripts.'build:prod') { "pnpm build:prod" } else { "pnpm build" }
-                $envFile = "$ConfigsDir\$projName.env"
-                if (-not (Test-Path $envFile)) { $envFile = "" }
-                return @{
-                    Name=$projName; Dir=$path; Desc="前端"; Type="frontend"
-                    BuildCmd=$buildCmd; TarName="$projName-dist.tar.gz"
-                    PackScript=""; EnvFile=$envFile
-                }
-            }
-        } catch { }
-    }
-
-    # 后端（uv）：pyproject.toml → 需有对应的 pack 脚本才算可部署
-    if (Test-Path (Join-Path $path "pyproject.toml")) {
-        $projName = Map-Name $dirName
-        $packScript = "$ScriptsDir\pack-$projName.ps1"
-        if (Test-Path $packScript) {
-            return @{
-                Name=$projName; Dir=$path; Desc="Python 后端 (uv)"; Type="backend"
-                BuildCmd=""; TarName=""; PackScript=$packScript; EnvFile=""
-            }
+# ── 从 projects.json 构建项目列表 ──
+function Build-ProjectList {
+    $list = @()
+    foreach ($p in $projects) {
+        $srcPath = Join-Path $global:WorkspaceRoot $p.sourcePath
+        if (-not (Test-Path $srcPath)) {
+            W-Warn "Source not found: $($p.id) → $srcPath"
+            continue
         }
-        # 无对应 pack 脚本 → 子模块（可独立打包但属父项目）
-        $parentName = Split-Path (Split-Path $path -Parent) -Leaf
-        return @{
-            Name=$projName; Dir=$path; Desc="子模块 (Python, 属 $parentName)"; Type="submodule"
-            BuildCmd=""; TarName=""; PackScript=""; EnvFile=""
-        }
-    }
 
-    # 后端（pip）：requirements.txt → 简单 tar
-    if (Test-Path (Join-Path $path "requirements.txt")) {
-        $projName = Map-Name $dirName
-        return @{
-            Name=$projName; Dir=$path; Desc="Python 后端 (pip)"; Type="backend"
-            BuildCmd=""; TarName="$projName-package.tar.gz"; PackScript=""; EnvFile=""
-        }
-    }
-
-    return $null
-}
-
-function Scan-Projects {
-    $found = @()
-    $exclude = $ExcludeDirs
-
-    # 扫描顶层目录
-    $roots = Get-ChildItem -Path $Workspace -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $exclude -notcontains $_.Name }
-
-    foreach ($root in $roots) {
-        # 检查根目录本身
-        $proj = Test-ProjectDir $root.FullName
-        if ($proj) { $found += $proj; continue }
-
-        # 扫描子目录（深度 1-2）
-        $subDirs = Get-ChildItem -Path $root.FullName -Directory -Depth 2 -ErrorAction SilentlyContinue |
-            Where-Object {
-                $exclude -notcontains $_.Name -and
-                $exclude -notcontains $_.Parent.Name
+        if ($p.kind -eq 'frontend') {
+            $buildScript = $p.build.script
+            $pkgPath = Join-Path $srcPath 'package.json'
+            $buildCmd = "pnpm $buildScript"
+            if (Test-Path $pkgPath) {
+                try {
+                    $pkg = Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($pkg.scripts.'build:prod') { $buildCmd = "pnpm build:prod" }
+                } catch { }
             }
 
-        foreach ($sub in $subDirs) {
-            # 跳过已找到的相同路径
-            if ($found | Where-Object { $_.Dir -eq $sub.FullName }) { continue }
-            $proj = Test-ProjectDir $sub.FullName
-            if ($proj) { $found += $proj }
+            $envFile = ""
+            if ($p.build.envFile) {
+                $envPath = Join-Path $DeployDir $p.build.envFile
+                if (Test-Path $envPath) { $envFile = $envPath }
+            }
+
+            $list += @{
+                Id=$p.id; Name=$p.id; Dir=$srcPath; Desc=$p.displayName; Kind='frontend'
+                BuildCmd=$buildCmd; TarName=$p.build.artifact; EnvFile=$envFile
+            }
+        }
+        elseif ($p.kind -eq 'backend') {
+            $packScript = Join-Path $ScriptsDir "pack-generic.ps1"
+            $list += @{
+                Id=$p.id; Name=$p.id; Dir=$srcPath; Desc=$p.displayName; Kind='backend'
+                BuildCmd=''; TarName=$p.build.artifact; PackScript=$packScript; ProjectId=$p.id
+            }
         }
     }
-
-    # 排序：按名称排序，同一项目的前后端自然聚在一起
-    return $found | Sort-Object Name
+    return $list
 }
 
-# ── 扫描项目 ─────────────────────────────────────────────────────
-W-Step "Scanning workspace for projects..."
-$allFound = Scan-Projects
-# 分离可部署项目和子模块
-$ProjectList = @($allFound | Where-Object { $_.Type -ne "submodule" })
-$SubModules = @($allFound | Where-Object { $_.Type -eq "submodule" })
-if ($ProjectList.Count -eq 0) {
-    W-Err "No projects found in $Workspace"
-    exit 1
-}
-W-OK "Found $($ProjectList.Count) projects:"
-foreach ($p in $ProjectList) {
-    Write-Host "    $($p.Name)  ($($p.Desc))" -ForegroundColor Gray
-}
-if ($SubModules.Count -gt 0) {
-    Write-Host ""
-    Write-Host "  含子模块（不可独立部署，随父项目打包）:" -ForegroundColor DarkYellow
-    foreach ($s in $SubModules) {
-        Write-Host "    $($s.Name)  ($($s.Desc))" -ForegroundColor DarkGray
-    }
-}
-
+# ── 构建单个项目 ──
 function Build-One([string]$name) {
     $proj = $ProjectList | Where-Object { $_.Name -eq $name }
-    if (-not $proj) { W-Err "Unknown project: $name"; return $false }
+    if (-not $proj) { W-Err "Unknown project: $name (not in projects.json)"; return $false }
 
     $p = $proj[0]
     W-Step "Build: $($p.Name) ($($p.Desc))..."
@@ -172,7 +105,7 @@ function Build-One([string]$name) {
     }
 
     # ── frontend: pnpm build + tar dist ──
-    if ($p.Type -eq "frontend") {
+    if ($p.Kind -eq 'frontend') {
         Push-Location $p.Dir
         try {
             if (-not (Test-Path "$($p.Dir)\node_modules")) {
@@ -183,46 +116,73 @@ function Build-One([string]$name) {
             Invoke-Expression $p.BuildCmd
             if ($LASTEXITCODE -ne 0) { W-Err "Build failed for $($p.Name)"; return $false }
             W-OK "Build complete: $($p.Name)"
-            $tar = "$PackagesDir\$($p.TarName)"
-            tar -czf $tar -C "$($p.Dir)\dist" .
+
+            $distDir = Join-Path $p.Dir 'dist'
+            if (-not (Test-Path $distDir)) {
+                W-Err "dist/ not found after build"
+                return $false
+            }
+
+            $tar = Join-Path $PackagesDir $p.TarName
+            tar -czf $tar -C $distDir .
             W-OK "Packed: $tar"
         } catch { W-Err "Build failed: $_"; return $false }
         finally { Pop-Location }
         return $true
     }
 
-    # ── backend with PackScript: call pack script (financial-api) ──
-    if ($p.PackScript -and (Test-Path $p.PackScript)) {
-        Push-Location $p.Dir
-        try {
-            & $p.PackScript
-            $faDists = Get-ChildItem "$DeployDir\dist\financial-api-*.tar.gz" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($faDists) {
-                Copy-Item $faDists.FullName $PackagesDir -Force
-                W-OK "Packed: $($faDists.Name)"
-            }
-        } catch { W-Err "Pack failed: $_"; return $false }
-        finally { Pop-Location }
+    # ── backend: 调用通用打包器 ──
+    if ($p.Kind -eq 'backend' -and $p.PackScript) {
+        W-Step "Packing $($p.Name)..."
+        & $p.PackScript -ProjectId $p.ProjectId
+        if ($LASTEXITCODE -ne 0) { W-Err "Pack failed for $($p.Name)"; return $false }
         return $true
     }
 
-    # ── backend without PackScript (pip): source tar (deepquant-backend) ──
-    if ($p.Type -eq "backend" -and $p.TarName) {
-        Push-Location $p.Dir
-        try {
-            $tar = "$PackagesDir\$($p.TarName)"
-            tar -czf $tar --exclude=.env --exclude=.venv --exclude=venv --exclude=logs --exclude=__pycache__ --exclude=*.pyc --exclude=.git --exclude=data/memory .
-            W-OK "Packed: $tar"
-        } catch { W-Err "Pack failed: $_"; return $false }
-        finally { Pop-Location }
-        return $true
-    }
-
-    W-Err "Cannot determine build strategy for: $($p.Name) (Type=$($p.Type))"
+    W-Err "Cannot determine build strategy for: $($p.Name) (Kind=$($p.Kind))"
     return $false
 }
 
-# ── 复制部署资产到 dist/（使 dist/ 自包含可上传）──────────────────
+# ── 扫描工作区报告未登记项目（可选）──
+function Discover-Unregistered {
+    W-Banner "Discover: Unregistered Projects"
+    $registered = $projects | ForEach-Object { $_.sourcePath }
+    $exclude = @("node_modules", ".venv", "venv", ".git", "dist", "__pycache__", ".pnpm-store", "deploy", ".cursor", ".agents", ".codex", ".vscode", ".ignored", ".vite")
+
+    $roots = Get-ChildItem -Path $global:WorkspaceRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $exclude -notcontains $_.Name }
+
+    $found = $false
+    foreach ($root in $roots) {
+        $subDirs = Get-ChildItem -Path $root.FullName -Directory -Depth 2 -ErrorAction SilentlyContinue |
+            Where-Object {
+                $exclude -notcontains $_.Name -and
+                $_.FullName -notmatch '[\\/]node_modules[\\/]' -and
+                $_.FullName -notmatch '[\\/]\.vite[\\/]' -and
+                $_.FullName -notmatch '[\\/]\.ignored[\\/]'
+            }
+
+        foreach ($sub in $subDirs) {
+            $relPath = $sub.FullName.Substring($global:WorkspaceRoot.Length).TrimStart('\', '/') -replace '\\', '/'
+            if ($registered -contains $relPath) { continue }
+
+            # 检测是否是项目目录
+            if ((Test-Path (Join-Path $sub.FullName 'package.json')) -or
+                (Test-Path (Join-Path $sub.FullName 'pyproject.toml')) -or
+                (Test-Path (Join-Path $sub.FullName 'requirements.txt'))) {
+                Write-Host "  [unregistered] $relPath" -ForegroundColor Yellow
+                Write-Host "    Add to projects.yaml: sourcePath: $relPath" -ForegroundColor DarkGray
+                $found = $true
+            }
+        }
+    }
+
+    if (-not $found) {
+        W-OK "All project directories are registered in projects.json"
+    }
+}
+
+# ── 复制部署资产到 dist/ ──
 function Copy-DeployAssets {
     W-Step "Copying deploy assets to dist/..."
     $DistDir = Join-Path $DeployDir 'dist'
@@ -231,14 +191,14 @@ function Copy-DeployAssets {
     Copy-Item (Join-Path $ScriptsDir 'deploy.sh') (Join-Path $DistDir 'deploy.sh') -Force
     W-OK "Copied: deploy.sh"
 
-    # detect-status.sh（可选）
+    # detect-status.sh
     $detectScript = Join-Path $ScriptsDir 'detect-status.sh'
     if (Test-Path $detectScript) {
         Copy-Item $detectScript (Join-Path $DistDir 'detect-status.sh') -Force
         W-OK "Copied: detect-status.sh"
     }
 
-    # configs/（nginx、systemd、env 模板等）
+    # configs/
     if (Test-Path $ConfigsDir) {
         $distConfigs = Join-Path $DistDir 'configs'
         if (Test-Path $distConfigs) { Remove-Item $distConfigs -Recurse -Force }
@@ -246,7 +206,7 @@ function Copy-DeployAssets {
         W-OK "Copied: configs/"
     }
 
-    # scripts/lib（deploy.sh 加载 deploy.env）
+    # lib/
     $libSrc = Join-Path $ScriptsDir 'lib'
     if (Test-Path $libSrc) {
         $distLib = Join-Path $DistDir 'lib'
@@ -255,7 +215,14 @@ function Copy-DeployAssets {
         W-OK "Copied: lib/"
     }
 
-    # deploy.env.example（提醒服务器配置，不含真实密码）
+    # projects.json（deploy.sh 服务器端需要）
+    $projectsJson = Join-Path $DeployDir 'projects.json'
+    if (Test-Path $projectsJson) {
+        Copy-Item $projectsJson (Join-Path $DistDir 'projects.json') -Force
+        W-OK "Copied: projects.json"
+    }
+
+    # deploy.env.example
     $envExample = Join-Path $DeployDir 'deploy.env.example'
     if (Test-Path $envExample) {
         Copy-Item $envExample (Join-Path $DistDir 'deploy.env.example') -Force
@@ -264,7 +231,6 @@ function Copy-DeployAssets {
 }
 
 function Show-Summary([string[]]$built) {
-    # 确保 dist/ 自包含（deploy.sh + configs/）
     Copy-DeployAssets
 
     W-Banner "Build Summary"
@@ -279,28 +245,30 @@ function Show-Summary([string[]]$built) {
     Write-Host ""
     Write-Host "  dist/ self-contained:" -ForegroundColor White
     $DistDir = Join-Path $DeployDir 'dist'
-    Write-Host "    deploy.sh, configs/, packages/" -ForegroundColor Gray
+    Write-Host "    deploy.sh, configs/, lib/, projects.json, packages/" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  Upload & Deploy:" -ForegroundColor White
     Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
-    Write-Host "    scp -r $DistDir serverB:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
     Write-Host "    # Then on server:" -ForegroundColor DarkGray
     Write-Host "    cd /www/wwwroot/project/uploads/dist && bash deploy.sh" -ForegroundColor Cyan
     Write-Host ""
 }
 
-# ── Interactive menu ────────────────────────────────────────────
+# ── Interactive menu ──
 function Interactive-Menu {
-    # 首次进入显示帮助
     $firstRun = $true
     while ($true) {
         if ($firstRun) {
             W-Banner "Build Tool"
+            Write-Host "  项目清单: projects.json ($($ProjectList.Count) projects)" -ForegroundColor DarkGray
+            Write-Host "  工作区:   $global:WorkspaceRoot" -ForegroundColor DarkGray
+            Write-Host ""
             Write-Host "  命令行用法：" -ForegroundColor DarkGray
             Write-Host "    .\scripts\build.ps1                    交互式菜单" -ForegroundColor DarkGray
-            Write-Host "    .\scripts\build.ps1 <project>           单项目构建" -ForegroundColor DarkGray
+            Write-Host "    .\scripts\build.ps1 {project}           单项目构建" -ForegroundColor DarkGray
             Write-Host "    .\scripts\build.ps1 proj1,proj2         多项目构建" -ForegroundColor DarkGray
             Write-Host "    .\scripts\build.ps1 all                 全量构建" -ForegroundColor DarkGray
+            Write-Host "    .\scripts\build.ps1 discover          扫描未登记项目" -ForegroundColor DarkGray
             Write-Host ""
             $firstRun = $false
         }
@@ -308,7 +276,7 @@ function Interactive-Menu {
         Write-Host "  [1] Build selected projects (multi-select)"
         Write-Host "  [2] Build all ($($ProjectList.Count) projects)"
         Write-Host "  [3] List packages"
-        Write-Host "  [4] Re-scan projects"
+        Write-Host "  [4] Discover unregistered projects"
         Write-Host "  [0] Exit"
         Write-Host ""
         $choice = Read-Host "  Select [0-4]"
@@ -316,7 +284,7 @@ function Interactive-Menu {
             "1" { Interactive-Build }
             "2" { Build-All }
             "3" { List-Packages }
-            "4" { W-Step "Re-scanning..."; $ProjectList = Scan-Projects; W-OK "Found $($ProjectList.Count) projects" }
+            "4" { Discover-Unregistered }
             "0" { Write-Host "Bye!"; exit 0 }
             default { W-Warn "Invalid choice" }
         }
@@ -349,7 +317,6 @@ function Interactive-Build {
     }
     if ($selected.Count -eq 0) { W-Warn "No projects selected"; return }
 
-    # Confirm
     Write-Host ""
     W-HR
     Write-Host "  Will build: $($selected -join ', ')" -ForegroundColor White
@@ -388,11 +355,27 @@ function List-Packages {
     Write-Host ""
 }
 
-# ── Main ─────────────────────────────────────────────────────────
+# ── Main ──
 Ensure-OutputDir
+$ProjectList = Build-ProjectList
+
+if ($ProjectList.Count -eq 0) {
+    W-Err "No buildable projects found (check projects.json and source paths)"
+    exit 1
+}
+
+W-OK "Loaded $($ProjectList.Count) projects from projects.json"
+foreach ($p in $ProjectList) {
+    Write-Host "    $($p.Name)  ($($p.Desc))" -ForegroundColor Gray
+}
+Write-Host ""
 
 # CLI mode
 if ($Project -ne "") {
+    if ($Project -eq "discover") {
+        Discover-Unregistered
+        exit 0
+    }
     if ($Project -eq "all") {
         $built = @()
         foreach ($p in $ProjectList) { if (Build-One $p.Name) { $built += $p.Name } }
