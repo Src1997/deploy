@@ -3,7 +3,7 @@
 # Phase 2: 服务器环境准备
 #
 # 用途：在宝塔面板上准备 PostgreSQL、Redis、Python 和目录结构
-# 执行：SSH 到服务器后运行  bash 02-server-setup.sh
+# 执行：SSH 到服务器后运行  bash 03-server-setup.sh
 #
 # 前提条件：
 #   - 宝塔面板已安装
@@ -108,7 +108,7 @@ fi
 # 拒绝系统防火墙与系统自带栈
 if systemctl is-active --quiet ufw 2>/dev/null || systemctl is-active --quiet firewalld 2>/dev/null; then
     err "系统防火墙（ufw/firewalld）仍在运行，与宝塔冲突"
-    echo "  请执行: bash $(dirname "$0")/01b-baota-exclusive.sh"
+    echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
     MISSING_COMPONENTS=$((MISSING_COMPONENTS + 1))
 fi
 for svc in nginx apache2 httpd redis-server mysql mariadb; do
@@ -116,7 +116,7 @@ for svc in nginx apache2 httpd redis-server mysql mariadb; do
         unit_path=$(systemctl show -p FragmentPath "$svc" 2>/dev/null | cut -d= -f2-)
         if [[ "$unit_path" != /www/* ]]; then
             err "系统服务 $svc 仍在运行 ($unit_path)，会与宝塔抢端口"
-            echo "  请执行: bash $(dirname "$0")/01b-baota-exclusive.sh"
+            echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
             MISSING_COMPONENTS=$((MISSING_COMPONENTS + 1))
         fi
     fi
@@ -133,7 +133,7 @@ require_baota_bin() {
     path=$(command -v "$bin")
     if [[ "$path" != /www/server/* ]]; then
         err "$label: 当前是系统路径 $path（必须用宝塔 /www/server/...）"
-        echo "  请执行: bash $(dirname "$0")/01b-baota-exclusive.sh"
+        echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
         echo "  并确认宝塔软件商店已安装对应组件"
         MISSING_COMPONENTS=$((MISSING_COMPONENTS + 1))
         return 1

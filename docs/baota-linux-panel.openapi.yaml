@@ -1,0 +1,1465 @@
+openapi: 3.0.3
+info:
+  title: 宝塔 Linux 面板 API
+  description: |
+    基于官方文档整理：https://www.bt.cn/data/api-doc.pdf
+
+    ## Apifox 导入
+    1. Apifox → 项目设置 → 导入 → OpenAPI/Swagger
+    2. 选择本文件 `baota-linux-panel.openapi.yaml`
+    3. 环境变量建议：
+       - `baseUrl`：面板根地址，如 `https://127.0.0.1:8888` 或 `http://wsl-host:8888`
+       - `apiSk`：面板「设置 → API 接口」中的接口密钥
+
+    ## 鉴权（每个接口必传）
+    - `request_time`：当前 Unix 时间戳（秒）
+    - `request_token`：`md5(request_time + md5(apiSk))`
+
+    ### Apifox 前置脚本示例（请求前执行）
+    ```javascript
+    const sk = pm.environment.get("apiSk");
+    const t = Math.floor(Date.now() / 1000).toString();
+    const token = CryptoJS.MD5(t + CryptoJS.MD5(sk).toString()).toString();
+    pm.environment.set("request_time", t);
+    pm.environment.set("request_token", token);
+    ```
+
+    ## 注意事项
+    1. 统一使用 **POST**
+    2. 建议保存并复用 Cookie
+    3. 面板 API 必须配置 **IP 白名单**
+    4. 响应均为 JSON
+    5. PHP Demo：https://www.bt.cn/api_demo_php.zip
+  version: "1.0.0"
+  contact:
+    name: BT Panel
+    url: https://www.bt.cn/
+
+servers:
+  - url: "{{baseUrl}}"
+    description: 宝塔面板地址（Apifox 环境变量 baseUrl）
+
+tags:
+  - name: 系统状态
+    description: 系统统计、磁盘、网络负载
+  - name: 面板
+    description: 任务与面板更新
+  - name: 网站
+    description: 站点 CRUD、启停、域名、伪静态、限流等
+  - name: 数据表查询
+    description: /data 通用列表与字段读取
+  - name: 文件
+    description: 读写配置/伪静态文件
+
+paths:
+  /system?action=GetSystemTotal:
+    post:
+      tags: [系统状态]
+      summary: 获取系统基础统计
+      operationId: systemGetSystemTotal
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AuthOnly"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemTotal"
+              example:
+                cpuRealUsed: 0.85
+                memTotal: 1741
+                system: CentOS Linux 7.5.1804 (Core)
+                memRealUsed: 691
+                cpuNum: 6
+                memFree: 189
+                version: "6.8.1"
+                time: 0天23小时57分钟
+                memCached: 722
+                memBuffers: 139
+                isuser: 0
+
+  /system?action=GetDiskInfo:
+    post:
+      tags: [系统状态]
+      summary: 获取磁盘分区信息
+      operationId: systemGetDiskInfo
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AuthOnly"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiskInfoItem"
+              example:
+                - path: /
+                  inodes: ["8675328", "148216", "8527112", "2%"]
+                  size: ["8.3G", "4.0G", "4.3G", "49%"]
+
+  /system?action=GetNetWork:
+    post:
+      tags: [系统状态]
+      summary: 获取实时状态信息（CPU/内存/网络/负载）
+      operationId: systemGetNetWork
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AuthOnly"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetWorkInfo"
+
+  /ajax?action=GetTaskCount:
+    post:
+      tags: [面板]
+      summary: 检查是否有安装任务
+      operationId: ajaxGetTaskCount
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AuthOnly"
+      responses:
+        "200":
+          description: 任务数量（数字）
+          content:
+            application/json:
+              schema:
+                type: integer
+                example: 0
+
+  /ajax?action=UpdatePanel:
+    post:
+      tags: [面板]
+      summary: 检查/执行面板更新
+      operationId: ajaxUpdatePanel
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  properties:
+                    check:
+                      type: string
+                      description: 强制检查更新（可选）
+                      example: "true"
+                    force:
+                      type: string
+                      description: 执行更新（可选）
+                      example: "true"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: boolean
+                  version:
+                    type: string
+                    example: "6.8.2"
+                  updateMsg:
+                    type: string
+
+  /data?action=getData&table=sites:
+    post:
+      tags: [数据表查询, 网站]
+      summary: 获取网站列表
+      operationId: dataGetSites
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [limit]
+                  properties:
+                    p:
+                      type: integer
+                      description: 当前分页（可选）
+                      example: 1
+                    limit:
+                      type: integer
+                      description: 取回行数（必传）
+                      example: 15
+                    type:
+                      type: integer
+                      description: "分类标识，-1: 全部分类，0: 默认分类（可选）"
+                      example: -1
+                    order:
+                      type: string
+                      description: 排序规则，如 id desc / name asc（可选）
+                      example: id desc
+                    tojs:
+                      type: string
+                      description: 分页 JS 回调（可选）
+                      example: get_site_list
+                    search:
+                      type: string
+                      description: 搜索内容（可选）
+                      example: www
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedData"
+
+  /site?action=get_site_types:
+    post:
+      tags: [网站]
+      summary: 获取网站分类
+      operationId: siteGetSiteTypes
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AuthOnly"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+              example:
+                - id: 0
+                  name: 默认分类
+
+  /site?action=GetPHPVersion:
+    post:
+      tags: [网站]
+      summary: 获取已安装的 PHP 版本列表
+      operationId: siteGetPHPVersion
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/AuthOnly"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    version:
+                      type: string
+                      example: "72"
+                    name:
+                      type: string
+                      example: PHP-72
+
+  /site?action=AddSite:
+    post:
+      tags: [网站]
+      summary: 创建网站
+      operationId: siteAddSite
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required:
+                    - webname
+                    - path
+                    - type_id
+                    - type
+                    - version
+                    - port
+                    - ps
+                    - ftp
+                    - sql
+                  properties:
+                    webname:
+                      type: string
+                      description: 网站主域名和域名列表，JSON 字符串
+                      example: '{"domain":"w1.hao.com","domainlist":[],"count":0}'
+                    path:
+                      type: string
+                      example: /www/wwwroot/w1.hao.com
+                    type_id:
+                      type: integer
+                      example: 0
+                    type:
+                      type: string
+                      description: 项目类型，请传 PHP
+                      example: PHP
+                    version:
+                      type: string
+                      description: PHP 版本号
+                      example: "72"
+                    port:
+                      type: integer
+                      example: 80
+                    ps:
+                      type: string
+                      description: 网站备注
+                      example: 测试
+                    ftp:
+                      type: boolean
+                      description: 是否创建 FTP
+                    ftp_username:
+                      type: string
+                      description: 创建 FTP 时必传
+                    ftp_password:
+                      type: string
+                      description: 创建 FTP 时必传
+                    sql:
+                      type: boolean
+                      description: 是否创建数据库
+                    codeing:
+                      type: string
+                      description: 数据库字符集（创建库时必传）
+                      enum: [utf8, utf8mb4, gbk, big5]
+                    datauser:
+                      type: string
+                      description: 数据库用户名及名称（创建库时必传）
+                    datapassword:
+                      type: string
+                      description: 数据库密码（创建库时必传）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  siteStatus:
+                    type: boolean
+                  ftpStatus:
+                    type: boolean
+                  ftpUser:
+                    type: string
+                  ftpPass:
+                    type: string
+                  databaseStatus:
+                    type: boolean
+                  databaseUser:
+                    type: string
+                  databasePass:
+                    type: string
+
+  /site?action=DeleteSite:
+    post:
+      tags: [网站]
+      summary: 删除网站
+      operationId: siteDeleteSite
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, webname]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    webname:
+                      type: string
+                      example: w2_hao_com
+                    ftp:
+                      type: integer
+                      description: 传 1 删除关联 FTP；不删则不要传
+                      example: 1
+                    database:
+                      type: integer
+                      description: 传 1 删除关联数据库；不删则不要传
+                      example: 1
+                    path:
+                      type: integer
+                      description: 传 1 删除网站根目录；不删则不要传
+                      example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=SiteStop:
+    post:
+      tags: [网站]
+      summary: 停用网站
+      operationId: siteSiteStop
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    name:
+                      type: string
+                      description: 网站名称（主域名）
+                      example: w2.hao.com
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=SiteStart:
+    post:
+      tags: [网站]
+      summary: 启用网站
+      operationId: siteSiteStart
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    name:
+                      type: string
+                      example: w2.hao.com
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=SetEdate:
+    post:
+      tags: [网站]
+      summary: 设置网站到期时间
+      operationId: siteSetEdate
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, edate]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    edate:
+                      type: string
+                      description: 到期时间；永久传 0000-00-00
+                      example: "2019-01-01"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /data?action=setPs&table=sites:
+    post:
+      tags: [数据表查询, 网站]
+      summary: 修改网站备注
+      operationId: dataSetSitesPs
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, ps]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    ps:
+                      type: string
+                      example: 测试
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /data?action=getData&table=backup:
+    post:
+      tags: [数据表查询, 网站]
+      summary: 获取网站备份列表
+      operationId: dataGetBackup
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [limit, type, search]
+                  properties:
+                    p:
+                      type: integer
+                      example: 1
+                    limit:
+                      type: integer
+                      example: 5
+                    type:
+                      type: integer
+                      description: 备份类型，固定传 0
+                      example: 0
+                    tojs:
+                      type: string
+                      example: get_site_backup
+                    search:
+                      type: string
+                      description: 网站 ID
+                      example: "66"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedData"
+
+  /site?action=ToBackup:
+    post:
+      tags: [网站]
+      summary: 创建网站备份
+      operationId: siteToBackup
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=DelBackup:
+    post:
+      tags: [网站]
+      summary: 删除网站备份
+      operationId: siteDelBackup
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      description: 备份列表 ID
+                      example: 121
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /data?action=getData&table=domain:
+    post:
+      tags: [数据表查询, 网站]
+      summary: 获取网站的域名列表
+      operationId: dataGetDomain
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [search, list]
+                  properties:
+                    search:
+                      type: string
+                      description: 网站 ID
+                      example: "66"
+                    list:
+                      type: string
+                      description: 固定传 true
+                      example: "true"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    port:
+                      type: integer
+                    addtime:
+                      type: string
+                    pid:
+                      type: integer
+                    id:
+                      type: integer
+                    name:
+                      type: string
+
+  /site?action=AddDomain:
+    post:
+      tags: [网站]
+      summary: 添加域名
+      operationId: siteAddDomain
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, webname, domain]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    webname:
+                      type: string
+                      example: w2.hao.com
+                    domain:
+                      type: string
+                      description: 域名:端口；80 可不写端口；多个域名用换行分隔
+                      example: "w4.hao.com:81"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=DelDomain:
+    post:
+      tags: [网站]
+      summary: 删除域名
+      operationId: siteDelDomain
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, webname, domain, port]
+                  properties:
+                    id:
+                      type: integer
+                      example: 66
+                    webname:
+                      type: string
+                      example: w2.hao.com
+                    domain:
+                      type: string
+                      example: w4.hao.com
+                    port:
+                      type: integer
+                      example: 80
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=GetRewriteList:
+    post:
+      tags: [网站]
+      summary: 获取可选的预定义伪静态列表
+      operationId: siteGetRewriteList
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [siteName]
+                  properties:
+                    siteName:
+                      type: string
+                      example: w2.hao.com
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rewrite:
+                    type: array
+                    items:
+                      type: string
+
+  /files?action=GetFileBody:
+    post:
+      tags: [文件]
+      summary: 获取文件内容（伪静态/站点 Nginx 配置等）
+      description: |
+        常用 path：
+        - 伪静态：`/www/server/panel/vhost/rewrite/nginx/名称.conf`
+        - 站点配置：`/www/server/panel/vhost/nginx/名称.conf`
+      operationId: filesGetFileBody
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [path]
+                  properties:
+                    path:
+                      type: string
+                      example: /www/server/panel/vhost/nginx/w2.hao.com.conf
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /files?action=SaveFileBody:
+    post:
+      tags: [文件]
+      summary: 保存文件内容（伪静态/站点 Nginx 配置等）
+      operationId: filesSaveFileBody
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [path, data, encoding]
+                  properties:
+                    path:
+                      type: string
+                      example: /www/server/panel/vhost/nginx/w2.hao.com.conf
+                    data:
+                      type: string
+                      description: 文件内容
+                    encoding:
+                      type: string
+                      description: 固定 utf-8
+                      example: utf-8
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /data?action=getKey&table=sites&key=path:
+    post:
+      tags: [数据表查询, 网站]
+      summary: 取回指定网站的根目录
+      operationId: dataGetSitePath
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+      responses:
+        "200":
+          description: 网站根目录字符串
+          content:
+            application/json:
+              schema:
+                type: string
+                example: /www/wwwroot/w1.if22.cn
+
+  /site?action=GetDirUserINI:
+    post:
+      tags: [网站]
+      summary: 取回防跨站/运行目录/日志/密码访问状态
+      operationId: siteGetDirUserINI
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, path]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    path:
+                      type: string
+                      example: /www/wwwroot/w1.if22.cn
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pass:
+                    type: boolean
+                    description: 是否设置密码访问
+                  logs:
+                    type: boolean
+                    description: 是否写访问日志
+                  userini:
+                    type: boolean
+                    description: 是否设置防跨站
+                  runPath:
+                    type: object
+                    properties:
+                      dirs:
+                        type: array
+                        items:
+                          type: string
+                      runPath:
+                        type: string
+
+  /site?action=SetDirUserINI:
+    post:
+      tags: [网站]
+      summary: 设置防跨站状态（自动取反）
+      operationId: siteSetDirUserINI
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [path]
+                  properties:
+                    path:
+                      type: string
+                      example: /www/wwwroot/w1.if22.cn
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=logsOpen:
+    post:
+      tags: [网站]
+      summary: 设置是否写访问日志（切换）
+      operationId: siteLogsOpen
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=SetPath:
+    post:
+      tags: [网站]
+      summary: 修改网站根目录
+      operationId: siteSetPath
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, path]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    path:
+                      type: string
+                      example: /www/wwwroot/w1.if22.cn
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=SetSiteRunPath:
+    post:
+      tags: [网站]
+      summary: 设置运行目录
+      operationId: siteSetSiteRunPath
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, runPath]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    runPath:
+                      type: string
+                      description: 基于网站根目录的运行目录
+                      example: /public
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=SetHasPwd:
+    post:
+      tags: [网站]
+      summary: 设置密码访问
+      operationId: siteSetHasPwd
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, username, password]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    username:
+                      type: string
+                      example: test
+                    password:
+                      type: string
+                      example: admin
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=CloseHasPwd:
+    post:
+      tags: [网站]
+      summary: 关闭密码访问
+      operationId: siteCloseHasPwd
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=GetLimitNet:
+    post:
+      tags: [网站]
+      summary: 获取流量限制配置（仅 Nginx）
+      operationId: siteGetLimitNet
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /site?action=SetLimitNet:
+    post:
+      tags: [网站]
+      summary: 开启或保存流量限制（仅 Nginx）
+      operationId: siteSetLimitNet
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, perserver, perip, limit_rate]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    perserver:
+                      type: integer
+                      description: 并发限制
+                      example: 300
+                    perip:
+                      type: integer
+                      description: 单 IP 限制
+                      example: 25
+                    limit_rate:
+                      type: integer
+                      description: 流量限制
+                      example: 512
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=CloseLimitNet:
+    post:
+      tags: [网站]
+      summary: 关闭流量限制（仅 Nginx）
+      operationId: siteCloseLimitNet
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+  /site?action=GetIndex:
+    post:
+      tags: [网站]
+      summary: 取默认文档信息
+      operationId: siteGetIndex
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: string
+                example: index.php,index.html,index.htm,default.php,default.htm,default.html
+
+  /site?action=SetIndex:
+    post:
+      tags: [网站]
+      summary: 设置默认文档
+      operationId: siteSetIndex
+      parameters:
+        - $ref: "#/components/parameters/AuthQueryTime"
+        - $ref: "#/components/parameters/AuthQueryToken"
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AuthOnly"
+                - type: object
+                  required: [id, Index]
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    Index:
+                      type: string
+                      description: 默认文档，逗号分隔（参数名大写 I）
+                      example: index.php,index.html,index.htm,default.php,default.htm,default.html
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusMsg"
+
+components:
+  parameters:
+    AuthQueryTime:
+      name: request_time
+      in: query
+      required: false
+      schema:
+        type: string
+        example: "{{request_time}}"
+      description: 也可放在 form body；建议用前置脚本写入环境变量
+    AuthQueryToken:
+      name: request_token
+      in: query
+      required: false
+      schema:
+        type: string
+        example: "{{request_token}}"
+      description: md5(request_time + md5(apiSk))
+
+  schemas:
+    AuthOnly:
+      type: object
+      required: [request_time, request_token]
+      properties:
+        request_time:
+          type: string
+          description: 当前 Unix 时间戳（秒）
+          example: "{{request_time}}"
+        request_token:
+          type: string
+          description: md5(request_time + md5(apiSk))
+          example: "{{request_token}}"
+
+    StatusMsg:
+      type: object
+      properties:
+        status:
+          type: boolean
+        msg:
+          type: string
+
+    SystemTotal:
+      type: object
+      properties:
+        system:
+          type: string
+        version:
+          type: string
+        time:
+          type: string
+        cpuNum:
+          type: integer
+        cpuRealUsed:
+          type: number
+        memTotal:
+          type: integer
+        memRealUsed:
+          type: integer
+        memFree:
+          type: integer
+        memCached:
+          type: integer
+        memBuffers:
+          type: integer
+        isuser:
+          type: integer
+
+    DiskInfoItem:
+      type: object
+      properties:
+        path:
+          type: string
+        inodes:
+          type: array
+          items:
+            type: string
+          description: "[总量,已使用,可用,使用率]"
+        size:
+          type: array
+          items:
+            type: string
+          description: "[总量,已使用,可用,使用率]"
+
+    NetWorkInfo:
+      type: object
+      properties:
+        downTotal:
+          type: integer
+        upTotal:
+          type: integer
+        downPackets:
+          type: integer
+        upPackets:
+          type: integer
+        down:
+          type: number
+        up:
+          type: number
+        cpu:
+          type: array
+          items: {}
+          description: "[使用率, 核心数]"
+        mem:
+          type: object
+          additionalProperties: true
+        load:
+          type: object
+          additionalProperties: true
+
+    PagedData:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        page:
+          type: string
+        where:
+          type: string

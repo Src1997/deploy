@@ -54,7 +54,8 @@ function Get-ProjectSourcePath {
     param([string]$Id)
     $proj = Get-ProjectById $Id
     if (-not $proj) { return "" }
-    return Join-Path $global:WorkspaceRoot $proj.sourcePath
+    $sp = if ($proj.sourcePath -is [array]) { $proj.sourcePath[0] } else { [string]$proj.sourcePath }
+    return Join-Path $global:WorkspaceRoot $sp
 }
 
 # 获取项目部署绝对路径

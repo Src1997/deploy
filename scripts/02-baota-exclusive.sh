@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 01b-baota-exclusive.sh — 清除与宝塔冲突的系统组件（宝塔独占）
+# 02-baota-exclusive.sh — 清除与宝塔冲突的系统组件（宝塔独占）
 #
 # 通常由 00-cleanup-docker.sh 自动调用（Phase 0 已合并原 0b）。
 # 也可在宝塔装完组件后单独复查：
-#   bash 01b-baota-exclusive.sh --check
-#   bash 01b-baota-exclusive.sh --yes
+#   bash 02-baota-exclusive.sh --check
+#   bash 02-baota-exclusive.sh --yes
 # =============================================================================
 
 set -euo pipefail
@@ -17,7 +17,7 @@ for arg in "$@"; do
         --yes|-y) ASSUME_YES=true ;;
         --check)  CHECK_ONLY=true ;;
         --help|-h)
-            echo "Usage: bash 01b-baota-exclusive.sh [--check|--yes]"
+            echo "Usage: bash 02-baota-exclusive.sh [--check|--yes]"
             exit 0
             ;;
         *) echo "Unknown: $arg"; exit 1 ;;

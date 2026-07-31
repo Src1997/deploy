@@ -194,7 +194,7 @@ next_action() {
     [ "$S_CONFLICTS" -eq 0 ] && { echo "run Phase0 conflicts: bash 00-cleanup-docker.sh --conflicts-only   (or 01b)"; return; }
     [ "$S_BAOTA" -eq 0 ] && { echo "run Phase1: bash 01-install-baota.sh"; return; }
     [ "$S_COMPONENTS" -ne 1 ] && { echo "Phase2: 宝塔软件商店安装 Nginx/PostgreSQL/Redis/Python"; return; }
-    [ "$S_SETUP" -ne 1 ] && { echo "run Phase3: bash 02-server-setup.sh"; return; }
+    [ "$S_SETUP" -ne 1 ] && { echo "run Phase3: bash 03-server-setup.sh"; return; }
     [ "$S_PACKAGES" -eq 0 ] && { echo "Phase4-5: 本地 build.ps1 + 上传 dist"; return; }
     [ "$S_DEPLOYED" -ne 1 ] && { echo "run Phase6: bash deploy.sh all --ip=SERVER_IP"; return; }
     [ "$S_NGINX_SITE" -ne 1 ] && { echo "Phase7: 套用 configs/nginx-all-sites.conf 到宝塔站点"; return; }

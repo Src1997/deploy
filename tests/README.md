@@ -55,6 +55,6 @@ bash tests/wsl-sandbox.sh rollback-via-deploy 'financial-web,official-site' --ye
 | 全量 | `bash deploy.sh all --rollback` |
 | 跳过确认 | 同上加 `--yes`（慎用） |
 
-确认时必须输入 **`yes`**。详见 [`改造方案.md`](../改造方案.md) 第九章。
+确认时必须输入 **`yes`**。正式回滚说明见仓库根 [README.md 回滚](../README.md#回滚)。
 
 沙箱目录：`$HOME/deploy-sandbox`（`DEPLOY_SANDBOX` 可覆盖）。

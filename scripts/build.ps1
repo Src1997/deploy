@@ -134,7 +134,7 @@ function Build-One([string]$name) {
     # ── backend: 调用通用打包器 ──
     if ($p.Kind -eq 'backend' -and $p.PackScript) {
         W-Step "Packing $($p.Name)..."
-        & $p.PackScript -ProjectId $p.ProjectId
+        & $p.PackScript -ProjectId $p.ProjectId -SourceDir $p.Dir
         if ($LASTEXITCODE -ne 0) { W-Err "Pack failed for $($p.Name)"; return $false }
         return $true
     }

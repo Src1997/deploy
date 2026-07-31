@@ -13,7 +13,7 @@
 #   bash 00-cleanup-docker.sh --conflicts-only # 只做系统冲突清理（= 原 01b）
 #   bash 00-cleanup-docker.sh --check         # 只探测，不修改
 #
-# 也可单独跑：bash 01b-baota-exclusive.sh（内部转调本脚本 --conflicts-only）
+# 也可单独跑：bash 02-baota-exclusive.sh（内部转调本脚本 --conflicts-only）
 # ═══════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -67,21 +67,21 @@ if $CHECK_ONLY; then
     if [ -f "$SCRIPT_DIR/detect-status.sh" ]; then
         bash "$SCRIPT_DIR/detect-status.sh" || rc=$?
     fi
-    if [ -f "$SCRIPT_DIR/01b-baota-exclusive.sh" ]; then
-        bash "$SCRIPT_DIR/01b-baota-exclusive.sh" --check || rc=$?
+    if [ -f "$SCRIPT_DIR/02-baota-exclusive.sh" ]; then
+        bash "$SCRIPT_DIR/02-baota-exclusive.sh" --check || rc=$?
     fi
     exit "$rc"
 fi
 
 # 仅冲突清理（委托 01b，避免重复实现）
 if $CONFLICTS_ONLY; then
-    if [ -f "$SCRIPT_DIR/01b-baota-exclusive.sh" ]; then
+    if [ -f "$SCRIPT_DIR/02-baota-exclusive.sh" ]; then
         args=()
         $ASSUME_YES && args+=(--yes)
-        bash "$SCRIPT_DIR/01b-baota-exclusive.sh" "${args[@]}"
+        bash "$SCRIPT_DIR/02-baota-exclusive.sh" "${args[@]}"
         exit $?
     else
-        err "缺少 01b-baota-exclusive.sh"
+        err "缺少 02-baota-exclusive.sh"
         exit 1
     fi
 fi
@@ -522,13 +522,13 @@ fi  # end ! SKIP_DOCKER
 # ═══════════════════════════════════════════════════════════════
 if ! $DOCKER_ONLY; then
     log "Step 13: 清除系统防火墙 / 系统自带 Web&DB（宝塔独占）..."
-    if [ -f "$SCRIPT_DIR/01b-baota-exclusive.sh" ]; then
+    if [ -f "$SCRIPT_DIR/02-baota-exclusive.sh" ]; then
         args=()
         $ASSUME_YES && args+=(--yes)
         # 若已干净，01b 会快速退出
-        bash "$SCRIPT_DIR/01b-baota-exclusive.sh" "${args[@]}" || warn "冲突清理有警告，可用 --check 复查"
+        bash "$SCRIPT_DIR/02-baota-exclusive.sh" "${args[@]}" || warn "冲突清理有警告，可用 --check 复查"
     else
-        warn "缺少 01b-baota-exclusive.sh，跳过系统冲突清理"
+        warn "缺少 02-baota-exclusive.sh，跳过系统冲突清理"
     fi
 else
     ok "已指定 --docker-only，跳过系统冲突清理"
@@ -566,6 +566,6 @@ echo "    1. bash 01-install-baota.sh          # 若宝塔未装"
 echo "    2. 宝塔软件商店：Nginx / PostgreSQL / Redis / Python"
 echo "    3. 宝塔安全：放行 22/80/443/面板端口（勿放 5432/6379）"
 echo "    4. bash 00-cleanup-docker.sh --conflicts-only --check  # 组件装完后再查一次"
-echo "    5. bash 02-server-setup.sh"
+echo "    5. bash 03-server-setup.sh"
 echo "    6. 本地 build.ps1 → 上传 → bash deploy.sh all"
 echo ""

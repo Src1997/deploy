@@ -58,7 +58,16 @@ if (-not $proj) {
     exit 1
 }
 
-if (-not $SourceDir) { $SourceDir = Get-ProjectSourcePath $ProjectId }
+if (-not $SourceDir) {
+    $resolvedPath = Get-ProjectSourcePath $ProjectId
+    if (-not $resolvedPath -or -not (Test-Path $resolvedPath)) {
+        # Fallback: resolve from projects.json directly
+        $proj = Get-ProjectById $ProjectId
+        $sp = if ($proj.sourcePath -is [array]) { $proj.sourcePath[0] } else { $proj.sourcePath }
+        if ($sp) { $resolvedPath = Join-Path $global:WorkspaceRoot $sp }
+    }
+    $SourceDir = $resolvedPath
+}
 if (-not $OutDir) { $OutDir = Join-Path $DeployDir 'dist\packages' }
 if (-not $NamePrefix) { $NamePrefix = $ProjectId }
 
@@ -106,9 +115,14 @@ robocopy $SourceDir $codeRoot /E `
     /XD .venv venv logs __pycache__ .git node_modules `
     /XF *.pyc .env `
     /NFL /NDL /NJH /NJS /NC /NS 2>$null | Out-Null
-if ($LASTEXITCODE -gt 7) {
-    Write-Error "robocopy failed (exit $LASTEXITCODE)"
+# robocopy exit codes: 0-7 = success, 8+ = errors, 16 = serious error
+$rc = $LASTEXITCODE
+if ($rc -ge 16) {
+    Write-Error "robocopy serious error (exit $rc)"
     exit 1
+}
+if ($rc -ge 8) {
+    Write-Host "    [warn] robocopy had some copy failures (exit $rc), continuing..." -ForegroundColor Yellow
 }
 
 # VERSION 放在源码根

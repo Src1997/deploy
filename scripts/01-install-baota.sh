@@ -70,8 +70,8 @@ if command -v docker &>/dev/null; then
     warn "Docker 仍存在 → 需要先跑 00-cleanup-docker.sh"
     NEED_PHASE0=true
 fi
-if [ -f "$(dirname "$0")/01b-baota-exclusive.sh" ]; then
-    if ! bash "$(dirname "$0")/01b-baota-exclusive.sh" --check >"/tmp/fin-deploy/bt-conflict-check.txt" 2>&1; then
+if [ -f "$(dirname "$0")/02-baota-exclusive.sh" ]; then
+    if ! bash "$(dirname "$0")/02-baota-exclusive.sh" --check >"/tmp/fin-deploy/bt-conflict-check.txt" 2>&1; then
         warn "仍有系统防火墙/系统库冲突 → 建议先跑 00-cleanup-docker.sh（已含冲突清理）"
         NEED_PHASE0=true
         grep -E '\[!\]|发现问题' "/tmp/fin-deploy/bt-conflict-check.txt" 2>/dev/null | head -15 || true
@@ -262,7 +262,7 @@ log "防火墙策略（宝塔独占）..."
 echo ""
 echo "  ┌──────────────────────────────────────────────────────────┐"
 echo "  │  主机防火墙：只用宝塔面板 → 安全                         │"
-echo "  │  请禁用系统 UFW / firewalld（见 01b-baota-exclusive.sh） │"
+echo "  │  请禁用系统 UFW / firewalld（见 02-baota-exclusive.sh） │"
 echo "  │                                                          │"
 echo "  │  宝塔安全 / 云安全组 仅放行：                            │"
 echo "  │    22(SSH)  80(HTTP)  443(HTTPS)  面板端口(常 8888)      │"
@@ -272,11 +272,11 @@ echo ""
 
 if systemctl is-active --quiet ufw 2>/dev/null || systemctl is-active --quiet firewalld 2>/dev/null; then
     err "检测到系统防火墙仍在运行，会与宝塔冲突！"
-    echo "  请执行: bash $(dirname "$0")/01b-baota-exclusive.sh"
+    echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
 fi
 
-if [ -f "$(dirname "$0")/01b-baota-exclusive.sh" ]; then
-    echo "  复查命令: bash $(dirname "$0")/01b-baota-exclusive.sh --check"
+if [ -f "$(dirname "$0")/02-baota-exclusive.sh" ]; then
+    echo "  复查命令: bash $(dirname "$0")/02-baota-exclusive.sh --check"
 fi
 
 echo ""
@@ -304,7 +304,7 @@ echo ""
 echo "  4. 组件装完后复查冲突："
 echo "     bash 00-cleanup-docker.sh --conflicts-only --check"
 echo ""
-echo "  5. bash 02-server-setup.sh"
+echo "  5. bash 03-server-setup.sh"
 echo ""
 echo "  6. 本地 build.ps1 → 上传 → bash deploy.sh all"
 echo ""
