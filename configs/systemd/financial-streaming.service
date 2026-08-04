@@ -12,6 +12,7 @@ Environment=CRAWLER_ENABLED=true
 ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m worker.streaming
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=financial-streaming

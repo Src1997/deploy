@@ -57,14 +57,6 @@ show_help() {
     bash deploy.sh --logs [project]     查看日志
     bash deploy.sh --help                显示此帮助
 
-  项目列表：
-    financial-web       行情/社区前端
-    financial-api       FastAPI 后端
-    official-site       卓筹介绍站
-    deepquant-web       QuantDinger 前端
-    deepquant-backend   QuantDinger 后端
-    all                 全量
-
   选项：
     --ip=SERVER_IP      设置服务器 IP（更新 CORS）
     --no-restart        部署但不重启服务
@@ -77,7 +69,9 @@ show_help() {
     --logs [project]    查看日志（默认 financial-api）
     --lines=N           日志行数（默认 50，0=实时跟踪）
     --logs=error        只看 ERROR 级别日志
-    --nginx             部署后自动配置 Nginx（拷贝 nginx-all-sites.conf 并 reload）
+    --nginx             部署后自动配置 Nginx（拷贝配置并 reload）
+    --nginx --dynamic   动态生成 Nginx 配置（从 projects.json 生成 location 块）
+    --sync-nginx        从 projects.json 重新生成 Nginx 配置并 reload
     --help              显示此帮助
 
   备份与回滚说明：
@@ -204,10 +198,12 @@ LIST_BACKUPS=false
 SHOW_STATUS=false
 SHOW_LOGS=false
 SHOW_HELP=false
+SYNC_NGINX=false
 ASSUME_YES=false
 LOG_LINES=50
 LOG_LEVEL=""
 DEPLOY_NGINX=false
+NGINX_DYNAMIC=false
 
 parse_project_token() {
     local token="$1"
@@ -267,8 +263,10 @@ for arg in "$@"; do
         --logs=*)            SHOW_LOGS=true; LOG_LEVEL="${arg#--logs=}" ;;
         --lines=*)           LOG_LINES="${arg#--lines=}" ;;
         --yes|-y|--ci)        ASSUME_YES=true ;;
-        --nginx)             DEPLOY_NGINX=true ;;
-        --help|-h)           SHOW_HELP=true ;;
+    --nginx)             DEPLOY_NGINX=true ;;
+    --dynamic)           NGINX_DYNAMIC=true ;;
+    --sync-nginx)        SYNC_NGINX=true ;;
+    --help|-h)           SHOW_HELP=true ;;
         -*)
             err "Unknown: $arg (try --help)"; exit 1 ;;
         *)
@@ -331,18 +329,27 @@ preflight() {
         ((errors++))
     fi
 
-    # 4. 后端端口未被占用（仅部署后端时检查）
-    for port in 5000 5001; do
+    # 4. 后端端口检查（从 healthUrl 动态提取端口）
+    local checked_ports=""
+    for p in "${PROJECTS[@]}"; do
+        local url="${HEALTH_URL[$p]:-}"
+        [ -z "$url" ] && continue
+        local port
+        port=$(echo "$url" | sed -n 's|.*://[^:]*:\([0-9]*\).*|\1|p')
+        [ -z "$port" ] && continue
+        # 避免重复检查同一端口
+        echo "$checked_ports" | grep -qw "$port" && continue
+        checked_ports="$checked_ports $port"
         if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
-            # 端口被占用 — 如果是已有服务则正常，否则是残留进程
-            local proc
-            proc=$(ss -tlnp 2>/dev/null | grep ":${port} " | head -1 | grep -oP 'pid=\K[0-9]+' || echo "unknown")
-            if systemctl is-active --quiet financial-api 2>/dev/null && [ "$port" = "5001" ]; then
-                ok "端口 $port：financial-api 已占用（正常）"
-            elif systemctl is-active --quiet quantdinger-backend 2>/dev/null && [ "$port" = "5000" ]; then
-                ok "端口 $port：quantdinger-backend 已占用（正常）"
+            # 端口被占用 — 检查是否是对应服务
+            local primary_svc="${SERVICES[$p]:-}"
+            primary_svc="${primary_svc%% *}"
+            if [ -n "$primary_svc" ] && systemctl is-active --quiet "$primary_svc" 2>/dev/null; then
+                ok "端口 $port：$primary_svc 已占用（正常）"
             else
-                warn "端口 $port 被进程 $proc 占用但对应服务未运行，重启时可能冲突"
+                local proc
+                proc=$(ss -tlnp 2>/dev/null | grep ":${port} " | head -1 | grep -oP 'pid=\K[0-9]+' || echo "unknown")
+                warn "端口 $port 被进程 $proc 占用但 $primary_svc 未运行，重启时可能冲突"
             fi
         else
             ok "端口 $port：空闲"
@@ -410,7 +417,17 @@ nginx_reload() {
 
 show_status() {
     banner "服务状态总览"
-    local services=("financial-api" "financial-crawler" "financial-worker" "financial-streaming" "quantdinger-backend" "nginx")
+    # 从 projects.json 动态收集服务列表
+    local -a services=()
+    local -A seen=()
+    for p in "${PROJECTS[@]}"; do
+        local svcs="${SERVICES[$p]:-}"
+        for svc in $svcs; do
+            [ -n "$svc" ] && [ -z "${seen[$svc]:-}" ] && services+=("$svc") && seen[$svc]=1
+        done
+    done
+    services+=("nginx")
+
     printf "  %-22s %-10s %s\n" "SERVICE" "STATUS" "HEALTH"
     hr
     for svc in "${services[@]}"; do
@@ -418,12 +435,19 @@ show_status() {
         local color
         [ "$status" = "active" ] && color="$GREEN" || color="$RED"
         local health=""
-        case "$svc" in
-            financial-api)        health=$(curl -sf http://127.0.0.1:5001/api/health 2>/dev/null | head -c 60 || echo "FAIL") ;;
-            quantdinger-backend)  health=$(curl -sf http://127.0.0.1:5000/api/health 2>/dev/null | head -c 60 || echo "FAIL") ;;
-            nginx)                health=$(curl -sf http://127.0.0.1/ -o /dev/null -w "%{http_code}" 2>/dev/null || echo "FAIL") ;;
-            *)                    health="-" ;;
-        esac
+        # 查找此服务所属项目的 healthUrl
+        for p in "${PROJECTS[@]}"; do
+            if echo "${SERVICES[$p]:-}" | grep -qw "$svc"; then
+                local hurl="${HEALTH_URL[$p]:-}"
+                if [ -n "$hurl" ]; then
+                    health=$(curl -sf "$hurl" 2>/dev/null | head -c 60 || echo "FAIL")
+                fi
+                break
+            fi
+        done
+        # nginx 特殊处理
+        [ "$svc" = "nginx" ] && health=$(curl -sf http://127.0.0.1/ -o /dev/null -w "%{http_code}" 2>/dev/null || echo "FAIL")
+        [ -z "$health" ] && health="-"
         printf "  %-22s ${color}%-10s${NC} %s\n" "$svc" "$status" "$health"
     done
     echo ""
@@ -434,40 +458,72 @@ show_status() {
 # ═══════════════════════════════════════════════════════════════════════
 
 show_logs() {
-    local target="${PROJECT:-financial-api}"
+    local target="${PROJECT:-}"
     local svc=""
 
     # 如果没指定项目，交互选择
-    if [ -z "$PROJECT" ] && [ -z "$LOG_LEVEL" ]; then
+    if [ -z "$target" ] && [ -z "$LOG_LEVEL" ]; then
         banner "日志查看"
         echo "  选择查看目标："
-        echo "  1) financial-api          实时日志"
-        echo "  2) financial-api          最近 50 行"
-        echo "  3) financial-api          最近 100 行"
-        echo "  4) financial-api          ERROR 级别"
-        echo "  5) quantdinger-backend    实时日志"
-        echo "  6) quantdinger-backend    最近 50 行"
-        echo "  7) quantdinger-backend    最近 100 行"
-        echo "  8) quantdinger-backend    ERROR 级别"
-        echo "  9) nginx error log        实时日志"
-        echo " 10) nginx error log        最近 100 行"
+        local menu_idx=1
+        declare -a menu_items=()
+
+        # 从 projects.json 动态生成菜单：每个有服务的项目 3 项
+        for p in "${PROJECTS[@]}"; do
+            local p_svc="${PROJECT_SERVICE[$p]:-}"
+            [ -z "$p_svc" ] && continue
+            local p_name="${PROJECT_DISPLAY_NAME[$p]:-$p}"
+            echo "  ${menu_idx}) $p_svc    实时日志          ($p_name)"
+            menu_items+=("$p_svc:0")
+            ((menu_idx++))
+            echo "  ${menu_idx}) $p_svc    最近 50 行"
+            menu_items+=("$p_svc:50")
+            ((menu_idx++))
+            echo "  ${menu_idx}) $p_svc    ERROR 级别"
+            menu_items+=("$p_svc:error")
+            ((menu_idx++))
+        done
+
+        # Nginx 选项
+        echo "  ${menu_idx}) nginx error log    实时日志"
+        menu_items+=("nginx:rt")
+        ((menu_idx++))
+        echo "  ${menu_idx}) nginx error log    最近 100 行"
+        menu_items+=("nginx:100")
+        ((menu_idx++))
+
         echo "  0) 返回"
         echo ""
-        read -rp "  选择 [0-10]: " choice
-        case "$choice" in
-            1) svc="financial-api"; LOG_LINES=0 ;;
-            2) svc="financial-api"; LOG_LINES=50 ;;
-            3) svc="financial-api"; LOG_LINES=100 ;;
-            4) svc="financial-api"; LOG_LEVEL="error" ;;
-            5) svc="quantdinger-backend"; LOG_LINES=0 ;;
-            6) svc="quantdinger-backend"; LOG_LINES=50 ;;
-            7) svc="quantdinger-backend"; LOG_LINES=100 ;;
-            8) svc="quantdinger-backend"; LOG_LEVEL="error" ;;
-            9) tail -f /www/wwwlogs/error.log; return ;;
-            10) tail -100 /www/wwwlogs/error.log; return ;;
-            0) return ;;
-            *) err "无效选择"; return ;;
-        esac
+        local total=${#menu_items[@]}
+        read -rp "  选择 [0-${total}]: " choice
+
+        if [ "$choice" = "0" ] || [ -z "$choice" ]; then return; fi
+
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "$total" ]; then
+            err "无效选择"; return
+        fi
+
+        local selection="${menu_items[$((choice-1))]}"
+        local sel_svc="${selection%%:*}"
+        local sel_mode="${selection##*:}"
+
+        if [ "$sel_svc" = "nginx" ]; then
+            if [ "$sel_mode" = "rt" ]; then
+                tail -f /www/wwwlogs/error.log
+            else
+                tail -100 /www/wwwlogs/error.log
+            fi
+            return
+        fi
+
+        svc="$sel_svc"
+        if [ "$sel_mode" = "error" ]; then
+            LOG_LEVEL="error"
+        elif [ "$sel_mode" = "0" ]; then
+            LOG_LINES=0
+        else
+            LOG_LINES="$sel_mode"
+        fi
     else
         svc="${PROJECT_SERVICE[$target]:-$target}"
     fi
@@ -750,6 +806,65 @@ do_rollback() {
 # 部署函数（路径 / 产物 / 服务均来自 projects.json）
 # ═══════════════════════════════════════════════════════════════════════
 
+# 从 projects.json 自动生成 Nginx 配置（调用 generate-nginx.py）
+sync_nginx() {
+    local gen_script="$DIST_ROOT/scripts/generate-nginx.py"
+    [ ! -f "$gen_script" ] && gen_script="$PROJECT_BASE/uploads/dist/scripts/generate-nginx.py"
+    [ ! -f "$gen_script" ] && { err "generate-nginx.py not found"; return 1; }
+
+    local conf_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
+    local mode="${NGINX_MODE:-ssl-combined}"
+    local domain="${DOMAIN:-}"
+    local www_domain="${WWW_DOMAIN:-}"
+
+    banner "Sync Nginx config"
+    log "Mode: $mode | Target: $conf_target"
+
+    # Backup current config
+    [ -f "$conf_target" ] && cp "$conf_target" "${conf_target}.bak.$(date +%Y%m%d-%H%M%S)"
+
+    # Build args
+    local py_args=()
+    py_args+=(--mode "$mode")
+    [ -n "$domain" ] && py_args+=(--domain "$domain")
+    [ -n "$www_domain" ] && py_args+=(--www-domain "$www_domain")
+    py_args+=(--output "$conf_target")
+
+    if ! python3 "$gen_script" "${py_args[@]}"; then
+        err "Failed to generate Nginx config"
+        return 1
+    fi
+    ok "Nginx config generated"
+
+    if ! nginx -t 2>&1; then
+        err "Nginx config test failed — restoring backup"
+        cp "${conf_target}.bak."* "$conf_target" 2>/dev/null
+        return 1
+    fi
+    ok "Nginx config valid"
+
+    nginx -s reload
+    ok "Nginx reloaded"
+    return 0
+}
+
+# Check if Nginx config already contains a project's location path
+nginx_has_location() {
+    local id="$1"
+    local conf_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
+    local public_url="${PUBLIC_URL[$id]:-}"
+
+    # Root project — check for "root.*dist" line
+    if [ "${PROJECT_ROOT[$id]:-false}" = "true" ]; then
+        local deploy_path="${DEPLOY_PATH[$id]:-}"
+        grep -q "root.*${deploy_path}" "$conf_target" 2>/dev/null && return 0 || return 1
+    fi
+
+    # Sub-path project — check for location ^~ <public_url>
+    [ -z "$public_url" ] && return 0
+    grep -q "location.*${public_url}" "$conf_target" 2>/dev/null && return 0 || return 1
+}
+
 # 通用：按清单部署前端（解压到 DEPLOY_PATH[id]）
 deploy_frontend_by_id() {
     local id="$1"
@@ -769,10 +884,25 @@ deploy_frontend_by_id() {
     tar=$(find_file "$tar_pat")
     [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
     backup_frontend "$id" "$target"
+    rm -rf "${target:?}"
     mkdir -p "$target"
-    rm -rf "${target:?}"/*
-    tar xzf "$tar" -C "$target"
+    if ! tar xzf "$tar" -C "$target"; then
+        err "$id 解压失败: $tar"
+        return 1
+    fi
+    # Verify extraction completeness
+    local tar_files extracted_files
+    tar_files=$(tar tzf "$tar" 2>/dev/null | grep -c -v '/$' || echo 0)
+    extracted_files=$(find "$target" -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$extracted_files" -lt "$tar_files" ]; then
+        warn "$id 解压可能不完整: tar=$tar_files extracted=$extracted_files"
+    fi
     ok "$id 已部署到 $target"
+    # Auto-sync Nginx if project's location is missing from config
+    if ! nginx_has_location "$id"; then
+        warn "$id Nginx location not found in config — running sync-nginx"
+        sync_nginx || warn "sync-nginx failed, continuing"
+    fi
     if [ "${NGINX_RELOAD[$id]}" = "true" ]; then
         nginx_reload
     fi
@@ -949,9 +1079,11 @@ deploy_deepquant_backend() {
     if [ ! -f "$svc_file" ]; then
         log "首次部署：安装 quantdinger-backend.service..."
         local svc_template=""
-        for t in "$CONFIGS_SRC/quantdinger-backend.service" \
-                 "$DIST_ROOT/configs/quantdinger-backend.service" \
-                 "$(dirname "$0")/configs/quantdinger-backend.service"; do
+for t in "$CONFIGS_SRC/systemd/quantdinger-backend.service" \
+"$DIST_ROOT/configs/systemd/quantdinger-backend.service" \
+"$CONFIGS_SRC/quantdinger-backend.service" \
+"$(dirname "$0")/configs/systemd/quantdinger-backend.service" \
+"$(dirname "$0")/configs/quantdinger-backend.service"; do
             [ -f "$t" ] && svc_template="$t" && break
         done
         if [ -n "$svc_template" ]; then
@@ -980,7 +1112,155 @@ deploy_deepquant_backend() {
     fi
 }
 
-# 通用入口：前端走清单解压；后端保留专用逻辑（路径仍来自清单）
+# 通用后端部署函数：无专用函数的后端项目走此路径
+# 支持 deployHook（优先）和默认流程（venv + pip + systemd）
+deploy_backend_generic() {
+    local id="$1"
+    local pkg_dir="${DEPLOY_PATH[$id]:-}"
+    local tar_pat="${ARTIFACT_NAME[$id]:-}"
+    local label="${PROJECT_DISPLAY_NAME[$id]:-$id}"
+    local venv_dir="$pkg_dir/.venv" env_file="$pkg_dir/.env"
+
+    log "部署 $id ($label) → $pkg_dir ..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] $id → $pkg_dir (artifact=$tar_pat hook=${DEPLOY_HOOK[$id]:-none})"
+        return 0
+    fi
+
+    # If deployHook is set, use it (similar to financial-api flow)
+    if [ -n "${DEPLOY_HOOK[$id]:-}" ]; then
+        local tar
+        tar=$(find_file "$tar_pat")
+        [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
+        backup_backend "$id" "$pkg_dir"
+        local api_parent
+        api_parent="$(dirname "$pkg_dir")"
+        find "$api_parent" -maxdepth 1 -name "${id}-*.tar.gz" -delete 2>/dev/null || true
+        mkdir -p "$api_parent"
+        cp "$tar" "$api_parent/"
+        mkdir -p "$DEPLOY_TMP_DIR/${id}-extract"
+        tar xzf "$tar" -C "$DEPLOY_TMP_DIR/${id}-extract"
+        local DEPLOY_SCRIPT=""
+        local hook_rel="${DEPLOY_HOOK[$id]}"
+        for cand in "$DEPLOY_TMP_DIR/${id}-extract/scripts/$(basename "$hook_rel")" \
+                    "$DEPLOY_TMP_DIR/${id}-extract/package/scripts/$(basename "$hook_rel")" \
+                    "$DIST_ROOT/$hook_rel" \
+                    "$SCRIPT_DIR_DEPLOY/../$hook_rel" \
+                    "$SCRIPT_DIR/$hook_rel"; do
+            [ -f "$cand" ] && DEPLOY_SCRIPT="$cand" && break
+        done
+        if [ -n "$DEPLOY_SCRIPT" ]; then
+            local yes_flag=""
+            $ASSUME_YES && yes_flag="--yes"
+            DEPLOY_ROOT="$api_parent" PKG_DIR="$pkg_dir" \
+                bash "$DEPLOY_SCRIPT" --no-restart $yes_flag || warn "$hook_rel 有警告"
+            ok "$id 代码已同步（via deployHook）"
+        else
+            rm -rf "$DEPLOY_TMP_DIR/${id}-extract"
+            err "未找到 deployHook: $hook_rel"; return 1
+        fi
+        rm -rf "$DEPLOY_TMP_DIR/${id}-extract"
+    else
+        # Default flow: extract + venv + pip + systemd
+        local tar
+        tar=$(find_file "$tar_pat")
+        [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
+        backup_backend "$id" "$pkg_dir"
+        mkdir -p "$pkg_dir"
+        [ -f "$env_file" ] && cp "$env_file" "$env_file.bak"
+        # Clean old code (preserve .env, .venv, logs, data)
+        find "$pkg_dir" -mindepth 1 -maxdepth 1 \
+            ! -name '.env' ! -name '.venv' ! -name 'logs' ! -name 'data' \
+            -exec rm -rf {} + 2>/dev/null || true
+        tar xzf "$tar" -C "$pkg_dir"
+        ok "代码已解压"
+        [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
+
+        # Create venv if needed
+        if [ ! -d "$venv_dir" ]; then
+            log "创建虚拟环境..."
+            python3 -m venv "$venv_dir"
+            "$venv_dir/bin/pip" install --upgrade pip -q
+        fi
+
+        # Install dependencies (detect requirements.txt or pyproject.toml)
+        log "安装依赖..."
+        if [ -f "$pkg_dir/requirements.txt" ]; then
+            "$venv_dir/bin/pip" install -r "$pkg_dir/requirements.txt" -q 2>&1 | tail -3
+        elif [ -f "$pkg_dir/pyproject.toml" ]; then
+            (cd "$pkg_dir" && "$venv_dir/bin/pip" install -e "." -q 2>&1 | tail -3)
+        else
+            warn "未找到 requirements.txt 或 pyproject.toml，跳过依赖安装"
+        fi
+
+        # Generate .env from template if first deploy
+        if [ ! -f "$env_file" ]; then
+            log "首次部署：从模板生成 .env..."
+            local template=""
+            for t in "$CONFIGS_SRC/${id}.env.example" \
+                     "$DIST_ROOT/configs/${id}.env.example" \
+                     "$(dirname "$0")/configs/${id}.env.example"; do
+                [ -f "$t" ] && template="$t" && break
+            done
+            if [ -n "$template" ]; then
+                sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
+                    -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
+                    -e "s|__SERVER_IP__|${SERVER_IP:-127.0.0.1}|g" \
+                    -e "s|__FRONTEND_URL__|${FRONTEND_URL:-http://${SERVER_IP:-127.0.0.1}}|g" \
+                    "$template" > "$env_file"
+                chmod 600 "$env_file"
+                ok ".env 已生成（从模板 $template）"
+            else
+                warn "未找到 ${id}.env.example 模板，请手动创建: $env_file"
+            fi
+        else
+            ok ".env 已存在，保留"
+        fi
+
+        # Install systemd services if first deploy
+        local svc
+        for svc in ${SERVICES[$id]}; do
+            [ -z "$svc" ] && continue
+            local svc_file="/etc/systemd/system/${svc}.service"
+            if [ ! -f "$svc_file" ]; then
+                log "首次部署：安装 ${svc}.service..."
+                local svc_template=""
+                for t in "$CONFIGS_SRC/systemd/${svc}.service" \
+                         "$DIST_ROOT/configs/systemd/${svc}.service" \
+                         "$CONFIGS_SRC/${svc}.service" \
+                         "$(dirname "$0")/configs/systemd/${svc}.service"; do
+                    [ -f "$t" ] && svc_template="$t" && break
+                done
+                if [ -n "$svc_template" ]; then
+                    cp "$svc_template" "$svc_file"
+                    systemctl daemon-reload
+                    systemctl enable "$svc"
+                    ok "${svc}.service 已安装并启用"
+                else
+                    warn "未找到 ${svc}.service 模板"
+                fi
+            else
+                ok "${svc}.service 已存在"
+            fi
+        done
+
+        mkdir -p "$pkg_dir/logs"
+    fi
+
+    # Restart services + health check
+    if ! $NO_RESTART; then
+        local svc
+        for svc in ${SERVICES[$id]}; do
+            [ -n "$svc" ] && restart_service "$svc"
+        done
+        if [ -n "${HEALTH_URL[$id]:-}" ]; then
+            sleep 3
+            health_check "$id" "${HEALTH_URL[$id]}"
+        fi
+    fi
+}
+
+# 通用入口：前端走清单解压；后端保留专用逻辑或走通用部署
 deploy_by_id() {
     local id="$1"
     if [ -z "${DEPLOY_PATH[$id]:-}" ]; then
@@ -996,8 +1276,8 @@ deploy_by_id() {
                 financial-api)     deploy_financial_api ;;
                 deepquant-backend) deploy_deepquant_backend ;;
                 *)
-                    err "后端 $id 未实现专用部署（请补 deployHook 或专用函数）"
-                    return 1
+                    # 通用后端部署：支持 deployHook 或默认流程
+                    deploy_backend_generic "$id"
                     ;;
             esac
             ;;
@@ -1074,7 +1354,7 @@ interactive_menu() {
         fi
         banner "部署管理工具"
         echo "  ${BOLD}1)${NC} 部署项目（选择一个或多个）"
-        echo "  ${BOLD}2)${NC} 全量部署（5 个项目）"
+        echo "  ${BOLD}2)${NC} 全量部署（${#PROJECTS[@]} 个项目）"
         echo "  ${BOLD}3)${NC} 回滚（单项目 / 多选 / 全部）"
         echo "  ${BOLD}4)${NC} 查看备份列表"
         echo "  ${BOLD}5)${NC} 查看服务状态"
@@ -1262,23 +1542,29 @@ deploy_summary() {
     if [ -n "$SERVER_IP" ]; then
         echo "  访问地址（IP: $SERVER_IP）："
         for p in "${deployed[@]}"; do
-            case "$p" in
-                financial-web)      echo "    http://$SERVER_IP/" ;;
-                financial-api)      echo "    http://$SERVER_IP/api/health" ;;
-                official-site)      echo "    http://$SERVER_IP/qd/" ;;
-                deepquant-web)      echo "    http://$SERVER_IP/quant/" ;;
-                deepquant-backend)  echo "    http://$SERVER_IP/quant/api/health" ;;
-            esac
+            local url=""
+            # 优先用 publicUrl，其次从 healthUrl 提取路径
+            if [ -n "${PUBLIC_URL[$p]:-}" ]; then
+                url="http://$SERVER_IP${PUBLIC_URL[$p]}"
+            elif [ -n "${HEALTH_URL[$p]:-}" ]; then
+                # 从 healthUrl 提取路径部分（如 http://127.0.0.1:5001/api/health → /api/health）
+                local path="${HEALTH_URL[$p]}"
+                path=$(echo "$path" | sed 's|.*://[^/]*||')
+                url="http://$SERVER_IP$path"
+            fi
+            [ -n "$url" ] && echo "    $p → $url"
         done
         echo ""
     fi
     echo "  查看日志："
     for p in "${deployed[@]}"; do
-        case "$p" in
-            financial-api)      echo "    journalctl -u financial-api -f" ;;
-            deepquant-backend)  echo "    journalctl -u quantdinger-backend -f" ;;
-            *)                  echo "    tail -f /www/wwwlogs/error.log" ;;
-        esac
+        local primary_svc="${SERVICES[$p]:-}"
+        primary_svc="${primary_svc%% *}"
+        if [ -n "$primary_svc" ]; then
+            echo "    journalctl -u $primary_svc -f"
+        else
+            echo "    tail -f /www/wwwlogs/error.log"
+        fi
     done
     echo ""
 }
@@ -1289,45 +1575,76 @@ deploy_summary() {
 
 deploy_nginx() {
     log "配置 Nginx..."
-    # NGINX_CONF_NAME 可通过 deploy.env 或环境变量指定（如 nginx-servera-ssl.conf）
+    local nginx_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
+
+    # ── 优先：从 projects.json 动态生成 ──
+    local gen_script="$(dirname "$0")/generate-nginx.py"
+    [ ! -f "$gen_script" ] && gen_script="$SCRIPT_DIR/generate-nginx.py"
+    if [ -f "$gen_script" ]; then
+        # 根据 NGINX_CONF_NAME 确定 SSL 模式（向后兼容）
+        local mode="http"
+        local conf_name="${NGINX_CONF_NAME:-}"
+        case "$conf_name" in
+            *servera-ssl*)   mode="ssl-redirect" ;;
+            *all-sites-ssl*) mode="ssl-combined" ;;
+            *)               mode="http" ;;
+        esac
+
+        local gen_args=("--mode" "$mode" "--project-base" "$PROJECT_BASE")
+        if [ -n "$DOMAIN" ] && [ -n "$WWW_DOMAIN" ]; then
+            gen_args+=("--domain" "$DOMAIN" "--www-domain" "$WWW_DOMAIN")
+        elif [ "$mode" != "http" ]; then
+            warn "SSL 模式需要 DOMAIN 和 WWW_DOMAIN，回退到 http 模式"
+            gen_args=("--mode" "http" "--project-base" "$PROJECT_BASE")
+        fi
+
+        if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+            log "DRY RUN: 将动态生成 Nginx 配置 (mode=$mode)"
+            python3 "$gen_script" "${gen_args[@]}" | head -20
+            log "... (仅显示前 20 行)"
+            return 0
+        fi
+
+        # 备份当前配置
+        [ -f "$nginx_target" ] && cp "$nginx_target" "${nginx_target}.bak.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+
+        # 生成配置
+        python3 "$gen_script" "${gen_args[@]}" --output "$nginx_target"
+        ok "Nginx 配置已动态生成 (mode=$mode)"
+
+        if nginx -t 2>&1; then
+            nginx -s reload
+            ok "Nginx 配置已更新并重载"
+        else
+            warn "Nginx 配置测试失败，请手动检查 $nginx_target"
+            warn "可回滚: cp ${nginx_target}.bak.* $nginx_target && nginx -s reload"
+        fi
+        return
+    fi
+
+    # ── 回退：文件模式（预写配置文件）──
+    warn "generate-nginx.py 未找到，回退到文件模式"
     local conf_name="${NGINX_CONF_NAME:-nginx-all-sites.conf}"
     local conf_src=""
     for f in "$CONFIGS_SRC/$conf_name" \
              "$DIST_ROOT/configs/$conf_name" \
-             "$(dirname "$0")/configs/$conf_name" \
-             "$CONFIGS_SRC/nginx-all-sites.conf" \
-             "$DIST_ROOT/configs/nginx-all-sites.conf" \
-             "$(dirname "$0")/configs/nginx-all-sites.conf"; do
+             "$(dirname "$0")/configs/$conf_name"; do
         [ -f "$f" ] && conf_src="$f" && break
     done
     [ -z "$conf_src" ] && { warn "未找到 Nginx 配置文件，跳过"; return 1; }
-
-    local nginx_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
 
     if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
         log "DRY RUN: 将拷贝 $conf_src → $nginx_target"
         return 0
     fi
 
-    # 备份当前配置
     [ -f "$nginx_target" ] && cp "$nginx_target" "${nginx_target}.bak.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
-
-    # 渲染占位符（__DOMAIN__ / __WWW_DOMAIN__ / __APP_NAME__）后拷贝
-    if grep -q '__DOMAIN__\|__WWW_DOMAIN__\|__APP_NAME__' "$conf_src" 2>/dev/null; then
-        sed -e "s|__WWW_DOMAIN__|${WWW_DOMAIN}|g" \
-            -e "s|__DOMAIN__|${DOMAIN}|g" \
-            -e "s|__APP_NAME__|${APP_NAME}|g" \
-            "$conf_src" > "$nginx_target"
-        ok "Nginx 配置已渲染域名占位符"
-    else
-        cp "$conf_src" "$nginx_target"
-    fi
+    cp "$conf_src" "$nginx_target"
     if nginx -t 2>&1; then
         nginx -s reload
         ok "Nginx 配置已更新并重载"
     else
         warn "Nginx 配置测试失败，请手动检查 $nginx_target"
-        warn "可回滚: cp ${nginx_target}.bak.* $nginx_target && nginx -s reload"
     fi
 }
 
@@ -1337,7 +1654,7 @@ deploy_nginx() {
 
 needs_deploy_lock() {
     # 只读操作不加锁
-    if $SHOW_HELP || $SHOW_STATUS || $SHOW_LOGS || $LIST_BACKUPS; then
+    if $SHOW_HELP || $SHOW_STATUS || $SHOW_LOGS || $LIST_BACKUPS || $SYNC_NGINX; then
         return 1
     fi
     if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
@@ -1361,6 +1678,7 @@ acquire_deploy_lock() {
 # 命令行只读模式（无锁）
 if $SHOW_STATUS; then show_status; exit 0; fi
 if $SHOW_LOGS; then show_logs; exit 0; fi
+if $SYNC_NGINX; then sync_nginx; exit $?; fi
 if $LIST_BACKUPS; then
     if [ ${#PROJECT_LIST[@]} -gt 0 ]; then
         for p in "${PROJECT_LIST[@]}"; do list_backups "$p" || true; done
@@ -1450,6 +1768,7 @@ fi
 
 # --nginx 单独执行（无项目参数）
 if $DEPLOY_NGINX; then
+
     deploy_nginx
     exit 0
 fi

@@ -3,17 +3,17 @@
 > 从零：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`projects.yaml`）→ systemd + Nginx。  
 > 本地 Windows 构建，服务器 Ubuntu/宝塔运行。**密码只放 `deploy.env`，禁止写进脚本或本文。**
 
-## 文档怎么读
+## 文档导航
 
-| 你想… | 看哪一节 |
+| 你想… | 看哪份文档 |
 |--------|----------|
 | 了解有哪些站、怎么路由 | [项目概览](#项目概览) |
 | 加项目 / 换工作区根 | [仓库结构与项目清单](#仓库结构与项目清单ssot) |
 | 配密码、连库 | [密钥与连接](#密钥与连接deployenv) |
-| **第一次**装服务器 | [完整部署步骤](#完整部署步骤从零开始) |
-| **以后**发版 / 回滚 | [增量发版](#增量发版首次全量部署后) · [回滚](#回滚) |
-| 查日志、重启、备份 | [日常运维](#日常运维) |
-| 本机连远程库开发 | [远程开发](#远程开发) |
+| **第一次**装服务器 | [完整部署步骤](docs/guide/deploy-from-scratch.md) |
+| **以后**发版 / 回滚 | [增量发版与回滚](docs/guide/incremental-release.md) |
+| 查日志、重启、备份 | [日常运维](docs/guide/daily-ops.md) |
+| 本机连远程库开发 | [远程开发](docs/guide/remote-dev.md) |
 | 报错对照 | [常见问题](#常见问题) · [docs 排障档案](docs/README.md) |
 
 ---
@@ -42,33 +42,20 @@
 | `/quant/api/` | QuantDinger API | `location ^~ /quant/api/` | `127.0.0.1:5000/api/` |
 | `/quant/` | QuantDinger 前端 | `location ^~ /quant/` | 静态文件 (SPA fallback) |
 
-## 跨站跳转关系
-
-```
-financial-web (/)  ──┬──→  official-site (/qd/)     [页脚链接 / 首页推广位]
-                     └──→  QuantDinger 前端 (/quant/) [菜单跳转 / SSO]
-
-official-site (/qd/) ────→  QuantDinger 前端 (/quant/) [启动应用按钮]
-```
-
-- financial-web → official-site: DB 配置 `links.deepquant.siteUrl` = `/qd`
-- financial-web → QuantDinger: DB 配置 `links.deepquant.appBaseUrl` = `/quant`
-- official-site → QuantDinger: 构建时 `VITE_APP_URL` 环境变量
-
 ## 数据库与 Redis
 
 | 服务 | 数据库 | Redis |
 |------|--------|-------|
-| financial-api | `quant_zc`（用户见 `deploy.env`） | 共享实例，key 前缀 `fin_*` |
+| financial-api | `quant_zc` | 共享实例，key 前缀 `fin_*` |
 | QuantDinger | `quantdinger` | 共享实例，自身前缀 |
 
-> 两后端共用宝塔 PostgreSQL / Redis，用不同库隔离。密码只写在 `deploy.env`，详见下文「密钥与连接」。
+> 两后端共用宝塔 PostgreSQL / Redis，用不同库隔离。密码只写在 `deploy.env`。
+
+---
 
 ## 仓库结构与项目清单（SSOT）
 
 > 构建 / 部署以 `projects.yaml`（人改）+ `projects.json`（机器读）为准，**不要**再往 `build.ps1` / `deploy.sh` 里写死项目路径。
-
-> 项目清单是 `projects.yaml`（人类编辑源）+ `projects.json`（机器读取源），所有构建/部署脚本从清单读取项目路径、产物名、服务名等。
 
 ### 文件结构
 
@@ -80,10 +67,10 @@ deploy/
     ├── sync-projects.py  # yaml → json 同步脚本（需 Python3，WSL 或服务器）
     ├── lib/
     │   ├── load-projects.ps1   # PowerShell 加载器
-    │   ├── load-projects.sh    # Bash 加载器
-    │   ├── _probe-projects.ps1 # 验证脚本
-    │   └── _probe-projects.sh  # 验证脚本（WSL）
-    └── pack-generic.ps1        # 通用后端打包器（参数化，不写死路径）
+    │   └── load-projects.sh    # Bash 加载器
+    ├── pack-generic.ps1        # 通用后端打包器（参数化，不写死路径）
+    ├── generate-nginx.py       # Nginx 配置动态生成器
+    └── build.ps1               # Windows 本地构建入口
 ```
 
 ### 登记新项目
@@ -94,61 +81,40 @@ deploy/
 4. 前端：确保有 `pnpm build`；后端：按需补 `deployHook` / systemd
 5. `.\scripts\build.ps1 {id}` → 上传 → `bash deploy.sh {id}`
 
-### 换工作区根目录
-
-```bash
-# 方式一：环境变量（临时）
-export WORKSPACE_ROOT=/path/to/new/workspace
-.\scripts\build.ps1 discover   # 验证路径是否正确
-
-# 方式二：deploy.env
-WORKSPACE_ROOT=/path/to/new/workspace
-```
-
-### 扫描未登记项目
-
-```powershell
-.\scripts\build.ps1 discover
-# 报告工作区存在但未登记到 projects.json 的项目目录
-```
-
-### 解析优先级
-
-```
-WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
-PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
-```
-
----
-
 ### 仓库文件树
 
 ```
 deploy/
-├── README.md                         # 本文档（主入口）
-├── docs/                             # 排障档案 / API 参考（见 docs/README.md）
+├── README.md                         # 本文档（主入口，精简版）
+├── docs/                             # 详细指南 / 排障档案（见 docs/README.md）
+│   └── guide/                        # 拆分后的详细操作指南
+│       ├── deploy-from-scratch.md    # 完整部署步骤（Phase 0-7b）
+│       ├── daily-ops.md              # 日常运维
+│       ├── incremental-release.md    # 增量发版与回滚
+│       └── remote-dev.md             # 远程开发
 ├── projects.yaml                     # 项目清单 SSOT（人类编辑源）
 ├── projects.json                     # 项目清单 SSOT（机器读取源）
 ├── scripts/                          # 所有执行脚本
-│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理 + 系统冲突
+│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理
 │   ├── 01-install-baota.sh           # Phase1：安装宝塔面板
-│   ├── 02-baota-exclusive.sh         # 冲突清理实现（可由 00 调用）
-│   ├── 03-server-setup.sh            # Phase3：创建数据库、目录结构
+│   ├── 02-baota-exclusive.sh         # 冲突清理实现
+│   ├── 03-server-setup.sh            # Phase3：创建数据库、目录
 │   ├── detect-status.sh              # 探测各阶段是否已完成
-│   ├── build.ps1                     # Windows 本地：从 projects.json 加载 + 构建
-│   ├── pack-generic.ps1              # 通用后端打包器（参数化，读清单）
-│   ├── pack-financial-api.ps1        # financial-api 打包（薄封装 → pack-generic）
-│   ├── pack-financial-api.sh         # Linux/macOS：financial-api 打包
-│   ├── deploy-financial-api.sh       # 服务器：financial-api 一键部署
-│   ├── sync-projects.py              # yaml → json 同步脚本（需 Python3）
-│   ├── deploy.sh                     # 服务器：部署 + 回滚（从 projects.json 加载）
+│   ├── build.ps1                     # Windows 本地构建
+│   ├── pack-generic.ps1              # 通用后端打包器
+│   ├── deploy.sh                     # 服务器：部署 + 回滚
+│   ├── generate-nginx.py             # Nginx 配置动态生成
+│   ├── sync-projects.py              # yaml → json 同步
 │   └── lib/                          # 共享库
-├── configs/                          # Nginx / systemd / env 模板
-├── tests/                            # WSL 冒烟 / 沙箱（不碰生产）
-└── dist/                             # 构建产出（上传到服务器）
+├── configs/                          # systemd / env 模板
+│   └── systemd/                      # systemd unit 文件
+├── tests/                            # WSL 冒烟 / 沙箱
+└── dist/                             # 构建产出（.gitignore，上传到服务器）
 ```
 
 > 各项目内不再维护 deploy/ 目录和 Docker 配置，所有部署相关文件集中在此目录。
+
+---
 
 ## 密钥与连接（deploy.env）
 
@@ -176,1102 +142,61 @@ deploy/
 | 端口 | `6379` |
 | 密码 | `REDIS_PASSWORD`（见 `deploy.env`） |
 
-### 配置文件位置
+### 解析优先级
 
-| 文件 | 路径 / 说明 |
-|------|-------------|
-| 部署总配置 | `deploy/deploy.env`（本地）或 `/www/wwwroot/project/deploy.env`（服务器） |
-| 模板 | `deploy.env.example`、`configs/financial-api.env.example`、`configs/deepquant.env.example` |
-| financial-api 运行时 | `$PROJECT_BASE/financial/financial-api/package/.env`（首次由脚本渲染） |
-| QuantDinger 运行时 | `$PROJECT_BASE/deepquant/backend/package/.env`（首次由脚本渲染） |
+```
+WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
+PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
+```
 
 ---
 
-## 完整部署步骤（从零开始）
+## 快速开始
 
-### 前提条件
+### 首次部署
 
-- 服务器：Linux（Ubuntu 20+ / CentOS 7+ / Debian 10+），root 权限
-- 服务器当前运行 Docker（将被卸载）
-- 本地 Windows 已安装：Node.js 20+、pnpm 11+、Python 3.11+、uv
-- 本地已安装 financial-web 依赖（`pnpm install`）
-- 本地已安装 deepquant_vue 依赖（`pnpm install`）
+详见 [完整部署步骤](docs/guide/deploy-from-scratch.md)。
 
-### 执行顺序总览
+### 增量发版
 
-```
-【云安全组】先放行 22 / 80 / 443 / 面板端口（勿放 5432、6379）
-
-Phase 0: 环境清理                 (00-cleanup-docker.sh)
-         ├─ Docker 卸载（已卸则自动跳过）
-         └─ 系统防火墙/系统库冲突清理（原 0b，已并入）
-Phase 1: 安装宝塔面板             (01-install-baota.sh)     ← 已装则提示跳过
-Phase 2: 宝塔面板安装基础组件      (手动) Nginx/PG/Redis/Python
-         + 宝塔「安全」放行端口
-         + 建议复查: 00 --conflicts-only --check
-Phase 3: 创建数据库和目录          (03-server-setup.sh)
-Phase 4: 本地构建打包             (build.ps1 all)
-Phase 5: 上传到服务器             (scp dist + deploy.sh)
-Phase 6: 服务器部署               (deploy.sh all)           ← 已部署会提示确认
-Phase 7: 宝塔 Nginx 站点配置      (手动套用 nginx conf)
-验证:    detect-status.sh + curl health
-```
-
-> **随时查看进度**：`bash detect-status.sh`（标 DONE / PARTIAL / TODO，并给出下一步）。
->
-> **0b 已并入 0**：只需跑 `00-cleanup-docker.sh`；`02-baota-exclusive.sh` 仍可单独复查。
-
-> **为什么先清 Docker + 系统冲突？** Docker Nginx 占 80；系统 ufw/apt 版 PG/Redis 与宝塔抢端口或连错实例。**运行时栈一律只用宝塔**。
-
----
-
-### Phase 0: 环境清理 — Docker + 系统冲突（SSH）
-
-```bash
-scp D:\Workspace\deploy\scripts\00-cleanup-docker.sh \
-    D:\Workspace\deploy\scripts\02-baota-exclusive.sh \
-    D:\Workspace\deploy\scripts\detect-status.sh \
-    root@服务器IP:/root/
-
-# 全量（Docker 已卸会自动跳过该段；随后自动做冲突清理）
-bash /root/00-cleanup-docker.sh
-
-# 仅查状态
-bash /root/detect-status.sh
-bash /root/00-cleanup-docker.sh --check
-```
-
-| 子步骤 | 内容 | 已完成时 |
-|--------|------|----------|
-| Docker | 卸引擎、清容器/卷/镜像、旧服务/目录 | **自动跳过** |
-| 冲突清理（原 0b） | 禁用 ufw/firewalld，purge 系统 nginx/pg/redis… | **无冲突则快速退出** |
-
-兼容：`bash 02-baota-exclusive.sh` ≡ `bash 00-cleanup-docker.sh --conflicts-only`
-
-Docker 段会彻底完成（若本机已无 Docker 则整段跳过）：
-
-| 步骤 | 清理内容 |
-|------|----------|
-| 1–6 | Compose / 容器 / 卷 / 网络 / 镜像 / 构建缓存 |
-| 7 | 卸载 Docker 引擎 |
-| 8–11 | 旧 systemd、SSL cron、旧目录、端口检查 |
-| 12 | **系统冲突清理**（原 0b：ufw/firewalld + 系统 nginx/pg/redis…） |
-
-> **⚠️** Docker 段会删除 Docker 内数据库数据；执行前按提示确认备份。
-
-**冲突清理明细 / 端口策略：**
-
-| 冲突源 | 处理 |
-|--------|------|
-| UFW / firewalld | disable → 宝塔「安全」 |
-| 系统 nginx/apache/postgresql*/redis/mysql | stop + purge → 只用 `/www/server/...` |
-| PATH | `/etc/profile.d/baota-path.sh` 宝塔 bin 优先 |
-
-| 放行（宝塔安全 + 云安全组） | 禁止公网 |
-|------------------------------|----------|
-| 22、80、443、面板端口 | **5432、6379** |
-
----
-
-### Phase 1: 安装宝塔面板（SSH）
-
-```bash
-# 上传安装脚本
-scp D:\Workspace\deploy\scripts\01-install-baota.sh root@服务器IP:/root/
-
-# 执行安装
-bash /root/01-install-baota.sh
-```
-
-安装脚本会：
-- 确认 Docker 已彻底卸载（否则拒绝执行）
-- 检查端口 80 空闲
-- 检测操作系统（Ubuntu/Debian/CentOS）
-- 下载并执行宝塔官方安装脚本
-- 输出面板地址、用户名、密码
-
-安装完成后：
-1. 浏览器访问面板地址，登录后绑定宝塔账号
-2. 记下面板登录信息（如忘记可执行 `bt default` 查看）
-
-> **云服务器注意**：在安全组中放行宝塔面板端口（默认 8888，安装后会告知实际端口）
-
----
-
-### Phase 2: 宝塔面板安装基础组件（手动操作）
-
-登录宝塔面板后，进入 **软件商店** 安装以下组件：
-
-| 组件 | 版本 | 用途 |
-|------|------|------|
-| **Nginx** | 稳定版 | 反向代理 + 静态文件服务 |
-| **PostgreSQL** | 16.x | 数据库（两个后端共享） |
-| **Redis** | 7.x | 缓存（两个后端共享） |
-| **Python 项目管理器** | — | 提供 Python 3.12（后端 venv 用） |
-
-**设置数据库密码（与 `deploy.env` 保持一致）：**
-
-```bash
-# 1) 本地/仓库根目录先配好密码文件（禁止提交）
-cp deploy.env.example deploy.env
-# 编辑 deploy.env：填写 PG_PASSWORD / REDIS_PASSWORD
-
-# 2) 宝塔 PostgreSQL
-su - postgres -c "psql -c \"ALTER USER root WITH PASSWORD '你的PG密码';\""
-
-# 3) 宝塔 Redis：面板改 requirepass，或 redis.conf 写入同一密码
-```
-
-> 所有部署脚本**只从 `deploy.env`（或 `DEPLOY_ENV_FILE`）读密码，脚本内不再内置默认口令。**
-> 服务器建议放置：`/www/wwwroot/project/deploy.env`（权限 `600`）。
-
----
-
-### Phase 3: 创建数据库和目录（SSH）
-
-```bash
-# 上传脚本
-scp D:\Workspace\deploy\scripts\03-server-setup.sh root@服务器IP:/root/
-
-# 执行
-bash /root/03-server-setup.sh
-```
-
-准备脚本会：
-- 检查宝塔安装的 Nginx、PostgreSQL、Redis、Python 3.11+（自动检测宝塔路径）
-- 验证 Docker 已彻底卸载
-- 创建数据库 `quant_zc`（financial-api）和 `quantdinger`（QuantDinger）
-- 验证 Redis 连接
-- 创建目录结构：
-  ```
-  /www/wwwroot/project/
-  ├── financial/financial-api/
-  ├── financial/financial-web/
-  ├── official-site/
-  ├── deepquant/backend/
-  ├── deepquant/web/
-  └── uploads/
-  ```
-
----
-
-### Phase 4: 本地构建打包（Windows PowerShell）
+详见 [增量发版与回滚](docs/guide/incremental-release.md)。
 
 ```powershell
-cd D:\Workspace\deploy
-
-# 构建（official-site 已使用相对路径，一次构建通用所有服务器）
-.\scripts\build.ps1 all
-```
-
-构建脚本会产出以下文件到 `D:\Workspace\deploy\dist\`：
-
-```
-dist/
-├── deploy.sh                    # 服务器端部署脚本（自包含）
-├── detect-status.sh             # 状态探测脚本
-├── packages/                    # 构建产物
-│   ├── financial-web-dist.tar.gz
-│   ├── official-site-dist.tar.gz
-│   ├── deepquant-web-dist.tar.gz
-│   ├── financial-api-*.tar.gz
-│   └── deepquant-backend-package.tar.gz
-└── configs/                     # 服务器端配置
-    ├── nginx-all-sites.conf
-    ├── nginx-all-sites-ssl.conf
-    ├── quantdinger-backend.service
-    ├── deepquant.env.example
-    ├── official-site.env
-    └── systemd/
-        ├── financial-api.service
-        ├── financial-crawler.service
-        ├── financial-worker.service
-        └── financial-streaming.service
-```
-
----
-
-### Phase 5: 上传到服务器
-
-```powershell
-# 方式一：scp 上传（推荐）
-scp -r D:\Workspace\deploy\dist root@服务器IP:/www/wwwroot/project/uploads/
-
-# 方式二：宝塔文件管理
-# 将 dist/ 下所有文件上传到 /www/wwwroot/project/uploads/
-```
-
----
-
-### Phase 6: 服务器一键部署（SSH）
-
-```bash
-# SSH 到服务器
-ssh root@服务器IP
-
-# 进入上传目录
-cd /www/wwwroot/project/uploads/dist
-
-# 执行一键部署
-bash deploy.sh all --ip=47.86.32.234
-
-# 可选参数：
-bash deploy.sh all --no-restart         # 部署但不重启服务
-```
-
-部署脚本会自动完成：
-1. **financial-api**: 代码同步 → venv → .env → 依赖 → 迁移 → 种子 → systemd → 启动
-2. **QuantDinger 后端**: 代码同步 → venv → .env → 依赖 → init.sql → systemd → 启动
-3. **静态站点**: 解压 financial-web、official-site、deepquant_vue 到对应目录
-4. **Nginx**: 配置并重载（可选自动或手动）
-
----
-
-### Phase 7: 宝塔 Nginx 配置
-
-**方式一：自动配置（推荐）**
-
-在 Phase 6 部署时追加 `--nginx` 参数，自动拷贝 Nginx 配置并重载：
-
-```bash
-# 部署 + 自动配置 Nginx
-bash deploy.sh all --ip=服务器IP --nginx
-
-# 或单独配置 Nginx（不部署代码）
-bash deploy.sh --nginx
-```
-
-> **SSL 域名部署**：在 `deploy.env` 中设置 `NGINX_CONF_NAME` 选择 SSL 配置：
-> - 服务器 A：`NGINX_CONF_NAME=nginx-servera-ssl.conf`
-> - 服务器 B：`NGINX_CONF_NAME=nginx-all-sites-ssl.conf`
-> - IP 部署（无 SSL）：留空或 `NGINX_CONF_NAME=nginx-all-sites.conf`
-
-**方式二：手动操作**
-
-如果未使用 `--nginx`，手动操作：
-
-1. 宝塔面板 → **网站** → 添加站点（域名填服务器 IP 或 `_`）
-2. 站点设置 → **配置文件**
-3. 全部内容替换为 `/www/wwwroot/project/uploads/dist/configs/nginx-all-sites.conf` 的内容
-4. 保存
-
-```bash
-# 或命令行操作
-cp /www/wwwroot/project/uploads/dist/configs/nginx-all-sites.conf /www/server/panel/vhost/nginx/default.conf
-nginx -t && nginx -s reload
-```
-
-### Phase 7b: SSL 证书 + 宝塔邮局申请（域名部署）
-
-> **前提**：`deploy.env` 已配置 `DOMAIN` / `WWW_DOMAIN` / `NGINX_CONF_NAME=nginx-servera-ssl.conf`，DNS A 记录已指向服务器。
-
-#### 1. 申请 SSL 证书（acme.sh + Let's Encrypt）
-
-```bash
-# 1. 创建 ACME 验证目录
-mkdir -p /www/wwwroot/project/acme/.well-known/acme-challenge
-
-# 2. 临时加验证路径到当前 nginx（如果还没加）
-# 在 default.conf 的 location / 之前插入：
-#   location ^~ /.well-known/acme-challenge/ { root /www/wwwroot/project/acme; }
-
-# 3. 安装 acme.sh
-curl -s https://get.acme.sh | sh -s email=admin@${DOMAIN}
-
-# 4. 同时申请两个域名（一张证书）
-~/.acme.sh/acme.sh --issue \
-  -d ${WWW_DOMAIN} \
-  -d ${DOMAIN} \
-  --webroot /www/wwwroot/project/acme/ \
-  --server letsencrypt
-
-# 5. 安装证书到宝塔目录（自动续期 + reload）
-mkdir -p /www/server/panel/vhost/cert/${WWW_DOMAIN}
-~/.acme.sh/acme.sh --install-cert -d ${WWW_DOMAIN} --ecc \
-  --key-file       /www/server/panel/vhost/cert/${WWW_DOMAIN}/privkey.pem \
-  --fullchain-file /www/server/panel/vhost/cert/${WWW_DOMAIN}/fullchain.pem \
-  --reloadcmd     'nginx -s reload'
-```
-
-#### 2. 套用 SSL Nginx 配置
-
-```bash
-# deploy.sh 自动渲染占位符（__DOMAIN__ / __WWW_DOMAIN__）
-bash deploy.sh --nginx
-
-# 或手动渲染 + 拷贝
-sed -e "s|__WWW_DOMAIN__|${WWW_DOMAIN}|g" \
-    -e "s|__DOMAIN__|${DOMAIN}|g" \
-    configs/nginx-servera-ssl.conf > /www/server/panel/vhost/nginx/default.conf
-nginx -t && nginx -s reload
-```
-
-#### 3. 配置宝塔邮局
-
-> 两种方法任选其一。方法一（自建）无需额外费用，方法二（第三方）送达率更高。
-
-##### 方法一：宝塔邮局自建（Postfix + Dovecot + Rspamd）
-
-1. **安装邮局**：宝塔面板 → 软件商店 → 搜索「邮局」→ 安装
-
-2. **添加域名**：邮局管理 → 添加域名 `${DOMAIN}`
-
-3. **DNS 记录**（在域名商处添加）：
-
-   | 类型 | 主机 | 值 | 说明 |
-   |------|------|-----|------|
-   | MX | @ | `${DOMAIN}` | 邮件路由 |
-   | TXT | @ | `v=spf1 mx a ~all` | SPF 防伪造 |
-   | TXT | `default._domainkey` | 见 DKIM 公钥 | 邮件签名验证 |
-   | TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:admin@${DOMAIN}` | 邮件策略 |
-
-4. **获取 DKIM 公钥**：
-
-   ```bash
-   cat /www/server/dkim/${DOMAIN}/default.pub
-   # 输出格式：default._domainkey IN TXT ( "v=DKIM1; k=rsa; " "p=..." )
-   # DNS TXT 记录值 = v=DKIM1; k=rsa; p=...（去掉引号和括号，拼成一行）
-   ```
-
-5. **创建邮箱账号**：邮局管理 → 添加邮箱 `noreply@${DOMAIN}`，设好密码
-
-6. **deploy.env 配置**（SMTP_PASSWORD = 邮箱账号密码）：
-
-   ```bash
-   # deploy.env
-   SMTP_PASSWORD=你的邮箱密码
-   # financial-api.env.example 默认值无需改：
-   # SMTP_HOST=127.0.0.1  SMTP_PORT=465  SMTP_USE_TLS=false
-   ```
-
-##### 方法二：第三方 SMTP 服务（QQ企业邮箱 / Gmail / 阿里云等）
-
-> 适合需要高送达率、不愿自建邮局的场景。只需在第三方注册邮箱 + 获取授权码。
-
-1. **注册邮箱**：在第三方服务商处注册企业邮箱（如 `noreply@${DOMAIN}` 在 QQ企业邮箱）
-
-2. **deploy.env 配置**：
-
-   ```bash
-   # deploy.env — SMTP_PASSWORD = 第三方授权码（不是登录密码）
-   SMTP_PASSWORD=你的授权码
-   ```
-
-3. **financial-api.env.example 修改**（按服务商对应改值）：
-
-   | 服务商 | SMTP_HOST | SMTP_PORT | SMTP_USE_TLS | 说明 |
-   |--------|-----------|-----------|--------------|------|
-   | QQ企业邮箱 | `smtp.exmail.qq.com` | 465 | false | SMTP_SSL |
-   | Gmail | `smtp.gmail.com` | 587 | true | STARTTLS |
-   | 阿里云邮箱 | `smtp.qiye.aliyun.com` | 465 | false | SMTP_SSL |
-   | 网易163企业 | `smtp.qiye.163.com` | 994 | false | SMTP_SSL |
-
-   ```bash
-   # 示例：QQ企业邮箱
-   # 在 configs/financial-api.env.example 中改：
-   SMTP_HOST=smtp.exmail.qq.com
-   SMTP_PORT=465
-   SMTP_USE_TLS=false
-   SMTP_USERNAME=noreply@${DOMAIN}
-   SMTP_FROM_ADDR=noreply@${DOMAIN}
-   ```
-
-4. **DNS 记录**（按服务商指引添加 SPF/DKIM，通常第三方会提供）：
-
-   | 类型 | 主机 | 值 |
-   |------|------|-----|
-   | TXT | @ | `v=spf1 include:spf.mail.qq.com ~all`（QQ企业邮箱示例） |
-
-#### 4. 部署 SMTP 配置 + 重启
-
-```bash
-# deploy.sh 自动渲染 __DOMAIN__ / __APP_NAME__ / __SMTP_PASSWORD__ 占位符
-bash deploy.sh financial-api
-
-# 或手动追加（方法一/二通用）
-cat >> /www/wwwroot/project/financial/financial-api/package/.env << EOF
-SMTP_ENABLED=true
-SMTP_HOST=127.0.0.1           # 方法二改为第三方 smtp_host
-SMTP_PORT=465                 # 方法二按服务商改
-SMTP_USERNAME=noreply@${DOMAIN}
-SMTP_PASSWORD=你的密码或授权码
-SMTP_USE_TLS=false            # 方法二按服务商改
-SMTP_FROM_ADDR=noreply@${DOMAIN}
-SMTP_FROM_NAME=${APP_NAME}
-EMAIL_SUBJECT_TEMPLATE=您的验证码 - ${APP_NAME}
-EOF
-systemctl restart financial-api
-```
-
-#### 5. 验证
-
-```bash
-# HTTPS 访问
-curl -sI https://${WWW_DOMAIN}/                 # 200
-curl -sI https://${WWW_DOMAIN}/api/health        # 200 + JSON
-curl -sI https://${DOMAIN}/                      # 301 → www
-curl -sI http://${WWW_DOMAIN}/                   # 301 → HTTPS
-
-# 邮件发送
-curl -s https://${WWW_DOMAIN}/api/auth/send-code?email=test@${DOMAIN}
-```
-
----
-
-## 验证
-
-```bash
-# 服务状态
-systemctl status financial-api financial-crawler financial-worker financial-streaming quantdinger-backend
-
-# 健康检查
-curl http://127.0.0.1:5001/api/health    # financial-api
-curl http://127.0.0.1:5000/api/health    # QuantDinger
-
-# Nginx
-nginx -t
-
-# 浏览器访问
-# http://服务器IP/          → financial-web
-# http://服务器IP/qd/        → official-site
-# http://服务器IP/quant/     → QuantDinger 前端
-# http://服务器IP/api/health → financial-api 健康
-```
-
----
-
-## 增量发版（首次全量部署后）
-
-首次部署使用 `build.ps1 all` + `deploy.sh all` 全量构建和部署。
-后续单项目更新使用 `build.ps1 <项目>` + `deploy.sh <项目>` 增量发版，只构建和重启相关项目。
-
-### 支持的项目
-
-| 项目名 | 说明 | 构建方式 | 重启服务 |
-|--------|------|----------|----------|
-| `financial-web` | 行情/社区前端 | pnpm build | nginx reload |
-| `financial-api` | FastAPI 后端 | `pack-generic.ps1` | financial-api + crawler + worker + streaming |
-| `official-site` | 卓筹介绍站 | pnpm build | nginx reload |
-| `deepquant-web` | QuantDinger 前端 | pnpm build | nginx reload |
-| `deepquant-backend` | QuantDinger 后端 | `pack-generic` / source-tar | quantdinger-backend |
-
-### 发版流程（三步）
-
-#### Step 1: 本地构建打包
-
-项目列表来自 `projects.json`（`enabled: true`），不是扫描工作区「猜」出来的。新增项目请改 `projects.yaml` 后执行 `python3 scripts/sync-projects.py`。
-
-```powershell
-cd D:\Workspace\deploy
-
-# 单项目
-.\scripts\build.ps1 financial-web
-.\scripts\build.ps1 financial-api
-.\scripts\build.ps1 official-site
-.\scripts\build.ps1 deepquant-web
-.\scripts\build.ps1 deepquant-backend
-
-# 多项目 / 全量
-.\scripts\build.ps1 financial-web,official-site
-.\scripts\build.ps1 all
-
-# 可选：扫描工作区，报告「存在但未登记」的目录
-.\scripts\build.ps1 discover
-```
-
-产物：`dist/packages/<项目>-*.tar.gz`；部署资产会拷到 `dist/`（含 `projects.json`）。
-
-#### Step 2: 上传到服务器
-
-```powershell
-# 上传单个包
-scp D:\Workspace\deploy\dist\packages\financial-web-dist.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
-
-# 或上传所有新构建的包
-scp D:\Workspace\deploy\dist\packages\*.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
-```
-
-#### Step 3: 服务器部署
-
-```bash
-# SSH 到服务器
-ssh root@服务器IP
-
-# 进入上传目录
-cd /www/wwwroot/project/uploads/dist
-
-# 交互式菜单（首次启动会显示帮助）
-bash deploy.sh
-
-# 单项目部署
-bash deploy.sh financial-web
-bash deploy.sh financial-api --ip=47.86.32.234
-bash deploy.sh official-site
-bash deploy.sh deepquant-web
-bash deploy.sh deepquant-backend --ip=47.86.32.234
-
-# 全量部署
-bash deploy.sh all --ip=47.86.32.234
-
-# 不重启服务（只更新代码）
-bash deploy.sh financial-api --no-restart
-
-# 查看服务状态
-bash deploy.sh --status
-
-# 查看日志
-bash deploy.sh --logs financial-api          # 最近 50 行
-bash deploy.sh --logs financial-api --lines=100
-bash deploy.sh --logs financial-api --logs=error
-
-# 查看帮助
-bash deploy.sh --help
-```
-
-### 常见增量发版场景
-
-#### 只更新 financial-web 前端
-
-```powershell
-# 本地
+# 本地构建
 cd D:\Workspace\deploy
 .\scripts\build.ps1 financial-web
+
+# 上传
 scp dist\packages\financial-web-dist.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
 ```
 
 ```bash
-# 服务器
+# 服务器部署
 cd /www/wwwroot/project/uploads/dist
 bash deploy.sh financial-web
 ```
 
-#### 只更新 financial-api 后端
+### 日常运维
 
-```powershell
-# 本地
-cd D:\Workspace\deploy
-.\scripts\build.ps1 financial-api
-scp dist\packages\financial-api-*.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
-```
-
-```bash
-# 服务器
-cd /www/wwwroot/project/uploads/dist
-bash deploy.sh financial-api --ip=47.86.32.234
-```
-
-#### 只更新 QuantDinger 后端
-
-```powershell
-# 本地
-cd D:\Workspace\deploy
-.\scripts\build.ps1 deepquant-backend
-scp dist\packages\deepquant-backend-package.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
-```
-
-```bash
-# 服务器
-cd /www/wwwroot/project/uploads/dist
-bash deploy.sh deepquant-backend --ip=47.86.32.234
-```
-
----
-
-## 回滚
-
-每次部署前自动备份到 `/www/wwwroot/project/backup/<项目>/`，保留最近 5 个版本。
-**回滚前会再备份当前线上版本**；执行前会打印计划并要求输入 `yes` 确认（`--yes` 可跳过，慎用）。
-
-### 列出可用备份
-
-```bash
-cd /www/wwwroot/project/uploads/dist
-bash deploy.sh financial-web --list
-bash deploy.sh --list                  # 交互列出全部
-```
-
-### 单项目 / 多项目 / 全量回滚
-
-```bash
-# 单项目（交互选版本 → 确认 yes）
-bash deploy.sh financial-web --rollback
-
-# 多项目，各取最新备份
-bash deploy.sh financial-web,official-site --rollback=latest
-
-# 全量（仅回滚「有备份」的项目）
-bash deploy.sh all --rollback
-
-# 指定时间戳（各项目需存在同名备份）
-bash deploy.sh financial-web --rollback=20260728-103000
-
-# 自动化（跳过确认，危险）
-bash deploy.sh all --rollback=latest --yes
-```
-
-### 交互式回滚
-
-```bash
-bash deploy.sh
-# → 菜单 3) 回滚（单项目 / 多选 / 全部）
-# → 可选：每项手选版本，或全部用最新
-```
-
-### 备份位置
-
-| 项目 | 备份路径 | 备份内容 |
-|------|----------|----------|
-| financial-web | `/www/wwwroot/project/backup/financial-web/` | dist/ 目录整体 |
-| financial-api | `/www/wwwroot/project/backup/financial-api/` | package/ 代码（排除 .env/.venv） |
-| official-site | `/www/wwwroot/project/backup/official-site/` | dist/ 目录整体 |
-| deepquant-web | `/www/wwwroot/project/backup/deepquant-web/` | dist/ 目录整体 |
-| deepquant-backend | `/www/wwwroot/project/backup/deepquant-backend/` | package/ 代码（排除 .env/.venv） |
-
-> 回滚后自动重启相关服务。前端回滚后自动 nginx reload，后端回滚后自动 systemctl restart。
-
----
-
-## 日常运维
-
-### 服务管理
-
-```bash
-# ── 查看所有服务状态 ──
-systemctl status financial-api financial-crawler financial-worker financial-streaming quantdinger-backend
-
-# ── 重启单个服务 ──
-systemctl restart financial-api
-systemctl restart financial-crawler
-systemctl restart financial-worker
-systemctl restart financial-streaming
-systemctl restart quantdinger-backend
-
-# ── 重启所有服务 ──
-systemctl restart financial-api financial-crawler financial-worker financial-streaming quantdinger-backend
-
-# ── 停止/启动 ──
-systemctl stop financial-api
-systemctl start financial-api
-
-# ── 开机自启 ──
-systemctl enable financial-api quantdinger-backend
-systemctl is-enabled financial-api  # 检查是否开机自启
-```
-
-### 日志排查
-
-```bash
-# ── 实时查看日志（跟踪模式）──
-journalctl -u financial-api -f
-journalctl -u financial-crawler -f
-journalctl -u financial-worker -f
-journalctl -u financial-streaming -f
-journalctl -u quantdinger-backend -f
-
-# ── 查看最近 50 行 ──
-journalctl -u financial-api -n 50 --no-pager
-journalctl -u quantdinger-backend -n 50 --no-pager
-
-# ── 按时间查日志 ──
-journalctl -u financial-api --since "2026-07-28 10:00" --until "2026-07-28 12:00" --no-pager
-
-# ── 只看错误 ──
-journalctl -u financial-api -p err --no-pager
-
-# ── Nginx 日志 ──
-tail -f /www/wwwlogs/access.log
-tail -f /www/wwwlogs/error.log
-
-# ── 查看 Nginx 反向代理错误（502/504 时查这个）──
-tail -f /www/wwwlogs/error.log | grep -E '502|504|upstream'
-```
-
-### 健康检查
-
-```bash
-# ── 后端 API 健康检查 ──
-curl -s http://127.0.0.1:5001/api/health | python3 -m json.tool
-curl -s http://127.0.0.1:5000/api/health | python3 -m json.tool
-
-# ── 通过 Nginx 检查（外部访问）──
-curl -s http://47.86.32.234/api/health
-curl -s http://47.86.32.234/quant/api/health
-
-# ── 运行时配置检查 ──
-curl -s http://127.0.0.1:5001/api/system/runtime-config | python3 -m json.tool
-
-# ── 端口监听检查 ──
-ss -tlnp | grep -E '5000|5001|80|443|5432|6379'
-
-# ── 进程检查 ──
-ps aux | grep uvicorn
-ps aux | grep gunicorn
-```
-
-### Nginx 操作
-
-```bash
-# ── 测试配置 ──
-nginx -t
-
-# ── 重载配置（不中断服务）──
-nginx -s reload
-
-# ── 重启 Nginx ──
-/etc/init.d/nginx restart
-# 或宝塔面板 → 软件商店 → Nginx → 重启
-
-# ── 查看 Nginx 配置文件位置 ──
-nginx -T 2>&1 | head -20
-
-# ── 查看当前站点配置 ──
-cat /www/server/panel/vhost/nginx/default.conf
-
-# ── 更新 Nginx 配置 ──
-cp /www/wwwroot/project/uploads/dist/nginx-all-sites.conf /www/server/panel/vhost/nginx/default.conf
-nginx -t && nginx -s reload
-```
-
-### 数据库操作
-
-```bash
-# ── 连接数据库 ──
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quantdinger
-
-# ── 查看数据库列表 ──
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d postgres -c "\l"
-
-# ── 查看表列表 ──
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "\dt"
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quantdinger -c "\dt"
-
-# ── 查看表结构 ──
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "\d fin_app_configs"
-
-# ── 执行 SQL 查询 ──
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "SELECT count(*) FROM fin_news;"
-
-# ── 数据库备份 ──
-PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quant_zc | gzip > /root/backup_quant_zc_$(date +%Y%m%d).sql.gz
-PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quantdinger | gzip > /root/backup_quantdinger_$(date +%Y%m%d).sql.gz
-
-# ── 数据库恢复 ──
-gunzip -c /root/backup_quant_zc_20260728.sql.gz | PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc
-gunzip -c /root/backup_quantdinger_20260728.sql.gz | PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quantdinger
-
-# ── 从远程服务器迁移数据 ──
-# 旧服务器导出
-PGPASSWORD='旧密码' pg_dump -U 旧用户 -h 旧服务器IP -d quant_zc | gzip > /root/quant_zc.sql.gz
-# 新服务器导入
-gunzip -c /root/quant_zc.sql.gz | PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc
-
-# ── 数据库迁移（financial-api Alembic）──
-cd /www/wwwroot/project/financial/financial-api/package
-.venv/bin/alembic upgrade head     # 执行迁移
-.venv/bin/alembic current          # 查看当前版本
-.venv/bin/alembic history          # 查看迁移历史
-
-# ── 重新加载种子数据 ──
-cd /www/wwwroot/project/financial/financial-api/package
-.venv/bin/python -m app.db.seed
-```
-
-### Redis 操作
-
-```bash
-# ── 连接 Redis ──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD
-
-# ── 测试连接 ──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD ping
-
-# ── 查看 Redis 信息 ──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD info
-
-# ── 查看内存使用 ──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD info memory | grep used_memory_human
-
-# ── 查看所有 key 数量 ──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD dbsize
-
-# ── 查看 key 列表（谨慎使用，生产环境不要 KEYS *）──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD --scan --pattern 'fin_*' | head -20
-
-# ── 清除 financial-api 缓存 ──
-redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD --scan --pattern 'fin_*' | xargs -r redis-cli -h localhost -p 6379 -a $REDIS_PASSWORD del
-
-# ── Redis 迁移（从旧服务器）──
-# 旧服务器导出 RDB
-redis-cli -h 旧服务器IP -a 旧密码 --rdb /root/dump.rdb
-# 新服务器导入（需先停 Redis）
-/etc/init.d/redis stop
-cp /root/dump.rdb /www/server/redis/dump.rdb
-/etc/init.d/redis start
-```
-
-### 更新部署
-
-日常发版请走上文 **「增量发版」**（`build.ps1` → `scp` → `deploy.sh`），不要手搓旧路径的 `tar`/`scp` 命令。
-
-```bash
-# 仅更新 Nginx 配置示例
-bash deploy.sh --nginx
-# 或手动：拷贝 dist/configs 中对应 conf 后 nginx -t && nginx -s reload
-```
-
-### 磁盘与系统检查
-
-```bash
-# ── 磁盘空间 ──
-df -h
-
-# ── 查看项目占用空间 ──
-du -sh /www/wwwroot/project/*
-du -sh /www/wwwroot/project/financial/financial-api/package/.venv
-du -sh /www/server/pgsql/data
-
-# ── 内存使用 ──
-free -h
-
-# ── CPU 使用 TOP 5 进程 ──
-ps aux --sort=-%cpu | head -6
-
-# ── 内存使用 TOP 5 进程 ──
-ps aux --sort=-%mem | head -6
-
-# ── 系统负载 ──
-uptime
-
-# ── 清理日志（释放磁盘）──
-journalctl --vacuum-size=500M          # 限制 journal 日志 500MB
-> /www/wwwlogs/access.log               # 清空 Nginx 访问日志
-> /www/wwwlogs/error.log                # 清空 Nginx 错误日志
-
-# ── 清理 Python 缓存 ──
-find /www/wwwroot/project -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
-find /www/wwwroot/project -name '*.pyc' -delete
-```
-
-### 防火墙与端口
-
-```bash
-# ── 原则：主机防火墙只用宝塔「安全」；禁用系统 ufw/firewalld ──
-bash /root/02-baota-exclusive.sh --check
-
-# ── 查看监听端口 ──
-ss -tlnp | grep -E '5000|5001|5432|6379|80|443'
-
-# ── 宝塔面板 → 安全 放行（不要用 ufw/firewall-cmd 并行管理）──
-# 必须：80、443、22、面板端口
-# 禁止：5432（PostgreSQL）、6379（Redis）对 0.0.0.0 开放
-
-# ── 阿里云/腾讯云安全组 ──
-# 与宝塔放行保持一致：80/443/22/面板端口
-```
-
-### 宝塔面板操作
-
-```bash
-# ── 宝塔面板命令 ──
-bt default              # 查看面板登录信息
-bt 5                    # 重置面板密码
-bt 14                   # 查看默认信息
-bt 16                   # 修复面板
-bt restart              # 重启面板
-
-# ── 宝塔服务管理 ──
-/etc/init.d/nginx restart       # 重启 Nginx
-/etc/init.d/redis restart       # 重启 Redis
-# PostgreSQL 通过宝塔面板管理
-```
-
-### 定期备份
-
-```bash
-# ── 创建备份脚本 ──
-cat > /root/backup.sh << 'EOF'
-#!/bin/bash
-BACKUP_DIR="/root/backups"
-mkdir -p "$BACKUP_DIR"
-DATE=$(date +%Y%m%d_%H%M%S)
-
-# 数据库备份
-PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quant_zc | gzip > "$BACKUP_DIR/quant_zc_$DATE.sql.gz"
-PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quantdinger | gzip > "$BACKUP_DIR/quantdinger_$DATE.sql.gz"
-
-# 保留最近 7 天的备份
-find "$BACKUP_DIR" -name "*.sql.gz" -mtime +7 -delete
-
-echo "备份完成: $DATE"
-EOF
-chmod +x /root/backup.sh
-
-# ── 添加定时任务（每天凌晨 3 点）──
-crontab -l 2>/dev/null | { cat; echo "0 3 * * * /root/backup.sh >> /root/backup.log 2>&1"; } | crontab -
-
-# ── 手动执行备份 ──
-bash /root/backup.sh
-```
-
----
-
-## 远程开发
-
-本地开发时直连远程服务器数据库/后端，无需在本地启动 PostgreSQL/Redis/后端服务。
-
-### SSH 免密配置
-
-已配置 `~/.ssh/config`，可直接用别名连接：
-
-```bash
-ssh serverA    # → root@47.86.32.234:22
-ssh serverB    # → root@103.100.211.12:3142
-```
-
-### 服务器信息
-
-| | 服务器 A | 服务器 B |
-|---|---------|---------|
-| **别名** | `serverA` | `serverB` |
-| **IP** | 47.86.32.234 | 103.100.211.12 |
-| **SSH 端口** | 22 | 3142 |
-| **域名** | `www.zhuochouacedemy.com`（裸域 301→www） | `www.deepquant.club` |
-| **Nginx 模板** | `nginx-servera-ssl.conf`（SSL） | `nginx-all-sites-ssl.conf`（SSL） |
-| **PostgreSQL** | 见服务器 `deploy.env` 的 `PG_*` | 同左（若两机密码不同则各自 `deploy.env`） |
-| **数据库** | quant_zc, quantdinger | quant_zc, quantdinger |
-| **Redis 密码** | 见 `REDIS_PASSWORD` | 见 `REDIS_PASSWORD` |
-| **SMTP** | 宝塔邮局 `noreply@zhuochouacedemy.com` | — |
-
-### 远程开发启动命令
-
-#### financial-api（后端直连远程 DB）
-
-```powershell
-cd D:\Workspace\financial\financial-api
-
-# 连接服务器 A 的数据库
-$env:ENV_FILE=".env.remoteA"; uv run uvicorn app.main:app --reload
-
-# 连接服务器 B 的数据库
-$env:ENV_FILE=".env.remoteB"; uv run uvicorn app.main:app --reload
-```
-
-> 远程模式自动设为 `APP_ROLE=api`，不启动爬虫和实时推送，只读查询远程 DB。
-
-#### financial-admin（后台直连远程后端）
-
-```powershell
-cd D:\Workspace\financial\financial-admin
-pnpm dev:remoteA    # 连接服务器 A 后端
-pnpm dev:remoteB    # 连接服务器 B 后端
-```
-
-#### financial-web（C 端直连远程后端）
-
-```powershell
-cd D:\Workspace\financial\financial-web
-pnpm dev:remoteA    # 连接服务器 A 后端
-pnpm dev:remoteB    # 连接服务器 B 后端
-```
-
-#### deepquant_vue（QuantDinger 前端直连远程后端）
-
-```powershell
-cd D:\Workspace\deep\deepquant_vue
-pnpm dev:remoteA    # 连接服务器 A 的 QuantDinger 后端
-pnpm dev:remoteB    # 连接服务器 B 的 QuantDinger 后端
-```
-
-### 配置文件清单
-
-| 项目 | 文件 | 连接目标 |
-|------|------|----------|
-| financial-api | `.env.remoteA` | 47.86.32.234 PostgreSQL + Redis |
-| financial-api | `.env.remoteB` | 103.100.211.12 PostgreSQL + Redis |
-| financial-admin | `.env.remoteA` | http://47.86.32.234/api |
-| financial-admin | `.env.remoteB` | http://103.100.211.12/api |
-| financial-web | `.env.remoteA` | 47.86.32.234 /api + WebSocket |
-| financial-web | `.env.remoteB` | 103.100.211.12 /api + WebSocket |
-| deepquant_vue | `.env.remoteA` | 47.86.32.234 /quant/api |
-| deepquant_vue | `.env.remoteB` | 103.100.211.12 /quant/api |
-
-### 服务器端 PostgreSQL 远程访问
-
-首次使用需在服务器上配置 PostgreSQL 允许远程连接（SSH 到服务器执行）：
-
-```bash
-# ── 1. 修改 postgresql.conf ──
-PG_CONF=$(find /www/server/ -name "postgresql.conf" 2>/dev/null | head -1)
-cp "$PG_CONF" "$PG_CONF.bak"
-sed -i "s/^#listen_addresses.*/listen_addresses = '*'/" "$PG_CONF"
-grep -q "^listen_addresses" "$PG_CONF" || echo "listen_addresses = '*'" >> "$PG_CONF"
-
-# ── 2. 修改 pg_hba.conf ──
-PG_HBA=$(find /www/server/ -name "pg_hba.conf" 2>/dev/null | head -1)
-cp "$PG_HBA" "$PG_HBA.bak"
-cat >> "$PG_HBA" << 'EOF'
-host    all    all    0.0.0.0/0    md5
-host    all    all    ::/0         md5
-EOF
-
-# ── 3. 设置 root 密码 ──
-su - postgres -c "psql -c \"ALTER USER root WITH PASSWORD '$PG_PASSWORD';\""
-su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE quant_zc TO root;\""
-su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE quantdinger TO root;\""
-
-# ── 4. 重启（不要用系统防火墙放行 5432/6379）──
-/etc/init.d/postgresql restart
-# 远程开发如需连库：仅对你的办公 IP 在「云安全组」临时放行 5432，
-# 或优先用 SSH 隧道，不要 0.0.0.0 开放。
-```
+详见 [日常运维](docs/guide/daily-ops.md)。
 
 ---
 
 ## 常见问题
 
-### Q: 宝塔面板忘记密码
-
-```bash
-bt 5     # 重置面板密码
-bt 14    # 查看面板默认信息
-bt default  # 查看面板登录信息
-```
-
 ### Q: Nginx 报 502 Bad Gateway
 
 ```bash
-# 检查后端服务是否运行
 systemctl status financial-api
 systemctl status quantdinger-backend
-
-# 检查端口监听
 ss -tlnp | grep -E '5000|5001'
-
-# 查看后端日志
 journalctl -u financial-api -n 50 --no-pager
-journalctl -u quantdinger-backend -n 50 --no-pager
-```
-
-### Q: financial-web 跳转 official-site 404
-
-检查数据库配置：
-```bash
-PGPASSWORD="$PG_PASSWORD" psql -U root -d quant_zc -c \
-  "SELECT config_value FROM fin_app_configs WHERE namespace='links' AND config_key='deepquant';"
-```
-
-预期结果：`{"siteUrl": "/qd", "appBaseUrl": "/quant"}`
-
-如不正确，执行：
-```bash
-PGPASSWORD="$PG_PASSWORD" psql -U root -d quant_zc -c \
-  "UPDATE fin_app_configs SET config_value='{\"siteUrl\":\"/qd\",\"appBaseUrl\":\"/quant\"}'::jsonb WHERE namespace='links' AND config_key='deepquant';"
 ```
 
 ### Q: WebSocket 连接失败
 
 确保 Nginx 的 `/api/ws` location 在 `/api/` 之前（最长前缀匹配）：
+
 ```nginx
 location ^~ /api/ws { ... }  # 必须在前
 location ^~ /api/ { ... }   # 在后
@@ -1283,24 +208,22 @@ location ^~ /api/ { ... }   # 在后
 
 1. **deploy.env**：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
 2. **DNS**：在域名商处将裸域和 www 的 A 记录指向服务器 IP
-3. **SSL 证书**：按 [Phase 7b](#phase-7b-ssl-证书--宝塔邮局申请域名部署) 流程申请
-4. **Nginx**：`deploy.env` 设 `NGINX_CONF_NAME=nginx-servera-ssl.conf`，执行 `bash deploy.sh --nginx`（自动渲染 `__DOMAIN__` / `__WWW_DOMAIN__` 占位符）
-5. **financial-api**：执行 `bash deploy.sh financial-api`（自动渲染 `CORS_ORIGINS` / `SMTP` 占位符）
-6. **QuantDinger**：执行 `bash deploy.sh deepquant-backend`（自动渲染 `__FRONTEND_URL__`）
-7. **邮局**：按 [Phase 7b 步骤 3](#3-配置宝塔邮局) 配置宝塔邮局 + DNS 记录
+3. **SSL 证书**：按 [Phase 7b](docs/guide/deploy-from-scratch.md#phase-7b-ssl-证书--宝塔邮局申请域名部署) 流程申请
+4. **Nginx**：设 `NGINX_CONF_NAME=nginx-servera-ssl.conf`，执行 `bash deploy.sh --nginx`
+5. **financial-api**：`bash deploy.sh financial-api`
+6. **QuantDinger**：`bash deploy.sh deepquant-backend`
+7. **邮局**：按 [Phase 7b 步骤 3](docs/guide/deploy-from-scratch.md#3-配置宝塔邮局) 配置
 8. **重启**：`systemctl restart financial-api quantdinger-backend` + `nginx -s reload`
 
 ---
 
 ## 排障与问题记录
 
-日常 FAQ 见上文「常见问题」。历史排障与 WSL 本地部署问题已迁到 `docs/`：
+日常 FAQ 见上文。历史排障与 WSL 本地部署问题已迁到 `docs/`：
 
 | 文档 | 内容 |
 |------|------|
-| [docs/deploy-troubleshooting-history.md](docs/deploy-troubleshooting-history.md) | 服务器 A/B 历史排障（原 README 附录） |
-| [docs/wsl-local-deploy-issues.md](docs/wsl-local-deploy-issues.md) | WSL Ubuntu 本地宝塔部署问题（2026-07-31） |
+| [docs/deploy-troubleshooting-history.md](docs/deploy-troubleshooting-history.md) | 服务器 A/B 历史排障 |
+| [docs/wsl-local-deploy-issues.md](docs/wsl-local-deploy-issues.md) | WSL Ubuntu 本地宝塔部署问题 |
 | [docs/baota-linux-panel.openapi.yaml](docs/baota-linux-panel.openapi.yaml) | 宝塔面板 API（Apifox 可导入） |
 | [docs/README.md](docs/README.md) | docs 索引 |
-
-部署后验证清单见 [历史排障文档末尾](docs/deploy-troubleshooting-history.md#部署后验证清单)。

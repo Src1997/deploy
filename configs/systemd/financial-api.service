@@ -11,6 +11,7 @@ Environment=APP_ROLE=api
 ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 5001 --no-access-log
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=fastbull-api

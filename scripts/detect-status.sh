@@ -197,7 +197,7 @@ next_action() {
     [ "$S_SETUP" -ne 1 ] && { echo "run Phase3: bash 03-server-setup.sh"; return; }
     [ "$S_PACKAGES" -eq 0 ] && { echo "Phase4-5: 本地 build.ps1 + 上传 dist"; return; }
     [ "$S_DEPLOYED" -ne 1 ] && { echo "run Phase6: bash deploy.sh all --ip=SERVER_IP"; return; }
-    [ "$S_NGINX_SITE" -ne 1 ] && { echo "Phase7: 套用 configs/nginx-all-sites.conf 到宝塔站点"; return; }
+    [ "$S_NGINX_SITE" -ne 1 ] && { echo "Phase7: bash deploy.sh --nginx (动态生成配置)"; return; }
     [ "$S_HEALTH" -ne 1 ] && { echo "验证失败: 查 journalctl / deploy.sh --status"; return; }
     echo "already deployed — 增量用 build.ps1 + deploy.sh <project>"
 }

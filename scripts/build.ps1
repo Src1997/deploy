@@ -47,6 +47,29 @@ function Ensure-OutputDir {
     }
 }
 
+# ── 构建后自动清理旧包（保留最近 N 个）──
+$MaxArchivesPerProject = 3
+function Clean-OldArchives {
+    if (-not (Test-Path $PackagesDir)) { return }
+    $groups = @{}
+    Get-ChildItem $PackagesDir -Filter '*.tar.gz' | Sort-Object LastWriteTime -Descending | ForEach-Object {
+        # Extract project prefix (e.g. financial-api from financial-api-20260728-102403.tar.gz)
+        $prefix = $_.Name -replace '-\d{8}-\d{6}\.tar\.gz$','' -replace '-dist\.tar\.gz$','' -replace '-package\.tar\.gz$',''
+        if (-not $groups[$prefix]) { $groups[$prefix] = @() }
+        $groups[$prefix] += $_
+    }
+    foreach ($prefix in $groups.Keys) {
+        $files = $groups[$prefix]
+        if ($files.Count -gt $MaxArchivesPerProject) {
+            $old = $files | Select-Object -Skip $MaxArchivesPerProject
+            foreach ($f in $old) {
+                Remove-Item $f.FullName -Force
+                W-Warn "Cleaned old archive: $($f.Name)"
+            }
+        }
+    }
+}
+
 # ── 从 projects.json 构建项目列表 ──
 function Build-ProjectList {
     $list = @()
@@ -113,7 +136,10 @@ function Build-One([string]$name) {
                 pnpm install
             }
             W-Step "Running $($p.BuildCmd)..."
-            Invoke-Expression $p.BuildCmd
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            Invoke-Expression $p.BuildCmd 2>&1 | ForEach-Object { Write-Host $_ }
+            $ErrorActionPreference = $prevEAP
             if ($LASTEXITCODE -ne 0) { W-Err "Build failed for $($p.Name)"; return $false }
             W-OK "Build complete: $($p.Name)"
 
@@ -228,10 +254,20 @@ function Copy-DeployAssets {
         Copy-Item $envExample (Join-Path $DistDir 'deploy.env.example') -Force
         W-OK "Copied: deploy.env.example"
     }
+
+    # generate-nginx.py (for sync-nginx command on server)
+    $genNginx = Join-Path $ScriptsDir 'generate-nginx.py'
+    if (Test-Path $genNginx) {
+        $distScripts = Join-Path $DistDir 'scripts'
+        if (-not (Test-Path $distScripts)) { New-Item $distScripts -ItemType Directory -Force | Out-Null }
+        Copy-Item $genNginx (Join-Path $distScripts 'generate-nginx.py') -Force
+        W-OK "Copied: scripts/generate-nginx.py"
+    }
 }
 
 function Show-Summary([string[]]$built) {
     Copy-DeployAssets
+    Clean-OldArchives
 
     W-Banner "Build Summary"
     Write-Host "  Built: " -NoNewline

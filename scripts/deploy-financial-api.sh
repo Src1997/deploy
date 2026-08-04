@@ -352,7 +352,7 @@ if $DO_EXTRACT; then
         mkdir -p "$PKG_DIR"
 
         # 备份生产 .env（cp -a 可能用包内 .env 覆盖它）
-        local env_preserve=""
+        env_preserve=""
         if [[ -f "$ENV_FILE" ]]; then
             env_preserve=$(mktemp)
             cp "$ENV_FILE" "$env_preserve"

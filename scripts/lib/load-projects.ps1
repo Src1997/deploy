@@ -38,6 +38,7 @@ function Load-Projects {
     $global:WorkspaceRoot = $wsRoot
     $global:ProjectBase = $projBase
     $global:ProjectList = $data.projects | Where-Object { $_.enabled -eq $true }
+    $global:NginxExtras = $data.nginxExtras
 
     return $global:ProjectList
 }

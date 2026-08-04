@@ -13,6 +13,7 @@ Environment=CRAWLER_ENQUEUE_ENABLED=true
 ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m app.crawler scheduler
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=fastbull-crawler

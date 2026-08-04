@@ -9,6 +9,7 @@
       "kind": "frontend",
       "displayName": "行情/社区前端",
       "sourcePath": "financial/financial-web",
+      "publicUrl": "/",
       "build": {
         "packageManager": "pnpm",
         "script": "build",
@@ -18,7 +19,11 @@
       "deployPath": "financial/financial-web/dist",
       "services": [],
       "healthUrl": "",
-      "nginxReload": true
+      "nginxReload": true,
+      "nginx": {
+        "rootProject": true
+      },
+      "deployHook": ""
     },
     {
       "id": "financial-api",
@@ -47,7 +52,52 @@
       ],
       "healthUrl": "http://127.0.0.1:5001/api/health",
       "nginxReload": false,
-      "deployHook": "scripts/deploy-financial-api.sh"
+      "deployHook": "scripts/deploy-financial-api.sh",
+      "nginx": {
+        "locations": [
+          {
+            "path": "/api/ws",
+            "type": "websocket",
+            "proxyTarget": "http://127.0.0.1:5001",
+            "proxyPath": "/api/ws"
+          },
+          {
+            "path": "/api/",
+            "type": "proxy",
+            "proxyTarget": "http://127.0.0.1:5001",
+            "proxyPath": "/api/"
+          }
+        ]
+      },
+      "publicUrl": ""
+    },
+    {
+      "id": "financial-admin",
+      "enabled": true,
+      "kind": "frontend",
+      "displayName": "管理后台",
+      "sourcePath": "financial/financial-admin",
+      "publicUrl": "/admin/",
+      "build": {
+        "packageManager": "pnpm",
+        "script": "build",
+        "distDir": "dist",
+        "artifact": "financial-admin-dist.tar.gz"
+      },
+      "deployPath": "financial/financial-admin/dist",
+      "services": [],
+      "healthUrl": "",
+      "nginxReload": true,
+      "nginx": {
+        "locations": [
+          {
+            "path": "/admin/",
+            "type": "static",
+            "spaFallback": true
+          }
+        ]
+      },
+      "deployHook": ""
     },
     {
       "id": "official-site",
@@ -55,6 +105,7 @@
       "kind": "frontend",
       "displayName": "卓筹介绍站",
       "sourcePath": "official-site",
+      "publicUrl": "/qd/",
       "build": {
         "packageManager": "pnpm",
         "script": "build",
@@ -65,7 +116,17 @@
       "deployPath": "official-site/dist",
       "services": [],
       "healthUrl": "",
-      "nginxReload": true
+      "nginxReload": true,
+      "nginx": {
+        "locations": [
+          {
+            "path": "/qd/",
+            "type": "static",
+            "spaFallback": true
+          }
+        ]
+      },
+      "deployHook": ""
     },
     {
       "id": "deepquant-web",
@@ -73,6 +134,7 @@
       "kind": "frontend",
       "displayName": "QuantDinger 前端",
       "sourcePath": "deepquant/deepquant_vue",
+      "publicUrl": "/quant/",
       "build": {
         "packageManager": "pnpm",
         "script": "build",
@@ -82,7 +144,17 @@
       "deployPath": "deepquant/web/dist",
       "services": [],
       "healthUrl": "",
-      "nginxReload": true
+      "nginxReload": true,
+      "nginx": {
+        "locations": [
+          {
+            "path": "/quant/",
+            "type": "static",
+            "spaFallback": true
+          }
+        ]
+      },
+      "deployHook": ""
     },
     {
       "id": "deepquant-backend",
@@ -107,7 +179,34 @@
         "quantdinger-backend"
       ],
       "healthUrl": "http://127.0.0.1:5000/api/health",
-      "nginxReload": false
+      "nginxReload": false,
+      "nginx": {
+        "locations": [
+          {
+            "path": "/quant/api/",
+            "type": "proxy",
+            "proxyTarget": "http://127.0.0.1:5000",
+            "proxyPath": "/api/"
+          },
+          {
+            "path": "/ws/",
+            "type": "websocket",
+            "proxyTarget": "http://127.0.0.1:5000",
+            "proxyPath": "/ws/"
+          }
+        ]
+      },
+      "publicUrl": "",
+      "deployHook": ""
+    }
+  ],
+  "nginxExtras": [
+    {
+      "path": "/mcp",
+      "type": "proxy",
+      "proxyTarget": "http://127.0.0.1:7800",
+      "proxyPath": "/mcp",
+      "specialHeaders": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 # WSL 本地宝塔部署问题记录
 
 > **Category**: Guide（人类排障档案，非规范约束）  
-> **日期**: 2026-07-31  
+> **日期**: 2026-07-31（问题 1–11 初始）; 2026-07-31 追加（问题 12–13）  
 > **环境**: WSL Ubuntu 26.04 + 宝塔面板 + Windows 11  
 > **目标**: 在本地 WSL 中模拟服务器 A 的宝塔部署环境  
 > **索引**: [docs/README.md](./README.md)
@@ -242,6 +242,60 @@ if ($rc -ge 8) { Write-Host "[warn] robocopy had some failures, continuing..." }
 
 ---
 
+### 问题 12：宝塔面板 PostgreSQL 连接失败
+
+**现象**: 宝塔面板显示 PostgreSQL 连接数据库失败。
+
+**原因**: `postgres` 超级用户没有密码，宝塔通过 TCP（md5 认证）连接必然失败。
+
+**解决**:
+```bash
+# 给 postgres 用户设置密码
+ALTER ROLE postgres WITH PASSWORD 'postgres123';
+
+# 创建宝塔密码存储文件
+echo '{"password":"postgres123"}' > /www/server/panel/data/postgresAS.json
+```
+
+---
+
+### 问题 13：宝塔面板 Redis 状态显示异常（多轮排查）
+
+**现象**: 宝塔面板 Redis 一直显示"状态：异常"，重启 Redis、重载面板均无效。
+
+**排查过程**（共 5 轮，逐层深入）：
+
+| 轮次 | 排查发现 | 修复 | 是否解决 |
+|------|----------|------|----------|
+| 1 | `data/` 目录权限 `root:root`，宝塔用 `sudo -u redis` 启动失败 | `chown -R redis:redis /www/server/redis/data/` | ❌ |
+| 2 | `redis.conf` 中 `requirepass` 行有 CRLF（`\r\n`），密码带 `\r` 导致认证失败 | `sed -i 's/\r$//' redis.conf` | ❌ |
+| 3 | `bind` 是 `redis.conf` 第一行，宝塔正则 `\n\s*bind` 匹配不到 | 文件开头加空行 | ❌ |
+| 4 | `/var/run/redis_6379.pid` 不存在，宝塔 `checkProcess` 检测失败 | 创建符号链接 → `/www/server/redis/redis.pid` | ❌ |
+| 5 | 宝塔配置校验：`maxmemory 256mb` 非纯数字 + 缺少 `appendfsync` 参数 | `maxmemory 268435456` + 添加 `appendfsync everysec` | ✅ |
+
+**根因**: 宝塔 `redis_main.py` 的配置校验逻辑（第 81–189 行）要求：
+1. `maxmemory` 值必须是纯数字（字节），不认 `mb`/`gb` 后缀
+2. `appendfsync` 参数必须存在，否则直接 `return public.returnMsg(False, ...)`
+
+这两个条件任一不满足，宝塔面板就显示"异常"。
+
+**解决**:
+```bash
+# maxmemory 改为纯数字（256MB = 268435456 字节）
+sudo sed -i 's/^maxmemory 256mb/maxmemory 268435456/' /www/server/redis/redis.conf
+
+# 添加 appendfsync 参数（在 appendonly no 后面）
+sudo sed -i '/^appendonly no/a appendfsync everysec' /www/server/redis/redis.conf
+
+# 重启 Redis + 宝塔面板
+sudo /etc/init.d/redis restart
+sudo /etc/init.d/bt restart
+```
+
+**教训**: 宝塔面板的"异常"状态不一定代表服务本身有问题，可能是面板自己的配置校验逻辑不通过。排查时应先查看面板给出的具体错误信息，而非从服务进程层面入手。
+
+---
+
 ## 三、最终服务状态
 
 | 服务 | 端口 | systemd 单元 | 状态 |
@@ -270,6 +324,9 @@ if ($rc -ge 8) { Write-Host "[warn] robocopy had some failures, continuing..." }
 |--------|--------|------|
 | `quantdinger` | 42 张表 | DeepQuant 后端 |
 | `quant_zc` | 50 张表 | Financial API |
+| `ea_lab_db` | 新建空库 | EA Lab / 默认库 |
+
+> 密码 SSOT 为 `deploy/deploy.env`，禁止写入文档。
 
 ---
 
@@ -291,6 +348,9 @@ if ($rc -ge 8) { Write-Host "[warn] robocopy had some failures, continuing..." }
 安装路径:   /www/server/redis
 配置文件:   /www/server/redis/redis.conf
 连接:       redis-cli -h 127.0.0.1 -p 6379 -a "$REDIS_PASSWORD"
+注意:       redis.conf 中 maxmemory 必须用纯数字（字节），不能带 mb/gb 后缀
+            redis.conf 中必须有 appendfsync 参数，否则宝塔面板显示异常
+pidfile:    /www/server/redis/redis.pid (符号链接: /var/run/redis_6379.pid)
 
 # Python 3.12 (宝塔管理)
 安装路径:   /www/server/python_manager/versions/3.12.0/bin/python3
