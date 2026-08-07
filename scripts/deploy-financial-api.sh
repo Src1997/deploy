@@ -529,7 +529,13 @@ mkdir -p "${PKG_DIR}/logs"
 
 # ── 5.5 数据库备份（迁移前 pg_dump）───────────────────────────────────
 db_backup() {
+    # 从 .env 读取数据库名，回退到默认值
     local db_name="quant_zc"
+    if [[ -f "$ENV_FILE" ]]; then
+        local parsed_db
+        parsed_db=$(grep '^POSTGRES_DB=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '[:space:]')
+        [[ -n "$parsed_db" ]] && db_name="$parsed_db"
+    fi
     local db_backup_dir="${PKG_DIR}/logs/db-backups"
     mkdir -p "$db_backup_dir"
     local db_file="${db_backup_dir}/${TIMESTAMP}.sql.gz"
@@ -561,23 +567,20 @@ if $DO_SEED; then
     ok "Seed complete"
 fi
 
-# ── 8. Install systemd service files (first-deploy only) ─────────────────────
+# ── 8. Install/update systemd service files ────────────────────────────────
+# Generate template to temp file, then compare with existing.
+# Only overwrite + daemon-reload when content actually changed.
 install_service() {
     local name="$1"
     local service_file="/etc/systemd/system/${name}.service"
-
-    if [[ -f "$service_file" ]]; then
-        ok "${name}.service already installed"
-        return
-    fi
-
-    log "Installing ${name}.service..."
+    local tmp_file
+    tmp_file=$(mktemp)
     case "$name" in
         financial-api)
-            cat > "$service_file" <<'SVC'
+            cat > "$tmp_file" <<'SVC'
 [Unit]
 Description=卓筹商学院 API Server
-After=network.target bt-postgresql.service
+After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
 [Service]
@@ -598,10 +601,10 @@ WantedBy=multi-user.target
 SVC
             ;;
         financial-crawler)
-            cat > "$service_file" <<'SVC'
+            cat > "$tmp_file" <<'SVC'
 [Unit]
 Description=卓筹商学院 Crawler Enqueue Scheduler
-After=network.target bt-postgresql.service
+After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
 [Service]
@@ -624,10 +627,10 @@ WantedBy=multi-user.target
 SVC
             ;;
         financial-worker)
-            cat > "$service_file" <<'SVC'
+            cat > "$tmp_file" <<'SVC'
 [Unit]
 Description=卓筹商学院 arq Worker
-After=network.target bt-postgresql.service
+After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
 [Service]
@@ -649,10 +652,10 @@ WantedBy=multi-user.target
 SVC
             ;;
         financial-streaming)
-            cat > "$service_file" <<'SVC'
+            cat > "$tmp_file" <<'SVC'
 [Unit]
 Description=卓筹商学院 Streaming
-After=network.target bt-postgresql.service
+After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
 [Service]
@@ -675,9 +678,20 @@ SVC
             ;;
     esac
 
-    systemctl daemon-reload
-    systemctl enable "$name"
-    ok "${name}.service installed and enabled"
+    if [[ ! -f "$service_file" ]]; then
+        cp "$tmp_file" "$service_file"
+        systemctl daemon-reload
+        systemctl enable "$name"
+        ok "${name}.service installed and enabled"
+    elif diff -q "$tmp_file" "$service_file" >/dev/null 2>&1; then
+        ok "${name}.service already up-to-date"
+    else
+        cp "$tmp_file" "$service_file"
+        systemctl daemon-reload
+        ok "${name}.service updated (template changed)"
+    fi
+
+    rm -f "$tmp_file"
 }
 
 install_service financial-api
@@ -715,6 +729,29 @@ if $DO_RESTART; then
     else
         warn "API health check failed — check: journalctl -u financial-api -n 30"
         warn "If needed, rollback with: bash deploy.sh --rollback"
+    fi
+
+    # Post-deploy verification: navigation API returns expected structure
+    local nav_count
+    nav_count=$(curl -sf http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('data',d) if isinstance(d,dict) else d))" 2>/dev/null || echo "0")
+    if [[ "$nav_count" -gt 0 ]]; then
+        ok "Navigation API verified ($nav_count nodes)"
+    else
+        warn "Navigation API returned no data — check: curl http://127.0.0.1:5001/api/navigation/menu"
+        warn "If navigation is stale, run: $VENV_DIR/bin/python -m app.db.seed"
+    fi
+
+    # Post-deploy verification: quant-trading is visible in allowedMenuIds
+    local has_quant
+    has_quant=$(curl -sf http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); data=d.get('data',d) if isinstance(d,dict) else d; print('quant-trading' in data.get('allowedMenuIds',[]))" 2>/dev/null || echo "False")
+    if [[ "$has_quant" == "True" ]]; then
+        ok "quant-trading visible in allowedMenuIds"
+    else
+        warn "quant-trading NOT in allowedMenuIds — check: auth/role_permissions has 'home' for trader/analyst/viewer"
+        warn "Fix: $VENV_DIR/bin/python -c \"from app.core.config_cache import *; from app.core.database import db_session; ...\""
+        warn "Or re-run migration: $VENV_DIR/bin/alembic upgrade head"
     fi
 
     # Show status

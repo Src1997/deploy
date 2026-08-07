@@ -163,8 +163,8 @@
       "displayName": "QuantDinger 后端",
       "sourcePath": "deepquant/deepquant/backend_api_python",
       "build": {
-        "mode": "source-tar",
-        "artifact": "deepquant-backend-package.tar.gz",
+      "mode": "source-tar",
+      "artifactPattern": "deepquant-backend-*.tar.gz",
         "exclude": [
           ".env",
           ".venv",

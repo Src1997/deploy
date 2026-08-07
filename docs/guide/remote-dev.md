@@ -24,7 +24,7 @@ ssh serverB    # → root@103.100.211.12:3142
 | **Nginx 模式** | `ssl-redirect` | `ssl-combined` |
 | **PostgreSQL** | 见 `deploy.env` 的 `PG_*` | 同左 |
 | **数据库** | quant_zc, quantdinger | quant_zc, quantdinger |
-| **Redis 密码** | 见 `REDIS_PASSWORD` | 见 `REDIS_PASSWORD` |
+| **Redis 密码** | 见 `REDIS_PASSWORD` | 无密码（`REDIS_PASSWORD=` 留空） |
 | **SMTP** | 宝塔邮局 `noreply@zhuochouacedemy.com` | — |
 
 ## 远程开发启动命令

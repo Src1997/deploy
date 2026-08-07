@@ -116,9 +116,12 @@ else
     }
     _load_optional_env
     require_deploy_secrets() {
-        if [ -z "${PG_PASSWORD:-}" ] || [ "${PG_PASSWORD}" = "CHANGE_ME" ] \
-           || [ -z "${REDIS_PASSWORD:-}" ] || [ "${REDIS_PASSWORD}" = "CHANGE_ME" ]; then
-            err "请配置 deploy.env（PG_PASSWORD / REDIS_PASSWORD），参见 deploy.env.example"
+        if [ -z "${PG_PASSWORD:-}" ] || [ "${PG_PASSWORD}" = "CHANGE_ME" ]; then
+            err "请配置 deploy.env（PG_PASSWORD），参见 deploy.env.example"
+            return 1
+        fi
+        if [ "${REDIS_PASSWORD:-}" = "CHANGE_ME" ]; then
+            err "REDIS_PASSWORD 仍为 CHANGE_ME，请修改 deploy.env（无密码则留空）"
             return 1
         fi
         return 0
@@ -321,8 +324,12 @@ preflight() {
         ((errors++))
     fi
 
-    # 3. Redis 运行中
-    if redis-cli -h localhost -p 6379 -a "$REDIS_PASSWORD" ping >/dev/null 2>&1; then
+    # 3. Redis 运行中（REDIS_PASSWORD 可为空——部分服务器 Redis 无密码）
+    local redis_args=(-h "${REDIS_HOST:-localhost}" -p "${REDIS_PORT:-6379}")
+    if [ -n "${REDIS_PASSWORD:-}" ]; then
+        redis_args+=(-a "$REDIS_PASSWORD")
+    fi
+    if redis-cli "${redis_args[@]}" ping >/dev/null 2>&1; then
         ok "Redis：运行中"
     else
         err "Redis 未运行或密码不正确"
@@ -1435,7 +1442,7 @@ deploy_all() {
     [ -n "$ip" ] && SERVER_IP="$ip"
     echo ""
     hr
-    echo "  即将全量部署 5 个项目"
+    echo "  即将全量部署 ${#PROJECTS[@]} 个项目"
     [ -n "$SERVER_IP" ] && echo "  CORS IP:  $SERVER_IP"
     hr
     read -rp "  确认？[y/N]: " confirm

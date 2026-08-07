@@ -275,6 +275,77 @@ systemctl restart financial-api
 - `cp -a src/. dest/` 会覆盖 dest 中同名文件，即使前面 `find` 保护了删除阶段也无效。
 - 部署脚本的 `.env` 保护必须是「备份 → 复制 → 恢复」三步，不能只靠 `find ! -name`。
 
+### 16. 服务器 B 导航残留 + 废弃表未清理（2026-08-06）
+
+**问题**：服务器 B 部署后，新增的导航模块不显示，已移除的旧模块仍残留在页面上。同时发现 4 张已弃用的数据库表仍然存在。
+
+**根因（三重缺陷）**：
+
+1. **Seed 仅增不减**：`seed_navigation_nodes` 此前是纯 insert-only 逻辑——只插入新节点，从不删除已从 fixture 移除的废弃节点。服务器 B 从 squash baseline 初始化后从未执行过清理迁移，导致 10 个废弃节点（`ai-analysis`、`market-data`、`strategy-lab`、`broker-hub`、`system`、`product`、`market-legacy`、`news-legacy`、`signal`、`more`）残留。
+
+2. **条件式 Drop Table 被跳过**：`i5d6e7f8a9b0` 迁移中的 `op.drop_table` 是有条件的（检查表是否存在），在服务器 B 上迁移被 stamp 而非 run，导致 4 张废弃表（`fin_brokers`、`fin_key_strength_items`、`fin_key_strength_rankings`、`fin_rights_cases`）未被物理删除。
+
+3. **app_config JSON 过时**：`fin_app_configs` 中 `navigation` 命名空间的 `menu_permission_map` 和 `feature_flags` 仍引用已移除的节点 ID，且缺少新增的 `quant-trading` 及首页 feed 节点的配置。
+
+**修复（一次性 Alembic data + schema migration）**：
+
+| 文件 | 修复内容 |
+|------|----------|
+| `alembic/versions/q2r3s4t5u6v7_cleanup_deprecated_tables_nav_and_config.py` | 新增迁移：Drop 4 张废弃表 + Delete 10 个废弃导航节点 + Upsert 正确的 `menu_permission_map` / `feature_flags` JSON |
+| `app/db/seeders/mock.py` | `seed_navigation_nodes` 增加 `obsolete_node_ids` 清理逻辑，防止未来再次残留 |
+| `app/db/fixtures/config/app.py` | 补全 `quant-trading` 及首页 feed 节点的权限与开关配置 |
+
+**部署基础设施改进（deploy 仓库）**：
+
+| 文件 | 修复内容 |
+|------|----------|
+| `scripts/build.ps1` | `Copy-DeployAssets` 增加 `deploy-financial-api.sh` 拷贝到 `dist/scripts/`，作为归档缺失钩子时的 fallback |
+| `scripts/deploy.sh` | `deploy_all()` 硬编码 "5 个项目" → `${#PROJECTS[@]}` 动态值 |
+| `scripts/deploy-financial-api.sh` | `db_backup` 从 `.env` 动态读取 `POSTGRES_DB`（不再硬编码 `quant_zc`）；部署后增加导航 API 验证（`/api/navigation/menu` 返回节点数 > 0） |
+| `README.md` | 项目概览表 + URL 路由表补充 `financial-admin` |
+
+**教训**：
+- Seed 脚本不能纯 insert-only，必须包含废弃数据清理逻辑（或通过 Alembic data migration 保证）。
+- 条件式 DDL 迁移在 stamp-only 场景下不安全，重要清理应写独立的幂等迁移。
+- 部署后验证不能只检查 `/api/health`，还应验证关键业务 API（如导航菜单）返回预期数据。
+
+### 4. 量化交易模块不显示 — role_permissions 缺少 home 权限码（2026-08-06）
+
+**问题**：服务器 B 部署后，「量化交易」导航节点（`quant-trading`）在顶栏不显示，其他首页 feed 锚点节点也缺失。
+
+**根因**：
+
+1. **Seed fixture 与契约 SSOT 不一致**：`app/db/fixtures/config/app.py` 中 `auth/role_permissions` 的 `trader`/`analyst`/`viewer` 角色缺少 `home` 权限码，而 `navigation-permissions.json`（SSOT）和前端 `DEFAULT_ROLE_PERMISSIONS` 均包含 `home`。
+
+2. **迁移 `p1q2r3s4t5u6` 在服务器 B 被跳过**：该迁移设计为"若行不存在则跳过"（依赖后续 seed 插入正确值），但 seed fixture 本身就是错的。服务器 B 从 squash baseline stamp 初始化时，该迁移未实际执行。
+
+3. **清理迁移 `q2r3s4t5u6v7` 未覆盖 `role_permissions`**：该迁移修复了 `menu_permission_map` 和 `feature_flags`，但遗漏了 `role_permissions` 的 `home` 权限码缺失问题。
+
+**权限链路分析**：
+
+```
+quant-trading 节点
+  → menu_permission_map["quant-trading"] = "home"  （需要 home 权限）
+  → role_permissions["trader"] = ["trade","market","news","signals"]  ← 缺少 "home"！
+  → compute_allowed_menu_ids("trader") 过滤掉 quant-trading
+  → allowedMenuIds 不含 quant-trading
+  → 前端 resolver 不渲染该节点
+```
+
+**修复**：
+
+| 文件 | 修复内容 |
+|------|----------|
+| `app/db/fixtures/config/app.py` | `role_permissions` fixture 补全 `home` 权限码（trader/analyst/viewer），与 SSOT 对齐 |
+| `financial-web/packages/contracts/fixtures/system-runtime-config.json` | MSW fixture 同步补全 `home` + 补全 `feature_flags` 缺失的 quant-trading 及首页 feed 节点 |
+| `alembic/versions/r3s4t5u6v7w8_fix_role_permissions_missing_home.py` | 新增迁移：幂等修复生产 `auth/role_permissions`，补全 `home` 权限码 |
+| `scripts/deploy-financial-api.sh` | 部署后增加 `quant-trading` 可见性验证（检查 `allowedMenuIds` 包含 `quant-trading`） |
+
+**教训**：
+- Seed fixture 必须与契约 SSOT 保持一致，任何权限码变更需同步更新 fixture。
+- 迁移"若行不存在则跳过"的 guard clause 不安全——如果 fixture 本身就是错的，seed 会插入错误值且不会被修正。
+- 数据迁移应覆盖所有关联配置项（`role_permissions` + `menu_permission_map` + `feature_flags` 三者必须同步）。
+
 ### 部署后验证清单
 
 ```bash

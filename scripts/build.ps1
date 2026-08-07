@@ -263,6 +263,15 @@ function Copy-DeployAssets {
         Copy-Item $genNginx (Join-Path $distScripts 'generate-nginx.py') -Force
         W-OK "Copied: scripts/generate-nginx.py"
     }
+
+    # deploy-financial-api.sh (fallback for deploy.sh when archive lacks hook)
+    $apiHook = Join-Path $ScriptsDir 'deploy-financial-api.sh'
+    if (Test-Path $apiHook) {
+        $distScripts = Join-Path $DistDir 'scripts'
+        if (-not (Test-Path $distScripts)) { New-Item $distScripts -ItemType Directory -Force | Out-Null }
+        Copy-Item $apiHook (Join-Path $distScripts 'deploy-financial-api.sh') -Force
+        W-OK "Copied: scripts/deploy-financial-api.sh"
+    }
 }
 
 function Show-Summary([string[]]$built) {
@@ -281,7 +290,7 @@ function Show-Summary([string[]]$built) {
     Write-Host ""
     Write-Host "  dist/ self-contained:" -ForegroundColor White
     $DistDir = Join-Path $DeployDir 'dist'
-    Write-Host "    deploy.sh, configs/, lib/, projects.json, packages/" -ForegroundColor Gray
+    Write-Host "    deploy.sh, deploy-financial-api.sh, configs/, lib/, projects.json, packages/" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  Upload & Deploy:" -ForegroundColor White
     Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan

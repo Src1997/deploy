@@ -12,6 +12,7 @@
 | 配密码、连库 | [密钥与连接](#密钥与连接deployenv) |
 | **第一次**装服务器 | [完整部署步骤](docs/guide/deploy-from-scratch.md) |
 | **以后**发版 / 回滚 | [增量发版与回滚](docs/guide/incremental-release.md) |
+| **脚本故障 / 手动操作** | [手动部署](docs/guide/manual-deploy.md) |
 | 查日志、重启、备份 | [日常运维](docs/guide/daily-ops.md) |
 | 本机连远程库开发 | [远程开发](docs/guide/remote-dev.md) |
 | 报错对照 | [常见问题](#常见问题) · [docs 排障档案](docs/README.md) |
@@ -24,6 +25,7 @@
 |---------|-------------------------|---------------------------|------|------|
 | `financial-web` | `financial/financial-web` | `financial/financial-web/dist` | — | Vue 3 静态 |
 | `financial-api` | `financial/financial-api` | `financial/financial-api/package` | 5001 | FastAPI (systemd) |
+| `financial-admin` | `financial/financial-admin` | `financial/financial-admin/dist` | — | Vue 3 静态 |
 | `official-site` | `official-site` | `official-site/dist` | — | Vue 3 静态 |
 | `deepquant-web` | `deepquant/deepquant_vue` | `deepquant/web/dist` | — | Vue 2 静态 |
 | `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask (systemd) |
@@ -36,6 +38,7 @@
 | URL 路径 | 项目 | Nginx location | 目标 |
 |----------|------|----------------|------|
 | `/` | financial-web | `location /` | 静态文件 (SPA fallback) |
+| `/admin/` | financial-admin | `location ^~ /admin/` | 静态文件 (SPA fallback) |
 | `/qd/` | official-site | `location ^~ /qd/` | 静态文件 (SPA fallback) |
 | `/api/ws` | financial-api WS | `location ^~ /api/ws` | `127.0.0.1:5001/api/ws` |
 | `/api/` | financial-api | `location ^~ /api/` | `127.0.0.1:5001/api/` |
@@ -89,8 +92,9 @@ deploy/
 ├── docs/                             # 详细指南 / 排障档案（见 docs/README.md）
 │   └── guide/                        # 拆分后的详细操作指南
 │       ├── deploy-from-scratch.md    # 完整部署步骤（Phase 0-7b）
-│       ├── daily-ops.md              # 日常运维
 │       ├── incremental-release.md    # 增量发版与回滚
+│       ├── manual-deploy.md          # 手动部署（脚本故障 / 单步操作）
+│       ├── daily-ops.md              # 日常运维
 │       └── remote-dev.md             # 远程开发
 ├── projects.yaml                     # 项目清单 SSOT（人类编辑源）
 ├── projects.json                     # 项目清单 SSOT（机器读取源）

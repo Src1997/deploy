@@ -7,8 +7,9 @@
 | 文档 | 说明 |
 |------|------|
 | [guide/deploy-from-scratch.md](./guide/deploy-from-scratch.md) | 完整部署步骤（Phase 0-7b，从零开始） |
-| [guide/daily-ops.md](./guide/daily-ops.md) | 日常运维（服务管理、日志、数据库、Redis、备份） |
 | [guide/incremental-release.md](./guide/incremental-release.md) | 增量发版与回滚 |
+| [guide/manual-deploy.md](./guide/manual-deploy.md) | 手动部署（脚本不可用 / 故障排查 / 单步操作） |
+| [guide/daily-ops.md](./guide/daily-ops.md) | 日常运维（服务管理、日志、数据库、Redis、备份） |
 | [guide/remote-dev.md](./guide/remote-dev.md) | 远程开发（直连服务器 DB / 后端） |
 
 ## 排障档案

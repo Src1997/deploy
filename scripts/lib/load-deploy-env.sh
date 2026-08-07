@@ -36,14 +36,15 @@ load_deploy_env() {
 }
 
 # 密码未配置时失败（--help / 只读探测不要调用）
+# PG_PASSWORD 必须配置；REDIS_PASSWORD 可选（部分服务器 Redis 无密码）
 require_deploy_secrets() {
     local missing=0
     if [ -z "${PG_PASSWORD:-}" ] || [ "${PG_PASSWORD}" = "CHANGE_ME" ]; then
         echo -e "\033[31m[ERR]\033[0m PG_PASSWORD 未配置。请: cp deploy.env.example deploy.env 并填写密码" >&2
         missing=1
     fi
-    if [ -z "${REDIS_PASSWORD:-}" ] || [ "${REDIS_PASSWORD}" = "CHANGE_ME" ]; then
-        echo -e "\033[31m[ERR]\033[0m REDIS_PASSWORD 未配置。请: cp deploy.env.example deploy.env 并填写密码" >&2
+    if [ "${REDIS_PASSWORD:-}" = "CHANGE_ME" ]; then
+        echo -e "\033[31m[ERR]\033[0m REDIS_PASSWORD 仍为 CHANGE_ME 占位符。请: cp deploy.env.example deploy.env 并填写密码（无密码则留空）" >&2
         missing=1
     fi
     if [ "$missing" -ne 0 ]; then
