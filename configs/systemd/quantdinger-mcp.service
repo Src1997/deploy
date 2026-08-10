@@ -1,0 +1,24 @@
+[Unit]
+Description=QuantDinger MCP Server (SSE on port 7800)
+After=network.target quantdinger-backend.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/project/deepquant/backend/package
+Environment=QUANTDINGER_MCP_TRANSPORT=sse
+Environment=QUANTDINGER_MCP_HOST=0.0.0.0
+Environment=QUANTDINGER_MCP_PORT=7800
+Environment=QUANTDINGER_BASE_URL=http://127.0.0.1:5000
+Environment=QUANTDINGER_AGENT_TOKEN=__MCP_AGENT_TOKEN__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/www/wwwroot/project/deepquant/backend/package/.venv/bin/python -m quantdinger_mcp.server
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quantdinger-mcp
+
+[Install]
+WantedBy=multi-user.target

@@ -21,7 +21,7 @@ _load_projects() {
 
     if [ -z "$projects_file" ] || [ ! -f "$projects_file" ]; then
         echo "[ERR] projects.json not found" >&2
-        echo "[ERR] Run: python3 scripts/sync-projects.py" >&2
+        echo "[ERR] Run: python3 scripts/sync-manifest.py" >&2
         return 1
     fi
 

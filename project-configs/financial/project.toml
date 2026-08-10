@@ -1,0 +1,108 @@
+# project-configs/financial/project.toml — 金融项目
+#
+# 包含：行情/社区前端 + 管理后台 + FastAPI 后端
+# 新增项目只需复制本文件并修改，无需改动任何脚本。
+
+[project]
+id = "financial"
+display_name = "金融项目（行情/社区前端 + 管理后台 + API）"
+
+# ── 关键文件：随包上传的部署资产（相对 deploy 根）──
+# 自动并入所有后端组件的打包清单。
+key_files = [
+    "configs/systemd/financial-api.service",
+    "configs/systemd/financial-crawler.service",
+    "configs/systemd/financial-worker.service",
+    "configs/systemd/financial-streaming.service",
+]
+
+# ── 关键配置：跨组件部署行为 ──
+[deploy]
+backup_retention = 5               # 保留最近几份备份
+health_timeout = 30                # 健康检查超时（秒）
+
+# ── 组件：前端 + 后端，公共脚本遍历打包/部署 ──
+
+# 行情/社区前端（根站点）
+[[components]]
+id = "financial-web"
+kind = "frontend"
+display_name = "行情/社区前端"
+source_path = "financial/financial-web"
+public_url = "/"
+deploy_path = "financial/financial-web/dist"
+nginx_reload = true
+
+  [components.build]
+  package_manager = "pnpm"
+  build_script = "build"
+  dist_dir = "dist"
+  artifact = "financial-web-dist.tar.gz"
+
+  [components.nginx]
+  root_project = true                # 作为 Nginx 根 location
+
+# 管理后台
+[[components]]
+id = "financial-admin"
+kind = "frontend"
+display_name = "管理后台"
+source_path = "financial/financial-admin"
+public_url = "/admin/"
+deploy_path = "financial/financial-admin/dist"
+nginx_reload = true
+
+  [components.build]
+  package_manager = "pnpm"
+  build_script = "build"
+  dist_dir = "dist"
+  artifact = "financial-admin-dist.tar.gz"
+
+  [[components.nginx.locations]]
+  path = "/admin/"
+  type = "static"
+  spa_fallback = true
+
+# FastAPI 后端 (Python)
+[[components]]
+id = "financial-api"
+kind = "python"
+display_name = "FastAPI 后端"
+source_path = "financial/financial-api"
+deploy_path = "financial/financial-api/package"
+nginx_reload = false
+health_url = "http://127.0.0.1:5001/api/health"
+deploy_hook = "scripts/deploy-financial-api.sh"
+services = [
+    "financial-api",
+    "financial-crawler",
+    "financial-worker",
+    "financial-streaming",
+]
+
+  # 后端 Nginx 路由（代理 / WebSocket）
+  [[components.nginx.locations]]
+  path = "/api/ws"
+  type = "websocket"
+  proxy_target = "http://127.0.0.1:5001"
+  proxy_path = "/api/ws"
+
+  [[components.nginx.locations]]
+  path = "/api/"
+  type = "proxy"
+  proxy_target = "http://127.0.0.1:5001"
+  proxy_path = "/api/"
+
+  # ── 打包文件配置：只打包服务器需要的 ──
+  # exclude_* 继承 _shared.toml 的 python_defaults，此处只追加特有项。
+  # include_files 显式允许进包的部署资产（相对 deploy 根，保留路径）。
+  # include_env ★ 安全：仅此处列出的 .env 才允许进包，默认全排除。
+  [components.pack]
+  package_mode = "app-package"        # app-package=源码进 package/；source-tar=源码在归档根
+  artifact_pattern = "financial-api-*.tar.gz"
+  include_files = [
+      "scripts/deploy-financial-api.sh",
+      "configs/financial-api.env.example",
+  ]
+  # ★ 显式允许真实 .env 进包（把 configs/financial-api.env 放到 deploy 根；缺失仅告警跳过）
+  include_env = ["configs/financial-api.env"]

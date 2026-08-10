@@ -1,0 +1,82 @@
+# project-configs/deepquant/project.toml — QuantDinger 项目
+#
+# 包含：前端 + 后端（含 MCP Server）
+# 注意：后端采用 source-tar 模式（源码在归档根），并附带 mcp_server 子目录。
+
+[project]
+id = "deepquant"
+display_name = "QuantDinger 项目（前端 + 后端 + MCP）"
+
+# ── 关键文件：随包上传的部署资产 ──
+key_files = [
+    "configs/systemd/quantdinger-backend.service",
+    "configs/systemd/quantdinger-mcp.service",
+]
+
+# ── 关键配置 ──
+[deploy]
+backup_retention = 5
+health_timeout = 30
+
+# ── 组件 ──
+
+# QuantDinger 前端
+[[components]]
+id = "deepquant-web"
+kind = "frontend"
+display_name = "QuantDinger 前端"
+source_path = "deepquant/deepquant_vue"
+public_url = "/quant/"
+deploy_path = "deepquant/web/dist"
+nginx_reload = true
+
+  [components.build]
+  package_manager = "pnpm"
+  build_script = "build"
+  dist_dir = "dist"
+  artifact = "deepquant-web-dist.tar.gz"
+
+  [[components.nginx.locations]]
+  path = "/quant/"
+  type = "static"
+  spa_fallback = true
+
+# QuantDinger 后端 (Python，含 MCP)
+[[components]]
+id = "deepquant-backend"
+kind = "python"
+display_name = "QuantDinger 后端"
+source_path = "deepquant/deepquant/backend_api_python"
+deploy_path = "deepquant/backend/package"
+nginx_reload = false
+health_url = "http://127.0.0.1:5000/api/health"
+services = [
+    "quantdinger-backend",
+    "quantdinger-mcp",
+]
+
+  [[components.nginx.locations]]
+  path = "/quant/api/"
+  type = "proxy"
+  proxy_target = "http://127.0.0.1:5000"
+  proxy_path = "/api/"
+
+  [[components.nginx.locations]]
+  path = "/ws/"
+  type = "websocket"
+  proxy_target = "http://127.0.0.1:5000"
+  proxy_path = "/ws/"
+
+  # ── 打包文件配置（source-tar：源码在归档根）──
+  [components.pack]
+  package_mode = "source-tar"
+  artifact_pattern = "deepquant-backend-*.tar.gz"
+  include_files = [
+      "configs/deepquant.env.example",
+  ]
+  # ★ 显式允许真实 .env 进包
+  include_env = ["configs/deepquant.env"]
+  # 附带额外源码目录（MCP 服务），复制到归档根下指定子目录
+  [[components.pack.extra_source]]
+  path = "deepquant/deepquant/mcp_server"
+  dest = "mcp_server"

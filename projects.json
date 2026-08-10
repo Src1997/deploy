@@ -4,45 +4,202 @@
   "projectBase": "/www/wwwroot/project",
   "projects": [
     {
+      "id": "deepquant-web",
+      "project": "deepquant",
+      "enabled": true,
+      "kind": "frontend",
+      "displayName": "QuantDinger 前端",
+      "sourcePath": "deepquant/deepquant_vue",
+      "publicUrl": "/quant/",
+      "deployPath": "deepquant/web/dist",
+      "services": [],
+      "healthUrl": "",
+      "nginxReload": true,
+      "deployHook": "",
+      "nginx": {
+        "locations": [
+          {
+            "path": "/quant/",
+            "type": "static",
+            "spaFallback": true
+          }
+        ]
+      },
+      "build": {
+        "packageManager": "pnpm",
+        "script": "build",
+        "distDir": "dist",
+        "artifact": "deepquant-web-dist.tar.gz"
+      }
+    },
+    {
+      "id": "deepquant-backend",
+      "project": "deepquant",
+      "enabled": true,
+      "kind": "python",
+      "displayName": "QuantDinger 后端",
+      "sourcePath": "deepquant/deepquant/backend_api_python",
+      "publicUrl": "",
+      "deployPath": "deepquant/backend/package",
+      "services": [
+        "quantdinger-backend",
+        "quantdinger-mcp"
+      ],
+      "healthUrl": "http://127.0.0.1:5000/api/health",
+      "nginxReload": false,
+      "deployHook": "",
+      "nginx": {
+        "locations": [
+          {
+            "path": "/quant/api/",
+            "type": "proxy",
+            "proxyTarget": "http://127.0.0.1:5000",
+            "proxyPath": "/api/"
+          },
+          {
+            "path": "/ws/",
+            "type": "websocket",
+            "proxyTarget": "http://127.0.0.1:5000",
+            "proxyPath": "/ws/"
+          }
+        ]
+      },
+      "build": {
+        "mode": "source-tar",
+        "artifactPattern": "deepquant-backend-*.tar.gz",
+        "excludeDirs": [
+          ".venv",
+          "venv",
+          "logs",
+          "__pycache__",
+          ".git",
+          "node_modules",
+          "tests",
+          "docs",
+          ".idea",
+          ".github",
+          ".vscode",
+          ".mypy_cache",
+          ".pytest_cache",
+          ".ruff_cache",
+          ".playwright-cli",
+          "htmlcov",
+          "*.egg-info",
+          ".agents",
+          ".worktrees",
+          ".tmp"
+        ],
+        "excludeFiles": [
+          "*.pyc",
+          ".env",
+          ".env.remoteA",
+          ".env.remoteB",
+          ".env.local",
+          ".env.docker",
+          ".env.bak.*",
+          "Dockerfile",
+          ".dockerignore",
+          ".gitignore",
+          ".gitattributes",
+          ".python-version",
+          "cspell.json",
+          "uv.lock",
+          "openapi.json",
+          "test_results.txt",
+          ".coverage",
+          "AGENTS.md",
+          "AGENTS.zh-CN.md",
+          "nohup.out",
+          "pytest.ini",
+          "railway.json",
+          "requirements-windows.txt",
+          "docker-entrypoint.sh",
+          "env.testnet.example",
+          "start.sh",
+          "_diag_net.py",
+          "_diag_nosub.py",
+          "LICENSE",
+          "RELEASE.md",
+          "*.bak.*"
+        ],
+        "keyFiles": [
+          "configs/systemd/quantdinger-backend.service",
+          "configs/systemd/quantdinger-mcp.service"
+        ],
+        "includeFiles": [
+          "configs/deepquant.env.example"
+        ],
+        "includeEnv": [
+          "configs/deepquant.env"
+        ],
+        "extraSources": [
+          {
+            "path": "deepquant/deepquant/mcp_server",
+            "dest": "mcp_server"
+          }
+        ]
+      }
+    },
+    {
       "id": "financial-web",
+      "project": "financial",
       "enabled": true,
       "kind": "frontend",
       "displayName": "行情/社区前端",
       "sourcePath": "financial/financial-web",
       "publicUrl": "/",
+      "deployPath": "financial/financial-web/dist",
+      "services": [],
+      "healthUrl": "",
+      "nginxReload": true,
+      "deployHook": "",
+      "nginx": {
+        "rootProject": true
+      },
       "build": {
         "packageManager": "pnpm",
         "script": "build",
         "distDir": "dist",
         "artifact": "financial-web-dist.tar.gz"
-      },
-      "deployPath": "financial/financial-web/dist",
+      }
+    },
+    {
+      "id": "financial-admin",
+      "project": "financial",
+      "enabled": true,
+      "kind": "frontend",
+      "displayName": "管理后台",
+      "sourcePath": "financial/financial-admin",
+      "publicUrl": "/admin/",
+      "deployPath": "financial/financial-admin/dist",
       "services": [],
       "healthUrl": "",
       "nginxReload": true,
+      "deployHook": "",
       "nginx": {
-        "rootProject": true
+        "locations": [
+          {
+            "path": "/admin/",
+            "type": "static",
+            "spaFallback": true
+          }
+        ]
       },
-      "deployHook": ""
+      "build": {
+        "packageManager": "pnpm",
+        "script": "build",
+        "distDir": "dist",
+        "artifact": "financial-admin-dist.tar.gz"
+      }
     },
     {
       "id": "financial-api",
+      "project": "financial",
       "enabled": true,
-      "kind": "backend",
+      "kind": "python",
       "displayName": "FastAPI 后端",
       "sourcePath": "financial/financial-api",
-      "build": {
-        "packer": "scripts/pack-generic.ps1",
-        "artifactPattern": "financial-api-*.tar.gz",
-        "include": [
-          "scripts/deploy-financial-api.sh",
-          "configs/systemd/financial-api.service",
-          "configs/systemd/financial-crawler.service",
-          "configs/systemd/financial-worker.service",
-          "configs/systemd/financial-streaming.service",
-          "configs/financial-api.env.example"
-        ]
-      },
+      "publicUrl": "",
       "deployPath": "financial/financial-api/package",
       "services": [
         "financial-api",
@@ -69,54 +226,280 @@
           }
         ]
       },
-      "publicUrl": ""
+      "build": {
+        "mode": "app-package",
+        "artifactPattern": "financial-api-*.tar.gz",
+        "excludeDirs": [
+          ".venv",
+          "venv",
+          "logs",
+          "__pycache__",
+          ".git",
+          "node_modules",
+          "tests",
+          "docs",
+          ".idea",
+          ".github",
+          ".vscode",
+          ".mypy_cache",
+          ".pytest_cache",
+          ".ruff_cache",
+          ".playwright-cli",
+          "htmlcov",
+          "*.egg-info",
+          ".agents",
+          ".worktrees",
+          ".tmp"
+        ],
+        "excludeFiles": [
+          "*.pyc",
+          ".env",
+          ".env.remoteA",
+          ".env.remoteB",
+          ".env.local",
+          ".env.docker",
+          ".env.bak.*",
+          "Dockerfile",
+          ".dockerignore",
+          ".gitignore",
+          ".gitattributes",
+          ".python-version",
+          "cspell.json",
+          "uv.lock",
+          "openapi.json",
+          "test_results.txt",
+          ".coverage",
+          "AGENTS.md",
+          "AGENTS.zh-CN.md",
+          "nohup.out",
+          "pytest.ini",
+          "railway.json",
+          "requirements-windows.txt",
+          "docker-entrypoint.sh",
+          "env.testnet.example",
+          "start.sh",
+          "_diag_net.py",
+          "_diag_nosub.py",
+          "LICENSE",
+          "RELEASE.md",
+          "*.bak.*"
+        ],
+        "keyFiles": [
+          "configs/systemd/financial-api.service",
+          "configs/systemd/financial-crawler.service",
+          "configs/systemd/financial-worker.service",
+          "configs/systemd/financial-streaming.service"
+        ],
+        "includeFiles": [
+          "scripts/deploy-financial-api.sh",
+          "configs/financial-api.env.example"
+        ],
+        "includeEnv": [
+          "configs/financial-api.env"
+        ],
+        "extraSources": []
+      }
     },
     {
-      "id": "financial-admin",
+      "id": "demo-react-web",
+      "project": "fullstack-demo",
       "enabled": true,
       "kind": "frontend",
-      "displayName": "管理后台",
-      "sourcePath": "financial/financial-admin",
-      "publicUrl": "/admin/",
-      "build": {
-        "packageManager": "pnpm",
-        "script": "build",
-        "distDir": "dist",
-        "artifact": "financial-admin-dist.tar.gz"
-      },
-      "deployPath": "financial/financial-admin/dist",
+      "displayName": "React 前端 (npm)",
+      "sourcePath": "fullstack-demo/frontend",
+      "publicUrl": "/",
+      "deployPath": "fullstack-demo/web/dist",
       "services": [],
       "healthUrl": "",
       "nginxReload": true,
+      "deployHook": "",
       "nginx": {
         "locations": [
           {
-            "path": "/admin/",
+            "path": "/",
             "type": "static",
             "spaFallback": true
           }
         ]
       },
-      "deployHook": ""
+      "build": {
+        "packageManager": "npm",
+        "script": "run build",
+        "distDir": "build",
+        "artifact": "demo-react-web-dist.tar.gz"
+      }
+    },
+    {
+      "id": "demo-java-api",
+      "project": "fullstack-demo",
+      "enabled": true,
+      "kind": "java",
+      "displayName": "Java API (Maven)",
+      "sourcePath": "fullstack-demo/java-backend",
+      "publicUrl": "",
+      "deployPath": "fullstack-demo/java-api",
+      "services": [
+        "fullstack-demo-java"
+      ],
+      "healthUrl": "http://127.0.0.1:8080/actuator/health",
+      "nginxReload": false,
+      "deployHook": "",
+      "nginx": {
+        "locations": [
+          {
+            "path": "/java-api/",
+            "type": "proxy",
+            "proxyTarget": "http://127.0.0.1:8080",
+            "proxyPath": "/api/"
+          }
+        ]
+      },
+      "build": {
+        "buildTool": "maven",
+        "jarDir": "target",
+        "artifactPattern": "demo-java-api-*.tar.gz",
+        "includeFiles": [
+          "configs/fullstack-demo-java.env.example"
+        ],
+        "includeEnv": [
+          "configs/fullstack-demo-java.env"
+        ],
+        "keyFiles": [
+          "configs/systemd/fullstack-demo.service"
+        ],
+        "jarPattern": "demo-api-*.jar"
+      }
+    },
+    {
+      "id": "demo-go-api",
+      "project": "fullstack-demo",
+      "enabled": true,
+      "kind": "go",
+      "displayName": "Go API (Gin)",
+      "sourcePath": "fullstack-demo/go-backend",
+      "publicUrl": "",
+      "deployPath": "fullstack-demo/go-api",
+      "services": [
+        "fullstack-demo-go"
+      ],
+      "healthUrl": "http://127.0.0.1:8081/health",
+      "nginxReload": false,
+      "deployHook": "",
+      "nginx": {
+        "locations": [
+          {
+            "path": "/go-api/",
+            "type": "proxy",
+            "proxyTarget": "http://127.0.0.1:8081",
+            "proxyPath": "/api/"
+          }
+        ]
+      },
+      "build": {
+        "buildCommand": "$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o demo-go-api ./cmd/server",
+        "artifactPattern": "demo-go-api-*.tar.gz",
+        "includeFiles": [
+          "configs/fullstack-demo-go.env.example"
+        ],
+        "includeEnv": [
+          "configs/fullstack-demo-go.env"
+        ],
+        "keyFiles": [
+          "configs/systemd/fullstack-demo.service"
+        ],
+        "binaryName": "demo-go-api"
+      }
+    },
+    {
+      "id": "demo-nodejs-api",
+      "project": "fullstack-demo",
+      "enabled": true,
+      "kind": "nodejs",
+      "displayName": "Node.js API (NestJS)",
+      "sourcePath": "fullstack-demo/nodejs-backend",
+      "publicUrl": "",
+      "deployPath": "fullstack-demo/nodejs-api",
+      "services": [
+        "fullstack-demo-nodejs"
+      ],
+      "healthUrl": "http://127.0.0.1:8082/health",
+      "nginxReload": false,
+      "deployHook": "",
+      "nginx": {
+        "locations": [
+          {
+            "path": "/node-api/",
+            "type": "proxy",
+            "proxyTarget": "http://127.0.0.1:8082",
+            "proxyPath": "/api/"
+          }
+        ]
+      },
+      "build": {
+        "mode": "app-package",
+        "packageManager": "npm",
+        "buildScript": "run build",
+        "artifactPattern": "demo-nodejs-api-*.tar.gz",
+        "excludeDirs": [
+          "node_modules",
+          ".git",
+          "logs",
+          ".idea",
+          ".vscode",
+          ".github",
+          "tests",
+          "test",
+          "docs",
+          "coverage",
+          ".nyc_output",
+          ".cache",
+          ".agents",
+          ".worktrees",
+          ".tmp",
+          ".nestjs"
+        ],
+        "excludeFiles": [
+          ".env",
+          ".env.remoteA",
+          ".env.remoteB",
+          ".env.local",
+          ".env.docker",
+          ".env.bak.*",
+          ".gitignore",
+          ".gitattributes",
+          ".dockerignore",
+          "Dockerfile",
+          ".eslintrc*",
+          ".prettierrc*",
+          "AGENTS.md",
+          "LICENSE",
+          "RELEASE.md",
+          "*.bak.*"
+        ],
+        "keyFiles": [
+          "configs/systemd/fullstack-demo.service"
+        ],
+        "includeFiles": [
+          "configs/fullstack-demo-nodejs.env.example"
+        ],
+        "includeEnv": [
+          "configs/fullstack-demo-nodejs.env"
+        ]
+      }
     },
     {
       "id": "official-site",
+      "project": "official-site",
       "enabled": true,
       "kind": "frontend",
       "displayName": "卓筹介绍站",
       "sourcePath": "official-site",
       "publicUrl": "/qd/",
-      "build": {
-        "packageManager": "pnpm",
-        "script": "build",
-        "distDir": "dist",
-        "artifact": "official-site-dist.tar.gz",
-        "envFile": "configs/official-site.env"
-      },
       "deployPath": "official-site/dist",
       "services": [],
       "healthUrl": "",
       "nginxReload": true,
+      "deployHook": "",
       "nginx": {
         "locations": [
           {
@@ -126,80 +509,29 @@
           }
         ]
       },
-      "deployHook": ""
-    },
-    {
-      "id": "deepquant-web",
-      "enabled": true,
-      "kind": "frontend",
-      "displayName": "QuantDinger 前端",
-      "sourcePath": "deepquant/deepquant_vue",
-      "publicUrl": "/quant/",
       "build": {
         "packageManager": "pnpm",
         "script": "build",
         "distDir": "dist",
-        "artifact": "deepquant-web-dist.tar.gz"
-      },
-      "deployPath": "deepquant/web/dist",
-      "services": [],
-      "healthUrl": "",
-      "nginxReload": true,
-      "nginx": {
-        "locations": [
-          {
-            "path": "/quant/",
-            "type": "static",
-            "spaFallback": true
-          }
-        ]
-      },
-      "deployHook": ""
-    },
-    {
-      "id": "deepquant-backend",
-      "enabled": true,
-      "kind": "backend",
-      "displayName": "QuantDinger 后端",
-      "sourcePath": "deepquant/deepquant/backend_api_python",
-      "build": {
-      "mode": "source-tar",
-      "artifactPattern": "deepquant-backend-*.tar.gz",
-        "exclude": [
-          ".env",
-          ".venv",
-          "venv",
-          "logs",
-          "__pycache__",
-          ".git"
-        ]
-      },
-      "deployPath": "deepquant/backend/package",
-      "services": [
-        "quantdinger-backend"
-      ],
-      "healthUrl": "http://127.0.0.1:5000/api/health",
-      "nginxReload": false,
-      "nginx": {
-        "locations": [
-          {
-            "path": "/quant/api/",
-            "type": "proxy",
-            "proxyTarget": "http://127.0.0.1:5000",
-            "proxyPath": "/api/"
-          },
-          {
-            "path": "/ws/",
-            "type": "websocket",
-            "proxyTarget": "http://127.0.0.1:5000",
-            "proxyPath": "/ws/"
-          }
-        ]
-      },
-      "publicUrl": "",
-      "deployHook": ""
+        "artifact": "official-site-dist.tar.gz",
+        "envFile": "configs/official-site.env"
+      }
     }
   ],
+  "servers": {
+    "server-a": {
+      "nginxMode": "ssl-redirect",
+      "domain": "example.com",
+      "wwwDomain": "www.example.com",
+      "frontendUrl": "https://www.example.com"
+    },
+    "server-b": {
+      "nginxMode": "ssl-combined",
+      "domain": "example.com",
+      "wwwDomain": "www.example.com",
+      "frontendUrl": "https://example.com"
+    }
+  },
   "nginxExtras": [
     {
       "path": "/mcp",

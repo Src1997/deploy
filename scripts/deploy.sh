@@ -10,10 +10,10 @@
 #
 # 项目列表：
 #   financial-web       行情/社区前端
-#   financial-api       FastAPI 后端
+#   financial-api       FastAPI 后端 (Python)
 #   official-site       卓筹介绍站
 #   deepquant-web       QuantDinger 前端
-#   deepquant-backend   QuantDinger 后端
+#   deepquant-backend   QuantDinger 后端 (Python)
 #   all                 全量
 #
 # 选项：
@@ -69,6 +69,8 @@ show_help() {
     --logs [project]    查看日志（默认 financial-api）
     --lines=N           日志行数（默认 50，0=实时跟踪）
     --logs=error        只看 ERROR 级别日志
+    --target=server-a   使用 deploy.env.server-a 配置（服务器 A）
+    --target=server-b   使用 deploy.env.server-b 配置（服务器 B）
     --nginx             部署后自动配置 Nginx（拷贝配置并 reload）
     --nginx --dynamic   动态生成 Nginx 配置（从 projects.json 生成 location 块）
     --sync-nginx        从 projects.json 重新生成 Nginx 配置并 reload
@@ -84,11 +86,20 @@ show_help() {
     bash deploy.sh financial-web,financial-api --yes
     bash deploy.sh all --yes --ip=47.86.32.234
     bash deploy.sh financial-api --rollback=latest --yes
+    bash deploy.sh all --yes --target=server-a --ip=47.86.32.234
 HELP
 }
 
 # ── 路径常量（可用环境变量 / deploy.env 覆盖，便于 WSL 沙箱）────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Pre-scan for --target= to set DEPLOY_TARGET before env loading
+for _pre_arg in "$@"; do
+    case "$_pre_arg" in
+        --target=*) export DEPLOY_TARGET="${_pre_arg#--target=}" ;;
+    esac
+done
+
 if [ -f "$SCRIPT_DIR/lib/load-deploy-env.sh" ]; then
     # shellcheck source=lib/load-deploy-env.sh
     source "$SCRIPT_DIR/lib/load-deploy-env.sh"
@@ -99,18 +110,34 @@ elif [ -f "$SCRIPT_DIR/../scripts/lib/load-deploy-env.sh" ]; then
     load_deploy_env "$SCRIPT_DIR/../scripts" || true
 else
     _load_optional_env() {
+        # Determine env file suffix based on DEPLOY_TARGET
+        local suffix=""
+        case "${DEPLOY_TARGET:-}" in
+            server-a) suffix=".server-a" ;;
+            server-b) suffix=".server-b" ;;
+            "")       suffix="" ;;
+            *)        suffix=".$DEPLOY_TARGET" ;;
+        esac
+        local env_name="deploy.env${suffix}"
         local f
         for f in "${DEPLOY_ENV_FILE:-}" \
-                 "$SCRIPT_DIR/deploy.env" \
+                 "$SCRIPT_DIR/../${env_name}" \
+                 "$SCRIPT_DIR/${env_name}" \
+                 "$(pwd)/${env_name}" \
+                 "${HOME}/deploy-sandbox/${env_name}" \
+                 "/www/wwwroot/project/${env_name}" \
                  "$SCRIPT_DIR/../deploy.env" \
+                 "$SCRIPT_DIR/deploy.env" \
                  "$(pwd)/deploy.env" \
                  "${HOME}/deploy-sandbox/deploy.env" \
                  "/www/wwwroot/project/deploy.env"; do
             [ -n "$f" ] && [ -f "$f" ] || continue
+            local _dry_run="${DEPLOY_DRY_RUN:-}"
             set -a
             # shellcheck disable=SC1090
             source "$f"
             set +a
+            [ -n "$_dry_run" ] && DEPLOY_DRY_RUN="$_dry_run"
             break
         done
     }
@@ -266,6 +293,7 @@ for arg in "$@"; do
         --logs=*)            SHOW_LOGS=true; LOG_LEVEL="${arg#--logs=}" ;;
         --lines=*)           LOG_LINES="${arg#--lines=}" ;;
         --yes|-y|--ci)        ASSUME_YES=true ;;
+    --target=*)         DEPLOY_TARGET="${arg#--target=}"; export DEPLOY_TARGET ;;
     --nginx)             DEPLOY_NGINX=true ;;
     --dynamic)           NGINX_DYNAMIC=true ;;
     --sync-nginx)        SYNC_NGINX=true ;;
@@ -820,9 +848,26 @@ sync_nginx() {
     [ ! -f "$gen_script" ] && { err "generate-nginx.py not found"; return 1; }
 
     local conf_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
-    local mode="${NGINX_MODE:-ssl-combined}"
+
+    # Derive SSL mode: NGINX_MODE takes priority, then NGINX_CONF_NAME (consistent with deploy_nginx)
+    local mode="${NGINX_MODE:-}"
+    if [ -z "$mode" ]; then
+        local conf_name="${NGINX_CONF_NAME:-}"
+        case "$conf_name" in
+            *servera-ssl*)   mode="ssl-redirect" ;;
+            *all-sites-ssl*) mode="ssl-combined" ;;
+            *)               mode="http" ;;
+        esac
+    fi
+
     local domain="${DOMAIN:-}"
     local www_domain="${WWW_DOMAIN:-}"
+
+    # SSL mode requires domain — fall back to http if missing
+    if [ "$mode" != "http" ] && { [ -z "$domain" ] || [ -z "$www_domain" ]; }; then
+        warn "SSL 模式 ($mode) 需要 DOMAIN 和 WWW_DOMAIN，回退到 http 模式"
+        mode="http"
+    fi
 
     banner "Sync Nginx config"
     log "Mode: $mode | Target: $conf_target"
@@ -833,6 +878,7 @@ sync_nginx() {
     # Build args
     local py_args=()
     py_args+=(--mode "$mode")
+    py_args+=(--project-base "$PROJECT_BASE")
     [ -n "$domain" ] && py_args+=(--domain "$domain")
     [ -n "$www_domain" ] && py_args+=(--www-domain "$www_domain")
     py_args+=(--output "$conf_target")
@@ -1105,6 +1151,44 @@ for t in "$CONFIGS_SRC/systemd/quantdinger-backend.service" \
         ok "quantdinger-backend.service 已存在"
     fi
 
+    # ── MCP Server：安装 mcp_server 包 + systemd 服务 ──
+    local mcp_src_dir="$pkg_dir/mcp_server"
+    if [ -d "$mcp_src_dir" ] && [ -f "$mcp_src_dir/pyproject.toml" ]; then
+        log "安装 MCP Server 依赖到 venv..."
+        # 清理可能存在的旧版 mcp 2.x（与 quantdinger-mcp 不兼容）
+        "$venv_dir/bin/pip" uninstall mcp mcp-types -y -q 2>/dev/null || true
+        "$venv_dir/bin/pip" install "$mcp_src_dir" -q 2>&1 | tail -3
+        ok "quantdinger-mcp 包已安装到 venv"
+
+        # 安装 systemd 服务
+        local mcp_svc_file="/etc/systemd/system/quantdinger-mcp.service"
+        local mcp_svc_template=""
+        for t in "$CONFIGS_SRC/systemd/quantdinger-mcp.service" \
+"$DIST_ROOT/configs/systemd/quantdinger-mcp.service" \
+"$CONFIGS_SRC/quantdinger-mcp.service" \
+"$(dirname "$0")/configs/systemd/quantdinger-mcp.service" \
+"$(dirname "$0")/configs/quantdinger-mcp.service"; do
+            [ -f "$t" ] && mcp_svc_template="$t" && break
+        done
+        if [ -n "$mcp_svc_template" ]; then
+            # 渲染 AGENT_TOKEN 占位符
+            local mcp_token="${MCP_AGENT_TOKEN:-}"
+            if [ -z "$mcp_token" ]; then
+                warn "MCP_AGENT_TOKEN 未在 deploy.env 配置，MCP 服务可能无法正常启动"
+                mcp_token="CHANGE_ME_MCP_TOKEN"
+            fi
+            sed "s|__MCP_AGENT_TOKEN__|${mcp_token}|g" \
+                "$mcp_svc_template" > "$mcp_svc_file"
+            systemctl daemon-reload
+            systemctl enable quantdinger-mcp 2>/dev/null || true
+            ok "quantdinger-mcp.service 已安装并启用"
+        else
+            warn "未找到 quantdinger-mcp.service 模板，跳过 MCP 服务安装"
+        fi
+    else
+        warn "mcp_server 目录不存在或缺少 pyproject.toml，跳过 MCP 安装"
+    fi
+
     mkdir -p "$pkg_dir/logs" "$pkg_dir/data/memory"
     if [ -n "$SERVER_IP" ]; then ok ".env FRONTEND_URL preserved"; fi
     if ! $NO_RESTART; then
@@ -1116,12 +1200,18 @@ for t in "$CONFIGS_SRC/systemd/quantdinger-backend.service" \
             sleep 3
             health_check "QuantDinger" "${HEALTH_URL[$id]}"
         fi
+        # MCP 健康检查
+        if systemctl is-active quantdinger-mcp >/dev/null 2>&1; then
+            ok "quantdinger-mcp 运行中 (port 7800)"
+        else
+            warn "quantdinger-mcp 未运行，请检查日志: journalctl -u quantdinger-mcp -f"
+        fi
     fi
 }
 
-# 通用后端部署函数：无专用函数的后端项目走此路径
+# 通用 Python 后端部署函数：无专用函数的 Python 项目走此路径
 # 支持 deployHook（优先）和默认流程（venv + pip + systemd）
-deploy_backend_generic() {
+deploy_python() {
     local id="$1"
     local pkg_dir="${DEPLOY_PATH[$id]:-}"
     local tar_pat="${ARTIFACT_NAME[$id]:-}"
@@ -1267,7 +1357,298 @@ deploy_backend_generic() {
     fi
 }
 
-# 通用入口：前端走清单解压；后端保留专用逻辑或走通用部署
+# Java 后端部署：JAR/WAR + systemd
+# 打包格式：JAR/WAR + configs/ + .env → tar.gz
+deploy_java() {
+    local id="$1"
+    local pkg_dir="${DEPLOY_PATH[$id]:-}"
+    local tar_pat="${ARTIFACT_NAME[$id]:-}"
+    local label="${PROJECT_DISPLAY_NAME[$id]:-$id}"
+    local env_file="$pkg_dir/.env"
+
+    log "部署 $id ($label, Java) → $pkg_dir ..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] $id → $pkg_dir (artifact=$tar_pat hook=${DEPLOY_HOOK[$id]:-none})"
+        return 0
+    fi
+
+    local tar
+    tar=$(find_file "$tar_pat")
+    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
+    backup_backend "$id" "$pkg_dir"
+    mkdir -p "$pkg_dir"
+    [ -f "$env_file" ] && cp "$env_file" "$env_file.bak"
+    # Clean old code (preserve .env, logs, data)
+    find "$pkg_dir" -mindepth 1 -maxdepth 1 \
+        ! -name '.env' ! -name 'logs' ! -name 'data' \
+        -exec rm -rf {} + 2>/dev/null || true
+    tar xzf "$tar" -C "$pkg_dir"
+    ok "代码已解压"
+    [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
+
+    # Generate .env from template if first deploy
+    if [ ! -f "$env_file" ]; then
+        log "首次部署：从模板生成 .env..."
+        local template=""
+        for t in "$CONFIGS_SRC/${id}.env.example" \
+                 "$DIST_ROOT/configs/${id}.env.example" \
+                 "$(dirname "$0")/configs/${id}.env.example"; do
+            [ -f "$t" ] && template="$t" && break
+        done
+        if [ -n "$template" ]; then
+            sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
+                -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
+                -e "s|__SERVER_IP__|${SERVER_IP:-127.0.0.1}|g" \
+                -e "s|__FRONTEND_URL__|${FRONTEND_URL:-http://${SERVER_IP:-127.0.0.1}}|g" \
+                "$template" > "$env_file"
+            chmod 600 "$env_file"
+            ok ".env 已生成（从模板 $template）"
+        else
+            warn "未找到 ${id}.env.example 模板，请手动创建: $env_file"
+        fi
+    else
+        ok ".env 已存在，保留"
+    fi
+
+    # Install systemd services if first deploy
+    local svc
+    for svc in ${SERVICES[$id]}; do
+        [ -z "$svc" ] && continue
+        local svc_file="/etc/systemd/system/${svc}.service"
+        if [ ! -f "$svc_file" ]; then
+            log "首次部署：安装 ${svc}.service..."
+            local svc_template=""
+            for t in "$CONFIGS_SRC/systemd/${svc}.service" \
+                     "$DIST_ROOT/configs/systemd/${svc}.service" \
+                     "$(dirname "$0")/configs/systemd/${svc}.service"; do
+                [ -f "$t" ] && svc_template="$t" && break
+            done
+            if [ -n "$svc_template" ]; then
+                cp "$svc_template" "$svc_file"
+                systemctl daemon-reload
+                systemctl enable "$svc"
+                ok "${svc}.service 已安装并启用"
+            else
+                warn "未找到 ${svc}.service 模板"
+            fi
+        else
+            ok "${svc}.service 已存在"
+        fi
+    done
+
+    mkdir -p "$pkg_dir/logs"
+
+    # Restart services + health check
+    if ! $NO_RESTART; then
+        for svc in ${SERVICES[$id]}; do
+            [ -n "$svc" ] && restart_service "$svc"
+        done
+        if [ -n "${HEALTH_URL[$id]:-}" ]; then
+            sleep 3
+            health_check "$id" "${HEALTH_URL[$id]}"
+        fi
+    fi
+}
+
+# Go 后端部署：二进制 + systemd
+deploy_go() {
+    local id="$1"
+    local pkg_dir="${DEPLOY_PATH[$id]:-}"
+    local tar_pat="${ARTIFACT_NAME[$id]:-}"
+    local label="${PROJECT_DISPLAY_NAME[$id]:-$id}"
+    local env_file="$pkg_dir/.env"
+
+    log "部署 $id ($label, Go) → $pkg_dir ..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] $id → $pkg_dir (artifact=$tar_pat hook=${DEPLOY_HOOK[$id]:-none})"
+        return 0
+    fi
+
+    local tar
+    tar=$(find_file "$tar_pat")
+    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
+    backup_backend "$id" "$pkg_dir"
+    mkdir -p "$pkg_dir"
+    [ -f "$env_file" ] && cp "$env_file" "$env_file.bak"
+    find "$pkg_dir" -mindepth 1 -maxdepth 1 \
+        ! -name '.env' ! -name 'logs' ! -name 'data' \
+        -exec rm -rf {} + 2>/dev/null || true
+    tar xzf "$tar" -C "$pkg_dir"
+    ok "代码已解压"
+    [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
+
+    # Ensure binary is executable
+    local bin_file=""
+    for f in "$pkg_dir"/bin/* "$pkg_dir"/*.bin "$pkg_dir"/main; do
+        [ -f "$f" ] && chmod +x "$f" && bin_file="$f" && break
+    done
+    [ -n "$bin_file" ] && ok "可执行文件: $bin_file" || warn "未找到二进制文件，请检查包结构"
+
+    # Generate .env from template if first deploy
+    if [ ! -f "$env_file" ]; then
+        log "首次部署：从模板生成 .env..."
+        local template=""
+        for t in "$CONFIGS_SRC/${id}.env.example" \
+                 "$DIST_ROOT/configs/${id}.env.example" \
+                 "$(dirname "$0")/configs/${id}.env.example"; do
+            [ -f "$t" ] && template="$t" && break
+        done
+        if [ -n "$template" ]; then
+            sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
+                -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
+                -e "s|__SERVER_IP__|${SERVER_IP:-127.0.0.1}|g" \
+                -e "s|__FRONTEND_URL__|${FRONTEND_URL:-http://${SERVER_IP:-127.0.0.1}}|g" \
+                "$template" > "$env_file"
+            chmod 600 "$env_file"
+            ok ".env 已生成（从模板 $template）"
+        else
+            warn "未找到 ${id}.env.example 模板，请手动创建: $env_file"
+        fi
+    else
+        ok ".env 已存在，保留"
+    fi
+
+    # Install systemd services if first deploy
+    local svc
+    for svc in ${SERVICES[$id]}; do
+        [ -z "$svc" ] && continue
+        local svc_file="/etc/systemd/system/${svc}.service"
+        if [ ! -f "$svc_file" ]; then
+            log "首次部署：安装 ${svc}.service..."
+            local svc_template=""
+            for t in "$CONFIGS_SRC/systemd/${svc}.service" \
+                     "$DIST_ROOT/configs/systemd/${svc}.service" \
+                     "$(dirname "$0")/configs/systemd/${svc}.service"; do
+                [ -f "$t" ] && svc_template="$t" && break
+            done
+            if [ -n "$svc_template" ]; then
+                cp "$svc_template" "$svc_file"
+                systemctl daemon-reload
+                systemctl enable "$svc"
+                ok "${svc}.service 已安装并启用"
+            else
+                warn "未找到 ${svc}.service 模板"
+            fi
+        else
+            ok "${svc}.service 已存在"
+        fi
+    done
+
+    mkdir -p "$pkg_dir/logs"
+
+    if ! $NO_RESTART; then
+        for svc in ${SERVICES[$id]}; do
+            [ -n "$svc" ] && restart_service "$svc"
+        done
+        if [ -n "${HEALTH_URL[$id]:-}" ]; then
+            sleep 3
+            health_check "$id" "${HEALTH_URL[$id]}"
+        fi
+    fi
+}
+
+# Node.js 后端部署：源码 + npm ci + systemd
+deploy_nodejs() {
+    local id="$1"
+    local pkg_dir="${DEPLOY_PATH[$id]:-}"
+    local tar_pat="${ARTIFACT_NAME[$id]:-}"
+    local label="${PROJECT_DISPLAY_NAME[$id]:-$id}"
+    local env_file="$pkg_dir/.env"
+
+    log "部署 $id ($label, Node.js) → $pkg_dir ..."
+    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        ok "[DRY_RUN] $id → $pkg_dir (artifact=$tar_pat hook=${DEPLOY_HOOK[$id]:-none})"
+        return 0
+    fi
+
+    local tar
+    tar=$(find_file "$tar_pat")
+    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 $id"; return 1; }
+    backup_backend "$id" "$pkg_dir"
+    mkdir -p "$pkg_dir"
+    [ -f "$env_file" ] && cp "$env_file" "$env_file.bak"
+    find "$pkg_dir" -mindepth 1 -maxdepth 1 \
+        ! -name '.env' ! -name 'node_modules' ! -name 'logs' ! -name 'data' \
+        -exec rm -rf {} + 2>/dev/null || true
+    tar xzf "$tar" -C "$pkg_dir"
+    ok "代码已解压"
+    [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
+
+    # Install production dependencies
+    if [ -f "$pkg_dir/package.json" ]; then
+        log "安装生产依赖 (npm ci --production)..."
+        (cd "$pkg_dir" && npm ci --production 2>&1 | tail -5) || {
+            warn "npm ci 失败，尝试 npm install --production"
+            (cd "$pkg_dir" && npm install --production 2>&1 | tail -5) || warn "npm install 也失败"
+        }
+    else
+        warn "未找到 package.json，跳过依赖安装"
+    fi
+
+    # Generate .env from template if first deploy
+    if [ ! -f "$env_file" ]; then
+        log "首次部署：从模板生成 .env..."
+        local template=""
+        for t in "$CONFIGS_SRC/${id}.env.example" \
+                 "$DIST_ROOT/configs/${id}.env.example" \
+                 "$(dirname "$0")/configs/${id}.env.example"; do
+            [ -f "$t" ] && template="$t" && break
+        done
+        if [ -n "$template" ]; then
+            sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
+                -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
+                -e "s|__SERVER_IP__|${SERVER_IP:-127.0.0.1}|g" \
+                -e "s|__FRONTEND_URL__|${FRONTEND_URL:-http://${SERVER_IP:-127.0.0.1}}|g" \
+                "$template" > "$env_file"
+            chmod 600 "$env_file"
+            ok ".env 已生成（从模板 $template）"
+        else
+            warn "未找到 ${id}.env.example 模板，请手动创建: $env_file"
+        fi
+    else
+        ok ".env 已存在，保留"
+    fi
+
+    # Install systemd services if first deploy
+    local svc
+    for svc in ${SERVICES[$id]}; do
+        [ -z "$svc" ] && continue
+        local svc_file="/etc/systemd/system/${svc}.service"
+        if [ ! -f "$svc_file" ]; then
+            log "首次部署：安装 ${svc}.service..."
+            local svc_template=""
+            for t in "$CONFIGS_SRC/systemd/${svc}.service" \
+                     "$DIST_ROOT/configs/systemd/${svc}.service" \
+                     "$(dirname "$0")/configs/systemd/${svc}.service"; do
+                [ -f "$t" ] && svc_template="$t" && break
+            done
+            if [ -n "$svc_template" ]; then
+                cp "$svc_template" "$svc_file"
+                systemctl daemon-reload
+                systemctl enable "$svc"
+                ok "${svc}.service 已安装并启用"
+            else
+                warn "未找到 ${svc}.service 模板"
+            fi
+        else
+            ok "${svc}.service 已存在"
+        fi
+    done
+
+    mkdir -p "$pkg_dir/logs"
+
+    if ! $NO_RESTART; then
+        for svc in ${SERVICES[$id]}; do
+            [ -n "$svc" ] && restart_service "$svc"
+        done
+        if [ -n "${HEALTH_URL[$id]:-}" ]; then
+            sleep 3
+            health_check "$id" "${HEALTH_URL[$id]}"
+        fi
+    fi
+}
+
+# 通用入口：前端走清单解压；Python 后端保留专用逻辑或走通用部署
 deploy_by_id() {
     local id="$1"
     if [ -z "${DEPLOY_PATH[$id]:-}" ]; then
@@ -1278,15 +1659,24 @@ deploy_by_id() {
         frontend)
             deploy_frontend_by_id "$id"
             ;;
-        backend)
+        python)
             case "$id" in
                 financial-api)     deploy_financial_api ;;
                 deepquant-backend) deploy_deepquant_backend ;;
                 *)
-                    # 通用后端部署：支持 deployHook 或默认流程
-                    deploy_backend_generic "$id"
+                    # 通用 Python 部署：支持 deployHook 或默认流程
+                    deploy_python "$id"
                     ;;
             esac
+            ;;
+        java)
+            deploy_java "$id"
+            ;;
+        go)
+            deploy_go "$id"
+            ;;
+        nodejs)
+            deploy_nodejs "$id"
             ;;
         *)
             err "未知 kind: ${PROJECT_KIND[$id]:-?} ($id)"
@@ -1306,18 +1696,20 @@ deploy_one() {
     deploy_by_id "$p"
 }
 
-# 按清单 kind 排序：前端 → 后端
+# 按清单 kind 排序：前端 → Python 后端 → 编译型 → 脚本型
 sort_deploy_order() {
-    local frontends=() backends=() other=()
+    local frontends=() backends=() compiled=() scripted=() other=()
     local p
     for p in "$@"; do
         case "${PROJECT_KIND[$p]}" in
-            frontend) frontends+=("$p") ;;
-            backend)  backends+=("$p") ;;
-            *)        other+=("$p") ;;
+            frontend)        frontends+=("$p") ;;
+            python)        backends+=("$p") ;;
+            java|go)         compiled+=("$p") ;;
+            nodejs)          scripted+=("$p") ;;
+            *)               other+=("$p") ;;
         esac
     done
-    echo "${frontends[@]} ${backends[@]} ${other[@]}"
+    echo "${frontends[@]} ${backends[@]} ${compiled[@]} ${scripted[@]} ${other[@]}"
 }
 
 # 批量部署（容错：单个失败不中断后续）
@@ -1585,7 +1977,11 @@ deploy_nginx() {
     local nginx_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
 
     # ── 优先：从 projects.json 动态生成 ──
-    local gen_script="$(dirname "$0")/generate-nginx.py"
+    # 查找顺序与 sync_nginx 保持一致：服务器上 build.ps1 把 generate-nginx.py
+    # 复制到 dist/scripts/（即 DIST_ROOT/scripts/），优先匹配，避免回退到文件模式。
+    local gen_script="$DIST_ROOT/scripts/generate-nginx.py"
+    [ ! -f "$gen_script" ] && gen_script="$PROJECT_BASE/uploads/dist/scripts/generate-nginx.py"
+    [ ! -f "$gen_script" ] && gen_script="$(dirname "$0")/generate-nginx.py"
     [ ! -f "$gen_script" ] && gen_script="$SCRIPT_DIR/generate-nginx.py"
     if [ -f "$gen_script" ]; then
         # 根据 NGINX_CONF_NAME 确定 SSL 模式（向后兼容）

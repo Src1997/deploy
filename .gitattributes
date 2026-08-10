@@ -3,3 +3,13 @@
 tests/*.sh text eol=lf
 scripts/*.sh text eol=lf
 scripts/lib/*.sh text eol=lf
+
+# Env files are sourced by bash — must use LF
+*.env text eol=lf
+*.env.example text eol=lf
+
+# Python scripts
+*.py text eol=lf
+
+# TOML configs
+*.toml text eol=lf

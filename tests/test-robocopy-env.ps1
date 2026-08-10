@@ -1,4 +1,4 @@
-# 验证 pack-generic.ps1 的 robocopy /XF .env 修复
+# Verify pack.ps1 robocopy /XF .env exclusion (security test)
 # 测试场景：
 #   1. 修复后 /XF .env 正确排除 .env 文件
 #   2. 旧逻辑 /XD .env 无法排除 .env 文件（确认 bug）

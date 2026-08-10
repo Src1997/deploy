@@ -18,16 +18,16 @@ echo "  deploy WSL comprehensive test (6 improvements)"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
-# ── Step 1: PyYAML ──
-info "Step 1: PyYAML availability"
-python3 -c "import yaml" 2>/dev/null && ok "PyYAML installed" || bad "PyYAML missing"
+# ── Step 1: Python tomllib ──
+info "Step 1: Python tomllib availability"
+python3 -c "import tomllib" 2>/dev/null && ok "tomllib available (Python 3.11+)" || bad "tomllib missing (need Python 3.11+)"
 
-# ── Step 2: sync-projects.py ──
-info "Step 2: sync-projects.py"
-if python3 scripts/sync-projects.py 2>&1; then
-    ok "sync-projects.py executed successfully"
+# ── Step 2: sync-manifest.py ──
+info "Step 2: sync-manifest.py"
+if python3 scripts/sync-manifest.py 2>&1; then
+    ok "sync-manifest.py executed successfully"
 else
-    bad "sync-projects.py failed"
+    bad "sync-manifest.py failed"
 fi
 echo ""
 

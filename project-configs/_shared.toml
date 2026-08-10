@@ -1,0 +1,120 @@
+# project-configs/_shared.toml — 跨项目共享默认值
+#
+# 所有项目共用的配置放在这里，单个项目的配置放在
+# project-configs/<name>/project.toml，可覆盖或追加此处定义。
+#
+# sync-manifest.py 会合并 _shared.toml + 各 project.toml → projects.json。
+
+# ── 全局默认值 ──
+[defaults]
+version = 1
+workspace_root = ""                       # 空 = deploy 的父目录；可由 WORKSPACE_ROOT 环境变量覆盖
+project_base = "/www/wwwroot/project"     # 服务器项目根；可被 deploy.env 的 PROJECT_BASE 覆盖
+
+# ── 多服务器定义（所有项目共享；如需项目级覆盖，在 project.toml 中重写）──
+# nginx_mode 对应 generate-nginx.py --mode：http | ssl-redirect | ssl-combined
+[servers.server-a]
+nginx_mode = "ssl-redirect"        # 裸域 → www 301 + HTTPS（服务器 A）
+domain = "example.com"
+www_domain = "www.example.com"
+frontend_url = "https://www.example.com"
+
+[servers.server-b]
+nginx_mode = "ssl-combined"        # 域名 + HTTPS 合并配置（服务器 B）
+domain = "example.com"
+www_domain = "www.example.com"
+frontend_url = "https://example.com"
+
+# ── Python 后端打包公共排除列表 ──
+# Python (kind=python) 组件默认排除这些目录和文件。
+# 单个项目可在 [components.pack] 中用 extra_exclude_dirs / extra_exclude_files 追加。
+# 安全：.env.remoteA / .env.remoteB / .env.bak.* 含明文凭据，默认全排除。
+#       仅 include_env 显式列出的 .env 才允许进包。
+[python_defaults]
+exclude_dirs = [
+    ".venv", "venv", "logs", "__pycache__", ".git", "node_modules",
+    "tests", "docs", ".idea", ".github", ".vscode",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".playwright-cli",
+    "htmlcov", "*.egg-info", ".agents", ".worktrees", ".tmp",
+]
+exclude_files = [
+    "*.pyc", ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.bak.*",
+    "Dockerfile", ".dockerignore", ".gitignore", ".gitattributes", ".python-version",
+    "cspell.json", "uv.lock", "openapi.json", "test_results.txt", ".coverage",
+    "AGENTS.md", "AGENTS.zh-CN.md",
+    "nohup.out", "pytest.ini", "railway.json", "requirements-windows.txt",
+    "docker-entrypoint.sh", "env.testnet.example", "start.sh",
+    "_diag_net.py", "_diag_nosub.py",
+    "LICENSE", "RELEASE.md",
+    "*.bak.*",
+]
+
+# ── Java 打包公共排除列表 ──
+# Java 组件默认排除这些目录和文件（Maven/Gradle 构建产物、IDE 文件等）。
+# Java 打包逻辑：本地 mvn/gradle 编译 → 仅打包 JAR/WAR + configs，不打包源码。
+# 因此此列表主要用于 robocopy 阶段排除不必要文件（如果未来需要源码打包模式）。
+# 安全规则与 backend_defaults 一致：.env* 全排除，仅 include_env 白名单放行。
+[java_defaults]
+exclude_dirs = [
+    "target", "build", ".gradle", ".mvn", "gradle",
+    ".git", "node_modules", ".idea", ".vscode", ".github",
+    "logs", "test", "tests", "src/test",
+    "*.class", ".agents", ".worktrees", ".tmp",
+]
+exclude_files = [
+    ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.bak.*",
+    ".gitignore", ".gitattributes",
+    "pom.xml", "build.gradle", "settings.gradle", "gradlew", "gradlew.bat",
+    "Dockerfile", ".dockerignore",
+    "AGENTS.md", "LICENSE", "RELEASE.md",
+    "*.bak.*",
+]
+
+# ── Go 打包公共排除列表 ──
+# Go 组件打包逻辑：本地 go build → 仅打包二进制 + configs，不打包源码。
+# 此列表用于 robocopy 阶段排除不必要文件（如果未来需要源码打包模式）。
+# 安全规则与 backend_defaults 一致。
+[go_defaults]
+exclude_dirs = [
+    ".git", "node_modules", ".idea", ".vscode", ".github",
+    "logs", "test", "tests", "docs",
+    "vendor", ".agents", ".worktrees", ".tmp",
+]
+exclude_files = [
+    ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.bak.*",
+    ".gitignore", ".gitattributes", "go.sum",
+    "Dockerfile", ".dockerignore",
+    "AGENTS.md", "LICENSE", "RELEASE.md",
+    "*.bak.*",
+]
+
+# ── Node.js 打包公共排除列表 ──
+# Node.js 组件打包逻辑：可选 build（TS->JS）→ 源码复制（排除 devDependencies）。
+# 服务器端执行 npm ci --production 安装生产依赖。
+# 安全规则与 backend_defaults 一致。
+[nodejs_defaults]
+exclude_dirs = [
+    "node_modules", ".git", "logs", ".idea", ".vscode", ".github",
+    "tests", "test", "docs", "coverage", ".nyc_output",
+    ".cache", ".agents", ".worktrees", ".tmp",
+]
+exclude_files = [
+    ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.bak.*",
+    ".gitignore", ".gitattributes", ".dockerignore",
+    "Dockerfile", ".eslintrc*", ".prettierrc*",
+    "AGENTS.md", "LICENSE", "RELEASE.md",
+    "*.bak.*",
+]
+
+# ── 基础设施级 Nginx 额外路由（不属于任何单一项目）──
+# 例如 QuantDinger 的 MCP 代理。会合并进 manifest 的 nginxExtras。
+[[nginx_extras]]
+path = "/mcp"
+type = "proxy"
+proxy_target = "http://127.0.0.1:7800"
+proxy_path = "/mcp"
+special_headers = true

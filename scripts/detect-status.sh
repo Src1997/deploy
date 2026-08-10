@@ -54,6 +54,60 @@ fi
 PROJECT_BASE="${PROJECT_BASE:-/www/wwwroot/project}"
 PG_PASSWORD="${PG_PASSWORD:-}"
 
+# ── 从 projects.json 读取清单（SSOT，替代硬编码目录/服务）──
+PROJECT_DIRS=()
+PROJECT_SERVICES=()
+PROJECT_HEALTH=()
+_load_projects_probe() {
+    local pf=""
+    for cand in "${PROJECTS_FILE:-}" \
+                "$PROJECT_BASE/uploads/dist/projects.json" \
+                "$(dirname "$(dirname "$0")")/projects.json" \
+                "$SCRIPT_DIR/../projects.json"; do
+        [ -n "$cand" ] && [ -f "$cand" ] && { pf="$cand"; break; }
+    done
+    [ -z "$pf" ] && return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    eval "$(python3 - "$pf" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding='utf-8'))
+except Exception:
+    sys.exit(0)
+pb = d.get('projectBase', '/www/wwwroot/project')
+dirs, svcs, hl = [], [], []
+for p in d.get('projects', []):
+    if not p.get('enabled', True):
+        continue
+    dp = p.get('deployPath', '')
+    if dp:
+        dirs.append(pb + '/' + dp)
+    for s in (p.get('services') or []):
+        svcs.append(s)
+    h = p.get('healthUrl', '')
+    if h:
+        hl.append(h)
+print('PROJECT_DIRS=( ' + ' '.join('"%s"' % x for x in dirs) + ' )')
+print('PROJECT_SERVICES=( ' + ' '.join('"%s"' % x for x in svcs) + ' )')
+print('PROJECT_HEALTH=( ' + ' '.join('"%s"' % x for x in hl) + ' )')
+PY
+)"
+}
+_load_projects_probe
+# 兜底（projects.json 不可用时沿用旧硬编码）
+if [ "${#PROJECT_DIRS[@]}" -eq 0 ]; then
+    PROJECT_DIRS=( "$PROJECT_BASE/financial/financial-api"
+        "$PROJECT_BASE/financial/financial-web" "$PROJECT_BASE/official-site"
+        "$PROJECT_BASE/deepquant/backend" "$PROJECT_BASE/deepquant/web"
+        "$PROJECT_BASE/uploads" )
+fi
+if [ "${#PROJECT_SERVICES[@]}" -eq 0 ]; then
+    PROJECT_SERVICES=( financial-api financial-crawler financial-worker financial-streaming quantdinger-backend )
+fi
+if [ "${#PROJECT_HEALTH[@]}" -eq 0 ]; then
+    PROJECT_HEALTH=( http://127.0.0.1:5001/api/health http://127.0.0.1:5000/api/health )
+fi
+
 # 状态变量：0=未做 1=已完成 2=部分/异常
 S_DOCKER=0          # 0=仍有Docker需清 1=已无Docker
 S_CONFLICTS=0       # 0=有系统冲突 1=干净
@@ -105,14 +159,7 @@ done
 
 # ── Phase 3: 目录 + 库 ──────────────────────────────────────────
 dirs_ok=1
-for d in \
-    "$PROJECT_BASE/financial/financial-api" \
-    "$PROJECT_BASE/financial/financial-web" \
-    "$PROJECT_BASE/official-site" \
-    "$PROJECT_BASE/deepquant/backend" \
-    "$PROJECT_BASE/deepquant/web" \
-    "$PROJECT_BASE/uploads"
-do
+for d in "${PROJECT_DIRS[@]}"; do
     [ -d "$d" ] || dirs_ok=0
 done
 db_ok=0
@@ -146,8 +193,8 @@ fi
 
 # ── Phase 6: 服务部署 ───────────────────────────────────────────
 svc_active=0
-svc_need=5
-for svc in financial-api financial-crawler financial-worker financial-streaming quantdinger-backend; do
+svc_need=${#PROJECT_SERVICES[@]}
+for svc in "${PROJECT_SERVICES[@]}"; do
     systemctl is-active --quiet "$svc" 2>/dev/null && svc_active=$((svc_active + 1))
 done
 if [ "$svc_active" -eq "$svc_need" ]; then
@@ -165,9 +212,10 @@ fi
 
 # ── 健康检查 ────────────────────────────────────────────────────
 health_ok=0
-curl -sf http://127.0.0.1:5001/api/health >/dev/null 2>&1 && health_ok=$((health_ok + 1))
-curl -sf http://127.0.0.1:5000/api/health >/dev/null 2>&1 && health_ok=$((health_ok + 1))
-[ "$health_ok" -eq 2 ] && S_HEALTH=1 || { [ "$health_ok" -eq 1 ] && S_HEALTH=2 || S_HEALTH=0; }
+for h in "${PROJECT_HEALTH[@]}"; do
+    curl -sf "$h" >/dev/null 2>&1 && health_ok=$((health_ok + 1))
+done
+[ "$health_ok" -eq "${#PROJECT_HEALTH[@]}" ] && S_HEALTH=1 || { [ "$health_ok" -gt 0 ] && S_HEALTH=2 || S_HEALTH=0; }
 
 # ── Phase 7: Nginx 站点 ─────────────────────────────────────────
 if [ -f /www/server/panel/vhost/nginx/default.conf ] \
@@ -220,7 +268,7 @@ else
     printf "  %-28s %s\n" "Phase5 已上传构建包" "$(mark $S_PACKAGES)"
     printf "  %-28s %s\n" "Phase6 服务已部署" "$(mark $S_DEPLOYED)  (active $svc_active/$svc_need)"
     printf "  %-28s %s\n" "Phase7 Nginx 站点路由" "$(mark $S_NGINX_SITE)"
-    printf "  %-28s %s\n" "验证 API 健康检查" "$(mark $S_HEALTH)  ($health_ok/2)"
+    printf "  %-28s %s\n" "验证 API 健康检查" "$(mark $S_HEALTH)  ($health_ok/${#PROJECT_HEALTH[@]})"
     echo ""
     echo "  下一步 → $(next_action)"
     echo ""

@@ -1,6 +1,6 @@
 # 多项目宝塔部署指南
 
-> 从零：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`projects.yaml`）→ systemd + Nginx。  
+> 从零：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/`）→ systemd + Nginx。  
 > 本地 Windows 构建，服务器 Ubuntu/宝塔运行。**密码只放 `deploy.env`，禁止写进脚本或本文。**
 
 ## 文档导航
@@ -8,7 +8,7 @@
 | 你想… | 看哪份文档 |
 |--------|----------|
 | 了解有哪些站、怎么路由 | [项目概览](#项目概览) |
-| 加项目 / 换工作区根 | [仓库结构与项目清单](#仓库结构与项目清单ssot) |
+| 加项目 / 换工作区根 | [仓库结构与项目配置](#仓库结构与项目配置ssot) |
 | 配密码、连库 | [密钥与连接](#密钥与连接deployenv) |
 | **第一次**装服务器 | [完整部署步骤](docs/guide/deploy-from-scratch.md) |
 | **以后**发版 / 回滚 | [增量发版与回滚](docs/guide/incremental-release.md) |
@@ -24,14 +24,14 @@
 | 项目 ID | 本地路径 (`sourcePath`) | 服务器路径 (`deployPath`) | 端口 | 类型 |
 |---------|-------------------------|---------------------------|------|------|
 | `financial-web` | `financial/financial-web` | `financial/financial-web/dist` | — | Vue 3 静态 |
-| `financial-api` | `financial/financial-api` | `financial/financial-api/package` | 5001 | FastAPI (systemd) |
+| `financial-api` | `financial/financial-api` | `financial/financial-api/package` | 5001 | FastAPI / Python (systemd) |
 | `financial-admin` | `financial/financial-admin` | `financial/financial-admin/dist` | — | Vue 3 静态 |
 | `official-site` | `official-site` | `official-site/dist` | — | Vue 3 静态 |
 | `deepquant-web` | `deepquant/deepquant_vue` | `deepquant/web/dist` | — | Vue 2 静态 |
-| `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask (systemd) |
+| `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask / Python (systemd) |
 
 > 服务器绝对路径 = `PROJECT_BASE`（默认 `/www/wwwroot/project`）+ `deployPath`。  
-> 清单 SSOT：`projects.yaml` → `python3 scripts/sync-projects.py` → `projects.json`。
+> 清单 SSOT：`project-configs/*.toml` → `python3 scripts/sync-manifest.py` → `projects.json`。
 
 ## URL 路由
 
@@ -56,73 +56,149 @@
 
 ---
 
-## 仓库结构与项目清单（SSOT）
+## 仓库结构与项目配置（SSOT）
 
-> 构建 / 部署以 `projects.yaml`（人改）+ `projects.json`（机器读）为准，**不要**再往 `build.ps1` / `deploy.sh` 里写死项目路径。
+> 构建 / 部署以 `project-configs/*.toml`（人改）+ `projects.json`（机器读）为准，**不要**再往 `build.ps1` / `deploy.sh` 里写死项目路径。
+
+### 架构设计
+
+```
+project-configs/*.toml (SSOT, 人编辑)
+    ↓ sync-manifest.py
+projects.json (manifest, 机器读)
+    ↓                     ↓
+pack.ps1 (打包)        deploy.sh (部署)
+```
+
+- **一个配置源**：`project-configs/<name>/project.toml` 是唯一 SSOT
+- **一个打包器**：`pack.ps1` 读 `projects.json`，所有项目共用
+- **一个编译器**：`sync-manifest.py` 把 TOML 编译成 `projects.json`（含完整打包信息）
+- **新增项目**：只需在 `project-configs/` 下新建一个 `project.toml`，无需改任何脚本
+
+### 支持的组件类型
+
+| `kind` | 技术栈 | 打包流程 | 示例 |
+|--------|--------|----------|------|
+| `frontend` | Vue / React / Angular / Svelte | `pnpm/npm/yarn build` → 打包 `dist/` 或 `build/` 为 tar.gz | `financial-web`, `official-site` |
+| `python` | Python (FastAPI / Flask) | 源码 robocopy（排除 venv/tests） + includes → tar.gz | `financial-api`, `deepquant-backend` |
+| `java` | Java (Spring Boot / Maven / Gradle) | `mvn/gradle build` → 打包 JAR/WAR + configs → tar.gz | `fullstack-demo` |
+| `go` | Go (Gin / Echo / Fiber) | `go build` → 打包二进制 + configs → tar.gz | `fullstack-demo` |
+| `nodejs` | Node.js (Express / NestJS / Next.js SSR) | 可选 `npm run build` (TS→JS) → 源码复制 + configs → tar.gz | `fullstack-demo` |
+
+> - 前端支持 `pnpm` / `npm` / `yarn`，通过 `[components.build].package_manager` 配置。
+> - Go 支持交叉编译：在 `build_command` 中设 `GOOS=linux GOARCH=amd64`。
+> - Node.js 后端发源码包，服务器端执行 `npm ci --production` 安装生产依赖。
+> - PHP (Laravel) 可用 `python` kind + 自定义 `extra_exclude_dirs` 实现（需手动处理 PHP 依赖）。
 
 ### 文件结构
 
 ```
 deploy/
-├── projects.yaml        # 人类编辑源（可读性好）
-├── projects.json         # 机器读取源（build.ps1 / deploy.sh 加载）
-└── scripts/
-    ├── sync-projects.py  # yaml → json 同步脚本（需 Python3，WSL 或服务器）
-    ├── lib/
-    │   ├── load-projects.ps1   # PowerShell 加载器
-    │   └── load-projects.sh    # Bash 加载器
-    ├── pack-generic.ps1        # 通用后端打包器（参数化，不写死路径）
-    ├── generate-nginx.py       # Nginx 配置动态生成器
-    └── build.ps1               # Windows 本地构建入口
+├── project-configs/               # SSOT: 项目打包配置（人编辑源）
+│   ├── _shared.toml                #   共享默认值（排除列表、服务器定义）
+│   ├── financial/project.toml      #   金融项目（web + admin + api）
+│   ├── deepquant/project.toml      #   QuantDinger（web + backend + mcp）
+│   ├── official-site/project.toml  #   卓筹介绍站（frontend only）
+│   └── fullstack-demo/project.toml #  全栈示例（React + Java + Go + Node.js）
+├── projects.json                   # 生成产物（manifest, 机器读取源）
+├── scripts/
+│   ├── sync-manifest.py            # TOML → JSON 编译器
+│   ├── pack.ps1                    # 统一打包脚本（所有项目共用）
+│   ├── build.ps1                   # 构建编排入口（sync → pack → copy assets）
+│   ├── deploy.sh                   # 服务器端部署/回滚
+│   ├── generate-nginx.py           # Nginx 配置动态生成
+│   ├── deploy-financial-api.sh     # 项目级部署钩子
+│   └── lib/                        # 共享库
+│       ├── load-deploy-env.sh      #   deploy.env 加载器
+│       ├── load-projects.sh        #   projects.json 加载器（Bash）
+│       └── load-projects.ps1       #   projects.json 加载器（PowerShell）
+├── configs/                        # 静态配置资产
+│   ├── systemd/                    #   systemd unit 文件
+│   ├── financial-api.env.example   #   环境变量模板
+│   ├── deepquant.env.example
+│   └── official-site.env
+├── deploy.env.example              # 部署密钥模板（本地/虚拟机）
+├── deploy.env.server-a.example     # 部署密钥模板（服务器 A）
+├── deploy.env.server-b.example     # 部署密钥模板（服务器 B）
+├── dist/                           # 构建产出（.gitignore，上传到服务器）
+├── docs/                           # 详细指南 / 排障档案
+└── tests/                          # WSL 冒烟 / 沙箱测试
 ```
 
 ### 登记新项目
 
 1. 在工作区放好源码
-2. 编辑 `projects.yaml` 增加一条 `id` + `sourcePath` + `deployPath` + build/deploy 字段
-3. 同步：`python3 scripts/sync-projects.py`（WSL）或手动编辑 `projects.json`
-4. 前端：确保有 `pnpm build`；后端：按需补 `deployHook` / systemd
-5. `.\scripts\build.ps1 {id}` → 上传 → `bash deploy.sh {id}`
+2. 在 `project-configs/` 下新建 `<项目名>/project.toml`（可复制现有项目修改）
+3. 运行 `.\scripts\build.ps1 <项目名>` — 自动 sync manifest + 打包
+4. 上传 → 服务器 `bash deploy.sh`
 
-### 仓库文件树
+### 项目配置文件格式（project.toml）
+
+每个 `project.toml` 包含：
+
+| 配置区 | 说明 |
+|--------|------|
+| `[project]` | 项目 ID、显示名、关键文件（随包上传的 systemd 等资产） |
+| `[servers.*]` | 多服务器定义（可覆盖 `_shared.toml` 中的默认值） |
+| `[deploy]` | 部署行为（备份保留数、健康检查超时） |
+| `[[components]]` | 组件列表（`frontend` / `python` / `java` / `go` / `nodejs`），每个组件含源码路径、构建配置、打包配置 |
+| `[components.build]` | 前端/Java/Go/Node.js 构建配置：包管理器、构建命令、输出目录、JAR/二进制模式等 |
+| `[components.pack]` | Python/Node.js 打包配置：排除列表、包含文件、include_env（安全 .env 白名单） |
+
+### 安全设计
+
+- **.env 默认全排除**：`_shared.toml` 的 `python_defaults` / `java_defaults` / `go_defaults` / `nodejs_defaults` 的 `exclude_files` 包含所有 `.env*` 变体
+- **显式白名单**：仅 `include_env` 列出的文件才被复制为 `.env` 进包（python 在 `[components.pack]`，java/go 在 `[components.build]`）
+- **凭证隔离**：`.env.remoteA` / `.env.remoteB` / `.env.bak.*` 始终排除，不可通过 `include_env` 覆盖
+
+### 解析优先级
 
 ```
-deploy/
-├── README.md                         # 本文档（主入口，精简版）
-├── docs/                             # 详细指南 / 排障档案（见 docs/README.md）
-│   └── guide/                        # 拆分后的详细操作指南
-│       ├── deploy-from-scratch.md    # 完整部署步骤（Phase 0-7b）
-│       ├── incremental-release.md    # 增量发版与回滚
-│       ├── manual-deploy.md          # 手动部署（脚本故障 / 单步操作）
-│       ├── daily-ops.md              # 日常运维
-│       └── remote-dev.md             # 远程开发
-├── projects.yaml                     # 项目清单 SSOT（人类编辑源）
-├── projects.json                     # 项目清单 SSOT（机器读取源）
-├── scripts/                          # 所有执行脚本
-│   ├── 00-cleanup-docker.sh          # Phase0：Docker 清理
-│   ├── 01-install-baota.sh           # Phase1：安装宝塔面板
-│   ├── 02-baota-exclusive.sh         # 冲突清理实现
-│   ├── 03-server-setup.sh            # Phase3：创建数据库、目录
-│   ├── detect-status.sh              # 探测各阶段是否已完成
-│   ├── build.ps1                     # Windows 本地构建
-│   ├── pack-generic.ps1              # 通用后端打包器
-│   ├── deploy.sh                     # 服务器：部署 + 回滚
-│   ├── generate-nginx.py             # Nginx 配置动态生成
-│   ├── sync-projects.py              # yaml → json 同步
-│   └── lib/                          # 共享库
-├── configs/                          # systemd / env 模板
-│   └── systemd/                      # systemd unit 文件
-├── tests/                            # WSL 冒烟 / 沙箱
-└── dist/                             # 构建产出（.gitignore，上传到服务器）
+WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
+PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
 ```
-
-> 各项目内不再维护 deploy/ 目录和 Docker 配置，所有部署相关文件集中在此目录。
 
 ---
 
 ## 密钥与连接（deploy.env）
 
 密码**不写在 README**。统一写在 `deploy.env`（由 `deploy.env.example` 复制）。
+
+### 三套环境模板
+
+| 模板文件 | 用途 | Nginx 模式 | 域名 |
+|----------|------|-----------|------|
+| `deploy.env.example` | 本地/虚拟机 | http（IP 部署） | 无 |
+| `deploy.env.server-a.example` | 服务器 A | ssl-redirect（裸域→www） | `DOMAIN` + `WWW_DOMAIN` |
+| `deploy.env.server-b.example` | 服务器 B | ssl-combined（域名合并） | `DOMAIN` + `WWW_DOMAIN` |
+
+使用方法：
+
+```bash
+# 本地/虚拟机
+cp deploy.env.example deploy.env
+
+# 服务器 A
+cp deploy.env.server-a.example deploy.env.server-a
+
+# 服务器 B
+cp deploy.env.server-b.example deploy.env.server-b
+```
+
+服务器端部署时指定环境：
+
+```bash
+# 方式一：--target 参数
+bash deploy.sh all --yes --target=server-a --ip=47.86.32.234
+bash deploy.sh all --yes --target=server-b
+
+# 方式二：环境变量
+DEPLOY_TARGET=server-a bash deploy.sh all --yes
+DEPLOY_TARGET=server-b bash deploy.sh all --yes
+
+# 方式三：直接指定文件路径
+DEPLOY_ENV_FILE=/path/to/custom.env bash deploy.sh all --yes
+```
 
 ### PostgreSQL
 
@@ -146,13 +222,6 @@ deploy/
 | 端口 | `6379` |
 | 密码 | `REDIS_PASSWORD`（见 `deploy.env`） |
 
-### 解析优先级
-
-```
-WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
-PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
-```
-
 ---
 
 ## 快速开始
@@ -165,19 +234,56 @@ PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
 
 详见 [增量发版与回滚](docs/guide/incremental-release.md)。
 
-```powershell
-# 本地构建
-cd D:\Workspace\deploy
-.\scripts\build.ps1 financial-web
+### 测试验证
 
-# 上传
-scp dist\packages\financial-web-dist.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
+```bash
+# WSL Ubuntu 中运行冒烟测试
+wsl bash -c "cd /mnt/d/Workspace/deploy && bash tests/wsl-smoke.sh"
+
+# WSL Ubuntu 中运行综合测试（46 项检查）
+wsl bash -c "cd /mnt/d/Workspace/deploy && bash tests/run-wsl-tests.sh"
+
+# PowerShell 中 DryRun 验证打包逻辑
+.\scripts\pack.ps1 financial -DryRun
+.\scripts\pack.ps1 deepquant,official-site -DryRun
+
+# 服务器端 DRY_RUN 验证部署流程（环境变量方式，不修改 deploy.env）
+DEPLOY_DRY_RUN=1 bash deploy.sh financial-web --yes
+DEPLOY_DRY_RUN=1 bash deploy.sh all --yes
+
+# 服务器端 preflight 实际检查 Redis/PG 连接（非 DRY_RUN）
+bash deploy.sh financial-web --yes
+```
+
+> **WSL 宝塔环境测试**：WSL 中已安装宝塔 Redis（`/www/server/redis/`）和 PostgreSQL（`/www/server/pgsql/`），`deploy.env` 已配置对应的密码和端口。`redis-cli` 和 `pg_isready` 通过符号链接 `/usr/local/bin/` 暴露到 PATH。
+>
+> **DRY_RUN 环境变量**：`DEPLOY_DRY_RUN=1` 作为环境变量传入时会覆盖 `deploy.env` 中的 `DEPLOY_DRY_RUN=0`，无需临时修改配置文件。
+
+```powershell
+# 本地构建（自动 sync manifest + pack）
+cd D:\Workspace\deploy
+.\scripts\build.ps1 financial
+
+# 或直接调用打包器
+.\scripts\pack.ps1 financial
+
+# DryRun 模式（不生成文件，仅验证流程）
+.\scripts\pack.ps1 financial -DryRun
 ```
 
 ```bash
-# 服务器部署
-cd /www/wwwroot/project/uploads/dist
-bash deploy.sh financial-web
+# 上传（SSH/SCP，统一走 SSH）
+scp -r dist/ root@服务器IP:/www/wwwroot/project/uploads/
+# 或仅上传包
+scp dist/packages/*.tar.gz root@服务器IP:/www/wwwroot/project/uploads/dist/packages/
+```
+
+```bash
+# 服务器部署（SSH）
+ssh root@服务器IP "cd /www/wwwroot/project/uploads/dist && bash deploy.sh financial-web"
+# 或登录后操作
+ssh root@服务器IP
+cd /www/wwwroot/project/uploads/dist && bash deploy.sh financial-web
 ```
 
 ### 日常运维
@@ -208,14 +314,14 @@ location ^~ /api/ { ... }   # 在后
 
 ### Q: 更换域名时需要做什么
 
-> 本项目已配置化，只需改 `deploy.env` 然后重新部署即可。
+> 本项目已配置化，只需改对应环境的 `deploy.env` 然后重新部署即可。
 
-1. **deploy.env**：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
+1. **deploy.env**：修改对应环境的配置文件（`deploy.env.server-a` / `deploy.env.server-b`）：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
 2. **DNS**：在域名商处将裸域和 www 的 A 记录指向服务器 IP
 3. **SSL 证书**：按 [Phase 7b](docs/guide/deploy-from-scratch.md#phase-7b-ssl-证书--宝塔邮局申请域名部署) 流程申请
-4. **Nginx**：设 `NGINX_CONF_NAME=nginx-servera-ssl.conf`，执行 `bash deploy.sh --nginx`
-5. **financial-api**：`bash deploy.sh financial-api`
-6. **QuantDinger**：`bash deploy.sh deepquant-backend`
+4. **Nginx**：执行 `bash deploy.sh --nginx --target=server-a`（或 `server-b`）
+5. **financial-api**：`bash deploy.sh financial-api --target=server-a`
+6. **QuantDinger**：`bash deploy.sh deepquant-backend --target=server-a`
 7. **邮局**：按 [Phase 7b 步骤 3](docs/guide/deploy-from-scratch.md#3-配置宝塔邮局) 配置
 8. **重启**：`systemctl restart financial-api quantdinger-backend` + `nginx -s reload`
 

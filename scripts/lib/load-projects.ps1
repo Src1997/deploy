@@ -17,7 +17,7 @@ function Load-Projects {
 
     if (-not (Test-Path $ProjectsFile)) {
         Write-Error "projects.json not found: $ProjectsFile"
-        Write-Error "Run: python3 scripts/sync-projects.py (in WSL) or create projects.json manually"
+        Write-Error "Run: python3 scripts/sync-manifest.py to generate projects.json"
         return $null
     }
 
@@ -46,7 +46,7 @@ function Load-Projects {
 # 获取单个项目 by id
 function Get-ProjectById {
     param([string]$Id)
-    if (-not $global:ProjectList) { Load-Projects }
+    if (-not $global:ProjectList) { $null = Load-Projects }
     return $global:ProjectList | Where-Object { $_.id -eq $Id }
 }
 
