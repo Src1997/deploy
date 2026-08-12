@@ -49,7 +49,7 @@ _load_projects() {
     PROJECT_IDS=$(_json_project_ids "$projects_file")
 
     # 为每个项目生成关联数组
-    declare -gA DEPLOY_PATH ARTIFACT_NAME SERVICES HEALTH_URL NGINX_RELOAD DEPLOY_HOOK PROJECT_KIND PROJECT_DISPLAY_NAME PUBLIC_URL PROJECT_ROOT
+    declare -gA DEPLOY_PATH ARTIFACT_NAME SERVICES HEALTH_URL NGINX_RELOAD DEPLOY_HOOK PROJECT_KIND PROJECT_DISPLAY_NAME PUBLIC_URL PROJECT_ROOT VENV_SHARED PROJECT_ID
 
     for id in $PROJECT_IDS; do
         DEPLOY_PATH[$id]="${PROJECT_BASE}/$(_json_project_field "$projects_file" "$id" deployPath)"
@@ -66,6 +66,8 @@ _load_projects() {
         PROJECT_DISPLAY_NAME[$id]=$(_json_project_field "$projects_file" "$id" displayName)
         PUBLIC_URL[$id]=$(_json_project_field "$projects_file" "$id" publicUrl)
         PROJECT_ROOT[$id]=$(_json_project_field "$projects_file" "$id" nginx.rootProject)
+        VENV_SHARED[$id]=$(_json_project_field "$projects_file" "$id" venvShared)
+        PROJECT_ID[$id]=$(_json_project_field "$projects_file" "$id" project)
     done
 
     return 0

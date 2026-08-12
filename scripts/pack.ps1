@@ -96,6 +96,16 @@ function Get-ProjectGroups {
     return $groups
 }
 
+# ── Get component ID → component object lookup ──
+function Get-ComponentLookup {
+    param($manifest)
+    $lookup = @{}
+    foreach ($p in $manifest.projects) {
+        $lookup[$p.id] = $p
+    }
+    return $lookup
+}
+
 # ── Frontend packing ──
 function Pack-Frontend {
     param($comp)
@@ -945,15 +955,18 @@ W-Banner "Unified Packer"
 W-Info "Config source:  project-configs/ -> projects.json"
 W-Info "Workspace root: $global:WorkspaceRoot"
 W-Info "Output dir:     $OutDir"
-W-Info "Projects found: $($groups.Count) ($($groups.Keys -join ', '))"
+W-Info "Projects found: $($groups.Count) groups, $($manifest.projects.Count) components"
 
 if ($DryRun) {
     W-Warn "*** DRY RUN MODE — no files will be created ***"
 }
 
-# Determine which projects to pack
+# Build component ID → component lookup
+$compLookup = Get-ComponentLookup $manifest
+
+# Determine which items to pack
 if (-not $ProjectId) {
-    # Interactive menu
+    # Interactive menu — show project groups
     Write-Host ""
     $groupKeys = @($groups.Keys)
     for ($i = 0; $i -lt $groupKeys.Count; $i++) {
@@ -962,6 +975,8 @@ if (-not $ProjectId) {
         Write-Host "  [$($i + 1)] $($groupKeys[$i])  ($compIds)" -ForegroundColor White
     }
     Write-Host "  [a] All projects"
+    Write-Host ""
+    Write-Host "  Tip: pass component IDs via CLI, e.g. pack.ps1 deepquant-backend,financial-api" -ForegroundColor DarkGray
     Write-Host ""
     $sel = Read-Host "Select [1-$($groupKeys.Count)] or 'a' for all"
 
@@ -984,31 +999,61 @@ if (-not $ProjectId) {
     $selectedIds = @($ProjectId)
 }
 
-# Validate selections
-$validIds = @()
+# Resolve IDs to components (support project group names AND individual component IDs)
+$resolvedComponents = @()
 foreach ($id in $selectedIds) {
     if ($groups.Contains($id)) {
-        $validIds += $id
+        # Project group name — add all components in this group
+        $resolvedComponents += @($groups[$id])
+    } elseif ($compLookup.Contains($id)) {
+        # Component ID — add single component
+        $resolvedComponents += @($compLookup[$id])
     } else {
-        W-Err "Unknown project: $id"
-        W-Info "Available: $($groups.Keys -join ', ')"
+        W-Err "Unknown project or component: $id"
+        W-Info "Available groups:     $($groups.Keys -join ', ')"
+        W-Info "Available components: $($compLookup.Keys -join ', ')"
     }
 }
 
-if ($validIds.Count -eq 0) {
-    W-Err "No valid projects selected"
+if ($resolvedComponents.Count -eq 0) {
+    W-Err "No valid projects or components selected"
     exit 1
 }
 
-# Pack each project
+# Deduplicate by component ID (a component may be selected via both group and individual ID)
+$seenIds = @{}
+$uniqueComponents = @()
+foreach ($comp in $resolvedComponents) {
+    if (-not $seenIds.Contains($comp.id)) {
+        $seenIds[$comp.id] = $true
+        $uniqueComponents += $comp
+    }
+}
+$resolvedComponents = $uniqueComponents
+
+# Pack resolved components (individual or grouped)
 $built = @()
 $failed = @()
-foreach ($id in $validIds) {
-    if (Pack-Project $id $groups[$id]) {
-        $built += $id
+foreach ($comp in $resolvedComponents) {
+    $kind = $comp.kind
+    $cid = $comp.id
+    $compOk = $false
+    W-Banner "Packing: $cid ($($comp.displayName))"
+    if ($kind -eq 'frontend') {
+        $compOk = Pack-Frontend $comp
+    } elseif ($kind -eq 'python') {
+        $compOk = Pack-Backend $comp
+    } elseif ($kind -eq 'java') {
+        $compOk = Pack-Java $comp
+    } elseif ($kind -eq 'go') {
+        $compOk = Pack-Go $comp
+    } elseif ($kind -eq 'nodejs') {
+        $compOk = Pack-Nodejs $comp
     } else {
-        $failed += $id
+        W-Warn "Unknown component kind: $kind ($cid), skipping"
+        continue
     }
+    if ($compOk) { $built += $cid } else { $failed += $cid }
 }
 
 # Summary

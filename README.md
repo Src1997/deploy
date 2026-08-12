@@ -118,8 +118,8 @@ deploy/
 │   ├── deepquant.env.example
 │   └── official-site.env
 ├── deploy.env.example              # 部署密钥模板（本地/虚拟机）
-├── deploy.env.server-a.example     # 部署密钥模板（服务器 A）
-├── deploy.env.server-b.example     # 部署密钥模板（服务器 B）
+├── deploy.env.server-a             # 服务器 A 配置（.gitignore）
+├── deploy.env.server-b             # 服务器 B 配置（.gitignore）
 ├── dist/                           # 构建产出（.gitignore，上传到服务器）
 ├── docs/                           # 详细指南 / 排障档案
 └── tests/                          # WSL 冒烟 / 沙箱测试
@@ -164,25 +164,22 @@ PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
 
 密码**不写在 README**。统一写在 `deploy.env`（由 `deploy.env.example` 复制）。
 
-### 三套环境模板
+### 三套环境配置
 
-| 模板文件 | 用途 | Nginx 模式 | 域名 |
+| 配置文件 | 用途 | Nginx 模式 | 域名 |
 |----------|------|-----------|------|
-| `deploy.env.example` | 本地/虚拟机 | http（IP 部署） | 无 |
-| `deploy.env.server-a.example` | 服务器 A | ssl-redirect（裸域→www） | `DOMAIN` + `WWW_DOMAIN` |
-| `deploy.env.server-b.example` | 服务器 B | ssl-combined（域名合并） | `DOMAIN` + `WWW_DOMAIN` |
+| `deploy.env.example` | 本地/虚拟机（模板） | http（IP 部署） | 无 |
+| `deploy.env.server-a` | 服务器 A (47.86.32.234) | ssl-redirect（裸域→www） | `DOMAIN` + `WWW_DOMAIN` |
+| `deploy.env.server-b` | 服务器 B (103.100.211.12) | ssl-combined（域名合并） | `DOMAIN` + `WWW_DOMAIN` |
 
 使用方法：
 
 ```bash
-# 本地/虚拟机
+# 本地/虚拟机（首次使用）
 cp deploy.env.example deploy.env
 
-# 服务器 A
-cp deploy.env.server-a.example deploy.env.server-a
-
-# 服务器 B
-cp deploy.env.server-b.example deploy.env.server-b
+# 服务器 A/B 配置已创建（.gitignore），无需 cp
+# 如需重建：参考 deploy.env.example 模板，填入对应服务器的域名和密码
 ```
 
 服务器端部署时指定环境：
@@ -221,6 +218,24 @@ DEPLOY_ENV_FILE=/path/to/custom.env bash deploy.sh all --yes
 | 主机 | `localhost`（勿对公网开放 6379） |
 | 端口 | `6379` |
 | 密码 | `REDIS_PASSWORD`（见 `deploy.env`） |
+
+### .env 生成机制
+
+`configs/*.env` 真实文件**不需要本地存在**。部署时 `deploy.sh` 会：
+
+1. **首次部署**：从 `configs/*.env.example` 模板自动生成 `.env`，替换 `__PG_PASSWORD__` / `__REDIS_PASSWORD__` / `__SECRET_KEY__` 等占位符
+2. **增量部署**：备份现有 `.env` → 解压代码 → 恢复 `.env`（保留服务器端配置）
+
+如需通过打包传递 `.env`（而非服务器端生成），在 `configs/` 下创建真实 `.env` 文件（已 gitignore），`include_env` 白名单会将其打入包中。
+
+### MCP Agent Token 配置
+
+MCP Server 需要有效的 `AGENT_TOKEN` 才能通过认证。配置流程：
+
+1. 部署后端：`bash deploy.sh deepquant-backend --yes`（MCP 服务自动安装，token 为占位符）
+2. 在后端 Agent Gateway 创建 token（通过 Admin 面板或 API）
+3. 在 `deploy.env.server-a` / `deploy.env.server-b` 中设置 `MCP_AGENT_TOKEN=<真实 token>`
+4. 重新部署 MCP：`bash deploy.sh deepquant-mcp --yes`（仅更新 systemd 环境变量 + 重启）
 
 ---
 

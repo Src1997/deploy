@@ -1,35 +1,37 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# deploy.sh — 交互式部署/回滚/日志工具（服务器端）
+# deploy.sh — 通用部署/回滚/日志工具（服务器端）
+#
+# 项目列表从 projects.json 自动加载，无需在脚本中硬编码。
+# 新增项目只需在 project-configs/ 下添加 project.toml，零脚本修改。
 #
 # 用法：
 #   bash deploy.sh                      # 交互式主菜单
-#   bash deploy.sh <project> [options]  # 命令行直接执行
+#   bash deploy.sh <component> [options]  # 命令行直接执行
+#   bash deploy.sh <group> [options]      # 按项目组部署（如 financial, deepquant）
+#   bash deploy.sh all [options]          # 全量部署
 #   bash deploy.sh --status             # 查看所有服务状态
-#   bash deploy.sh --logs [project]     # 查看日志
-#
-# 项目列表：
-#   financial-web       行情/社区前端
-#   financial-api       FastAPI 后端 (Python)
-#   official-site       卓筹介绍站
-#   deepquant-web       QuantDinger 前端
-#   deepquant-backend   QuantDinger 后端 (Python)
-#   all                 全量
+#   bash deploy.sh --logs [component]   # 查看日志
 #
 # 选项：
 #   --ip=SERVER_IP      设置服务器 IP（更新 CORS）
-#   --no-restart         部署但不重启服务
-#   --rollback           交互选择备份回滚（可单项目 / 多选 / all）
+#   --target=server-a   指定环境配置（加载 deploy.env.server-a）
+#   --no-restart        部署但不重启服务
+#   --rollback          交互选择备份回滚（可单项目 / 多选 / all）
 #   --rollback=TS|latest 回滚到指定时间戳，或各项目最新备份
 #   --yes|-y|--ci       非交互模式：跳过所有确认提示（部署 + 回滚）
 #   --list              列出可用备份
 #   --status            查看服务状态
-#   --logs [project]    查看日志（默认 financial-api）
+#   --logs [component]  查看日志
 #   --help              帮助
 #
+# 支持的组件类型：frontend | python | java | go | nodejs
+# Python 部署自动支持：deployHook、venv + pip、MCP 自动检测、.env 模板渲染、
+#                       systemd 服务安装、venvShared 共享 venv 模式
+#
 # 回滚示例：
-#   bash deploy.sh financial-web --rollback
-#   bash deploy.sh financial-web,official-site --rollback=latest
+#   bash deploy.sh <component> --rollback
+#   bash deploy.sh <comp1>,<comp2> --rollback=latest
 #   bash deploy.sh all --rollback
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -66,7 +68,7 @@ show_help() {
     --yes / -y / --ci   非交互模式：跳过所有确认提示（部署 + 回滚，CI/CD 用）
     --list              列出可用备份
     --status            查看服务状态
-    --logs [project]    查看日志（默认 financial-api）
+    --logs [component]  查看日志（默认第一个 Python 组件）
     --lines=N           日志行数（默认 50，0=实时跟踪）
     --logs=error        只看 ERROR 级别日志
     --target=server-a   使用 deploy.env.server-a 配置（服务器 A）
@@ -82,11 +84,11 @@ show_help() {
     - 单项目 / 多项目 / all 回滚均会列出目标并要求确认（除非 --yes）
 
   非交互 / CI/CD 部署示例：
-    bash deploy.sh financial-api --yes --ip=47.86.32.234
-    bash deploy.sh financial-web,financial-api --yes
-    bash deploy.sh all --yes --ip=47.86.32.234
-    bash deploy.sh financial-api --rollback=latest --yes
-    bash deploy.sh all --yes --target=server-a --ip=47.86.32.234
+    bash deploy.sh <component> --yes --ip=<SERVER_IP>
+    bash deploy.sh <comp1>,<comp2> --yes
+    bash deploy.sh all --yes --ip=<SERVER_IP>
+    bash deploy.sh <component> --rollback=latest --yes
+    bash deploy.sh all --yes --target=server-a --ip=<SERVER_IP>
 HELP
 }
 
@@ -219,7 +221,7 @@ is_known_project() {
 
 # ── 参数解析 ────────────────────────────────────────────────────────
 PROJECT=""
-PROJECT_LIST=()          # 多项目：financial-web,official-site 或 all
+PROJECT_LIST=()          # 多组件：comp1,comp2 或 all
 SERVER_IP=""
 NO_RESTART=false
 DO_ROLLBACK=false
@@ -831,12 +833,6 @@ rollback_projects() {
     [ ${#failed[@]} -eq 0 ]
 }
 
-# 兼容旧调用：do_rollback name target_di
-do_rollback() {
-    local name="$1"
-    rollback_projects "$name"
-}
-
 # ═══════════════════════════════════════════════════════════════════════
 # 部署函数（路径 / 产物 / 服务均来自 projects.json）
 # ═══════════════════════════════════════════════════════════════════════
@@ -961,253 +957,6 @@ deploy_frontend_by_id() {
     fi
 }
 
-# financial-api：清单路径 + 既有钩子 / CORS / 多服务重启
-deploy_financial_api() {
-    local id="financial-api"
-    local pkg_dir="${DEPLOY_PATH[$id]:-}"
-    local api_parent
-    api_parent="$(dirname "$pkg_dir")"
-    local tar_pat="${ARTIFACT_NAME[$id]:-financial-api-*.tar.gz}"
-
-    log "部署 financial-api → $pkg_dir ..."
-    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
-        ok "[DRY_RUN] financial-api → $pkg_dir (artifact=$tar_pat hook=${DEPLOY_HOOK[$id]:-})"
-        return 0
-    fi
-    local tar
-    tar=$(find_file "$tar_pat")
-    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 financial-api"; return 1; }
-    backup_backend "financial-api" "$pkg_dir"
-    # 复制 tar 包到部署父目录，同时清理旧包
-    find "$api_parent" -maxdepth 1 -name 'financial-api-*.tar.gz' -delete 2>/dev/null || true
-    mkdir -p "$api_parent"
-    cp "$tar" "$api_parent/"
-    mkdir -p "$DEPLOY_TMP_DIR/fin-api-extract"
-    tar xzf "$tar" -C "$DEPLOY_TMP_DIR/fin-api-extract"
-    local DEPLOY_SCRIPT=""
-    # 优先：归档内保留的 scripts/ 层次；兼容旧包：package/ 根下拍扁脚本
-    for cand in \
-        "$DEPLOY_TMP_DIR/fin-api-extract/scripts/deploy-financial-api.sh" \
-        "$DEPLOY_TMP_DIR/fin-api-extract/package/scripts/deploy-financial-api.sh" \
-        "$DEPLOY_TMP_DIR/fin-api-extract/package/deploy-financial-api.sh" \
-        "$pkg_dir/scripts/deploy-financial-api.sh" \
-        "$pkg_dir/deploy-financial-api.sh"; do
-        [ -f "$cand" ] && DEPLOY_SCRIPT="$cand" && break
-    done
-    # 若清单指定 deployHook 且包内无脚本，尝试 dist/scripts 下的钩子
-    if [ -z "$DEPLOY_SCRIPT" ] && [ -n "${DEPLOY_HOOK[$id]:-}" ]; then
-        local hook_rel="${DEPLOY_HOOK[$id]}"
-        for cand in "$DIST_ROOT/$hook_rel" "$SCRIPT_DIR_DEPLOY/../$hook_rel" "$SCRIPT_DIR/$hook_rel"; do
-            [ -f "$cand" ] && DEPLOY_SCRIPT="$cand" && break
-        done
-    fi
-    if [ -n "$DEPLOY_SCRIPT" ]; then
-        local yes_flag=""
-        $ASSUME_YES && yes_flag="--yes"
-        # 路径注入钩子，避免钩子内硬编码 PROJECT_BASE/.../financial-api
-        DEPLOY_ROOT="$api_parent" PKG_DIR="$pkg_dir" \
-            bash "$DEPLOY_SCRIPT" --web-path=/ --no-restart $yes_flag || warn "deploy-financial-api.sh 有警告"
-        ok "financial-api 代码已同步"
-    else
-        rm -rf "$DEPLOY_TMP_DIR/fin-api-extract"
-        err "未找到 deploy-financial-api.sh"; return 1
-    fi
-    rm -rf "$DEPLOY_TMP_DIR/fin-api-extract"
-    # 更新 .env
-    local env_file="$pkg_dir/.env"
-    if [ -f "$env_file" ] && [ -n "$SERVER_IP" ]; then
-        log "更新 .env (CORS 追加 $SERVER_IP)..."
-        local current_cors
-        current_cors=$(grep '^CORS_ORIGINS=' "$env_file" | head -1 | cut -d= -f2-)
-        if echo "$current_cors" | grep -q "$SERVER_IP"; then
-            ok "CORS 已包含 $SERVER_IP，跳过"
-        else
-            local new_cors="${current_cors},http://${SERVER_IP}"
-            sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=${new_cors}|" "$env_file"
-            ok "CORS 已追加 $SERVER_IP（保留已有 origin）"
-        fi
-        sed -i "s|^AUTH_UPSTREAM_URL=.*|AUTH_UPSTREAM_URL=http://127.0.0.1:5000|" "$env_file"
-        local redis_pass
-        redis_pass=$(grep '^REDIS_URL=' "$env_file" | head -1 | sed -n 's|.*://:\([^@]*\)@.*|\1|p')
-        if [ -n "$redis_pass" ]; then
-            local current_arq
-            current_arq=$(grep '^ARQ_REDIS_URL=' "$env_file" | head -1 | cut -d= -f2-)
-            local expected_arq="redis://:${redis_pass}@localhost:6379/1"
-            if [ "$current_arq" != "$expected_arq" ]; then
-                if grep -q '^ARQ_REDIS_URL=' "$env_file"; then
-                    sed -i "s|^ARQ_REDIS_URL=.*|ARQ_REDIS_URL=${expected_arq}|" "$env_file"
-                else
-                    echo "ARQ_REDIS_URL=${expected_arq}" >> "$env_file"
-                fi
-                ok "ARQ_REDIS_URL 已修正（带密码，DB /1）"
-            fi
-        fi
-        ok ".env 已更新"
-    fi
-    if ! $NO_RESTART; then
-        local svc
-        for svc in ${SERVICES[$id]}; do
-            [ -n "$svc" ] && restart_service "$svc"
-        done
-        if [ -n "${HEALTH_URL[$id]:-}" ]; then
-            sleep 3
-            health_check "financial-api" "${HEALTH_URL[$id]}"
-        fi
-    fi
-}
-
-deploy_deepquant_backend() {
-    local id="deepquant-backend"
-    local pkg_dir="${DEPLOY_PATH[$id]:-}"
-    local tar_pat="${ARTIFACT_NAME[$id]:-deepquant-backend-package.tar.gz}"
-    local venv_dir="$pkg_dir/.venv" env_file="$pkg_dir/.env"
-
-    log "部署 QuantDinger 后端 → $pkg_dir ..."
-    if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
-        ok "[DRY_RUN] deepquant-backend → $pkg_dir (artifact=$tar_pat)"
-        return 0
-    fi
-    local tar
-    tar=$(find_file "$tar_pat")
-    [ -z "$tar" ] && { err "未找到 $tar_pat"; err "请先本地执行: .\\scripts\\build.ps1 deepquant-backend"; return 1; }
-    backup_backend "deepquant-backend" "$pkg_dir"
-    mkdir -p "$pkg_dir"
-    # 备份 .env
-    [ -f "$env_file" ] && cp "$env_file" "$env_file.bak"
-    # 清理旧代码（保留 .env/.venv/logs/data）
-    find "$pkg_dir" -mindepth 1 -maxdepth 1 \
-        ! -name '.env' ! -name '.venv' ! -name 'logs' ! -name 'data' \
-        -exec rm -rf {} + 2>/dev/null || true
-    tar xzf "$tar" -C "$pkg_dir"
-    ok "代码已解压"
-    # 虚拟环境
-    if [ ! -d "$venv_dir" ]; then
-        log "创建虚拟环境..."
-        python3 -m venv "$venv_dir"
-        "$venv_dir/bin/pip" install --upgrade pip -q
-    fi
-    log "安装依赖..."
-    "$venv_dir/bin/pip" install -r "$pkg_dir/requirements.txt" -q 2>&1 | tail -3
-    # 恢复 .env（增量部署时保留已有配置）
-    [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
-
-    # ── 首次部署：从模板生成 .env ──
-    if [ ! -f "$env_file" ]; then
-        log "首次部署：从模板生成 .env..."
-        local template=""
-        for t in "$CONFIGS_SRC/deepquant.env.example" \
-                 "$DIST_ROOT/configs/deepquant.env.example" \
-                 "$(dirname "$0")/configs/deepquant.env.example"; do
-            [ -f "$t" ] && template="$t" && break
-        done
-        if [ -n "$template" ]; then
-            local secret_key admin_pw
-            secret_key=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "CHANGE_ME_SECRET_KEY")
-            admin_pw="${ADMIN_PASSWORD:-}"
-            if [ -z "$admin_pw" ] || [ "$admin_pw" = "CHANGE_ME" ]; then
-                admin_pw=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || echo "ChangeMeNow")
-                warn "ADMIN_PASSWORD 未在 deploy.env 配置，已随机生成（请登录后修改）"
-            fi
-            local server_ip="${SERVER_IP:-127.0.0.1}"
-            local frontend_url="${FRONTEND_URL:-http://${server_ip}}"
-            sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
-                -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
-                -e "s|__SECRET_KEY__|${secret_key}|g" \
-                -e "s|__ADMIN_PASSWORD__|${admin_pw}|g" \
-                -e "s|__SERVER_IP__|${server_ip}|g" \
-                -e "s|__FRONTEND_URL__|${frontend_url}|g" \
-                "$template" > "$env_file"
-            chmod 600 "$env_file"
-            ok ".env 已生成（从模板 $template）"
-        else
-            warn "未找到 deepquant.env.example 模板"
-            warn "请手动创建: $env_file"
-        fi
-    else
-        ok ".env 已存在，保留"
-    fi
-
-    # ── 首次部署：安装 systemd 服务 ──
-    local svc_file="/etc/systemd/system/quantdinger-backend.service"
-    if [ ! -f "$svc_file" ]; then
-        log "首次部署：安装 quantdinger-backend.service..."
-        local svc_template=""
-for t in "$CONFIGS_SRC/systemd/quantdinger-backend.service" \
-"$DIST_ROOT/configs/systemd/quantdinger-backend.service" \
-"$CONFIGS_SRC/quantdinger-backend.service" \
-"$(dirname "$0")/configs/systemd/quantdinger-backend.service" \
-"$(dirname "$0")/configs/quantdinger-backend.service"; do
-            [ -f "$t" ] && svc_template="$t" && break
-        done
-        if [ -n "$svc_template" ]; then
-            cp "$svc_template" "$svc_file"
-            systemctl daemon-reload
-            systemctl enable quantdinger-backend
-            ok "quantdinger-backend.service 已安装并启用"
-        else
-            warn "未找到 quantdinger-backend.service 模板"
-        fi
-    else
-        ok "quantdinger-backend.service 已存在"
-    fi
-
-    # ── MCP Server：安装 mcp_server 包 + systemd 服务 ──
-    local mcp_src_dir="$pkg_dir/mcp_server"
-    if [ -d "$mcp_src_dir" ] && [ -f "$mcp_src_dir/pyproject.toml" ]; then
-        log "安装 MCP Server 依赖到 venv..."
-        # 清理可能存在的旧版 mcp 2.x（与 quantdinger-mcp 不兼容）
-        "$venv_dir/bin/pip" uninstall mcp mcp-types -y -q 2>/dev/null || true
-        "$venv_dir/bin/pip" install "$mcp_src_dir" -q 2>&1 | tail -3
-        ok "quantdinger-mcp 包已安装到 venv"
-
-        # 安装 systemd 服务
-        local mcp_svc_file="/etc/systemd/system/quantdinger-mcp.service"
-        local mcp_svc_template=""
-        for t in "$CONFIGS_SRC/systemd/quantdinger-mcp.service" \
-"$DIST_ROOT/configs/systemd/quantdinger-mcp.service" \
-"$CONFIGS_SRC/quantdinger-mcp.service" \
-"$(dirname "$0")/configs/systemd/quantdinger-mcp.service" \
-"$(dirname "$0")/configs/quantdinger-mcp.service"; do
-            [ -f "$t" ] && mcp_svc_template="$t" && break
-        done
-        if [ -n "$mcp_svc_template" ]; then
-            # 渲染 AGENT_TOKEN 占位符
-            local mcp_token="${MCP_AGENT_TOKEN:-}"
-            if [ -z "$mcp_token" ]; then
-                warn "MCP_AGENT_TOKEN 未在 deploy.env 配置，MCP 服务可能无法正常启动"
-                mcp_token="CHANGE_ME_MCP_TOKEN"
-            fi
-            sed "s|__MCP_AGENT_TOKEN__|${mcp_token}|g" \
-                "$mcp_svc_template" > "$mcp_svc_file"
-            systemctl daemon-reload
-            systemctl enable quantdinger-mcp 2>/dev/null || true
-            ok "quantdinger-mcp.service 已安装并启用"
-        else
-            warn "未找到 quantdinger-mcp.service 模板，跳过 MCP 服务安装"
-        fi
-    else
-        warn "mcp_server 目录不存在或缺少 pyproject.toml，跳过 MCP 安装"
-    fi
-
-    mkdir -p "$pkg_dir/logs" "$pkg_dir/data/memory"
-    if [ -n "$SERVER_IP" ]; then ok ".env FRONTEND_URL preserved"; fi
-    if ! $NO_RESTART; then
-        local svc
-        for svc in ${SERVICES[$id]}; do
-            [ -n "$svc" ] && restart_service "$svc"
-        done
-        if [ -n "${HEALTH_URL[$id]:-}" ]; then
-            sleep 3
-            health_check "QuantDinger" "${HEALTH_URL[$id]}"
-        fi
-        # MCP 健康检查
-        if systemctl is-active quantdinger-mcp >/dev/null 2>&1; then
-            ok "quantdinger-mcp 运行中 (port 7800)"
-        else
-            warn "quantdinger-mcp 未运行，请检查日志: journalctl -u quantdinger-mcp -f"
-        fi
-    fi
-}
 
 # 通用 Python 后端部署函数：无专用函数的 Python 项目走此路径
 # 支持 deployHook（优先）和默认流程（venv + pip + systemd）
@@ -1224,7 +973,7 @@ deploy_python() {
         return 0
     fi
 
-    # If deployHook is set, use it (similar to financial-api flow)
+    # If deployHook is set, use it
     if [ -n "${DEPLOY_HOOK[$id]:-}" ]; then
         local tar
         tar=$(find_file "$tar_pat")
@@ -1273,11 +1022,20 @@ deploy_python() {
         ok "代码已解压"
         [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
 
-        # Create venv if needed
-        if [ ! -d "$venv_dir" ]; then
-            log "创建虚拟环境..."
-            python3 -m venv "$venv_dir"
-            "$venv_dir/bin/pip" install --upgrade pip -q
+        # ── Venv ──
+        # venv_shared: component shares venv with another (e.g. deepquant-mcp)
+        if [ "${VENV_SHARED[$id]:-0}" = "1" ]; then
+            if [ ! -d "$venv_dir" ]; then
+                err "venv 不存在: $venv_dir（共享 venv 模式，请先部署主组件）"
+                return 1
+            fi
+            ok "共享 venv: $venv_dir"
+        else
+            if [ ! -d "$venv_dir" ]; then
+                log "创建虚拟环境..."
+                python3 -m venv "$venv_dir"
+                "$venv_dir/bin/pip" install --upgrade pip -q
+            fi
         fi
 
         # Install dependencies (detect requirements.txt or pyproject.toml)
@@ -1290,58 +1048,86 @@ deploy_python() {
             warn "未找到 requirements.txt 或 pyproject.toml，跳过依赖安装"
         fi
 
-        # Generate .env from template if first deploy
+        # ── Auto-detect MCP server subdirectory ──
+        # If mcp_server/ exists with pyproject.toml, install it into the shared venv
+        local mcp_src_dir="$pkg_dir/mcp_server"
+        if [ -d "$mcp_src_dir" ] && [ -f "$mcp_src_dir/pyproject.toml" ]; then
+            log "检测到 MCP Server，安装到 venv..."
+            # Clean incompatible mcp 2.x (quantdinger-mcp requires mcp <2.0)
+            "$venv_dir/bin/pip" uninstall mcp mcp-types -y -q 2>/dev/null || true
+            "$venv_dir/bin/pip" install "$mcp_src_dir" -q 2>&1 | tail -3
+            ok "MCP Server 包已安装"
+        fi
+
+        # ── Generate .env from template if first deploy ──
         if [ ! -f "$env_file" ]; then
             log "首次部署：从模板生成 .env..."
             local template=""
-            for t in "$CONFIGS_SRC/${id}.env.example" \
-                     "$DIST_ROOT/configs/${id}.env.example" \
-                     "$(dirname "$0")/configs/${id}.env.example"; do
+            for t in "$CONFIGS_SRC/${id%%-*}.env.example" \
+                     "$CONFIGS_SRC/${PROJECT_ID[$id]:-}.env.example" \
+                     "$DIST_ROOT/configs/${id%%-*}.env.example" \
+                     "$(dirname "$0")/configs/${id%%-*}.env.example"; do
                 [ -f "$t" ] && template="$t" && break
             done
             if [ -n "$template" ]; then
+                local secret_key admin_pw
+                secret_key=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || echo "CHANGE_ME_SECRET_KEY")
+                admin_pw="${ADMIN_PASSWORD:-CHANGE_ME}"
                 sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
                     -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
                     -e "s|__SERVER_IP__|${SERVER_IP:-127.0.0.1}|g" \
                     -e "s|__FRONTEND_URL__|${FRONTEND_URL:-http://${SERVER_IP:-127.0.0.1}}|g" \
+                    -e "s|__SECRET_KEY__|${secret_key}|g" \
+                    -e "s|__ADMIN_PASSWORD__|${admin_pw}|g" \
                     "$template" > "$env_file"
                 chmod 600 "$env_file"
-                ok ".env 已生成（从模板 $template）"
+                ok ".env 已生成（从模板）"
             else
-                warn "未找到 ${id}.env.example 模板，请手动创建: $env_file"
+                warn "未找到 .env.example 模板，请手动创建: $env_file"
             fi
         else
             ok ".env 已存在，保留"
         fi
 
-        # Install systemd services if first deploy
+        # ── Install systemd services ──
+        # Renders known placeholders: __MCP_AGENT_TOKEN__ etc.
         local svc
         for svc in ${SERVICES[$id]}; do
             [ -z "$svc" ] && continue
             local svc_file="/etc/systemd/system/${svc}.service"
-            if [ ! -f "$svc_file" ]; then
-                log "首次部署：安装 ${svc}.service..."
-                local svc_template=""
-                for t in "$CONFIGS_SRC/systemd/${svc}.service" \
-                         "$DIST_ROOT/configs/systemd/${svc}.service" \
-                         "$CONFIGS_SRC/${svc}.service" \
-                         "$(dirname "$0")/configs/systemd/${svc}.service"; do
-                    [ -f "$t" ] && svc_template="$t" && break
-                done
-                if [ -n "$svc_template" ]; then
-                    cp "$svc_template" "$svc_file"
-                    systemctl daemon-reload
-                    systemctl enable "$svc"
-                    ok "${svc}.service 已安装并启用"
+            local svc_template=""
+            for t in "$CONFIGS_SRC/systemd/${svc}.service" \
+                     "$DIST_ROOT/configs/systemd/${svc}.service" \
+                     "$CONFIGS_SRC/${svc}.service" \
+                     "$(dirname "$0")/configs/systemd/${svc}.service"; do
+                [ -f "$t" ] && svc_template="$t" && break
+            done
+            if [ -n "$svc_template" ]; then
+                if [ -f "$svc_file" ]; then
+                    ok "${svc}.service 已存在，更新模板..."
                 else
-                    warn "未找到 ${svc}.service 模板"
+                    log "安装 ${svc}.service..."
                 fi
+                # Render known placeholders
+                local mcp_token="${MCP_AGENT_TOKEN:-CHANGE_ME_MCP_TOKEN}"
+                if [ "$mcp_token" = "CHANGE_ME_MCP_TOKEN" ] && echo "$svc_template" | grep -q '__MCP_AGENT_TOKEN__'; then
+                    warn "MCP_AGENT_TOKEN 未配置，MCP 服务无法通过认证"
+                fi
+                sed -e "s|__MCP_AGENT_TOKEN__|${mcp_token}|g" \
+                    "$svc_template" > "$svc_file"
+                systemctl daemon-reload
+                systemctl enable "$svc" 2>/dev/null || true
+                ok "${svc}.service 已安装并启用"
             else
-                ok "${svc}.service 已存在"
+                if [ ! -f "$svc_file" ]; then
+                    warn "未找到 ${svc}.service 模板"
+                else
+                    ok "${svc}.service 已存在"
+                fi
             fi
         done
 
-        mkdir -p "$pkg_dir/logs"
+        mkdir -p "$pkg_dir/logs" "$pkg_dir/data/memory" 2>/dev/null || true
     fi
 
     # Restart services + health check
@@ -1660,14 +1446,8 @@ deploy_by_id() {
             deploy_frontend_by_id "$id"
             ;;
         python)
-            case "$id" in
-                financial-api)     deploy_financial_api ;;
-                deepquant-backend) deploy_deepquant_backend ;;
-                *)
-                    # 通用 Python 部署：支持 deployHook 或默认流程
-                    deploy_python "$id"
-                    ;;
-            esac
+            # 通用 Python 部署：支持 deployHook、venv + pip + systemd + MCP 自动检测
+            deploy_python "$id"
             ;;
         java)
             deploy_java "$id"
@@ -1684,11 +1464,6 @@ deploy_by_id() {
             ;;
     esac
 }
-
-# 兼容旧函数名
-deploy_financial_web() { deploy_frontend_by_id financial-web; }
-deploy_official_site()  { deploy_frontend_by_id official-site; }
-deploy_deepquant_web()  { deploy_frontend_by_id deepquant-web; }
 
 # 部署调度
 deploy_one() {
@@ -1984,7 +1759,7 @@ deploy_nginx() {
     [ ! -f "$gen_script" ] && gen_script="$(dirname "$0")/generate-nginx.py"
     [ ! -f "$gen_script" ] && gen_script="$SCRIPT_DIR/generate-nginx.py"
     if [ -f "$gen_script" ]; then
-        # 根据 NGINX_CONF_NAME 确定 SSL 模式（向后兼容）
+        # 根据 NGINX_CONF_NAME 确定 SSL 模式
         local mode="http"
         local conf_name="${NGINX_CONF_NAME:-}"
         case "$conf_name" in
@@ -2099,8 +1874,13 @@ acquire_deploy_lock
 # 部署前：若已部署则提示（避免误当首次）
 _detect_already_deployed() {
     local n=0
-    for svc in financial-api quantdinger-backend; do
-        systemctl is-active --quiet "$svc" 2>/dev/null && n=$((n + 1))
+    # Dynamically check all services from loaded manifest
+    local id
+    for id in $PROJECT_IDS; do
+        local svc
+        for svc in ${SERVICES[$id]:-}; do
+            systemctl is-active --quiet "$svc" 2>/dev/null && n=$((n + 1))
+        done
     done
     [ "$n" -gt 0 ]
 }

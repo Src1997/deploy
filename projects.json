@@ -16,6 +16,7 @@
       "healthUrl": "",
       "nginxReload": true,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -48,6 +49,7 @@
       "healthUrl": "http://127.0.0.1:5000/api/health",
       "nginxReload": false,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -57,7 +59,7 @@
             "proxyPath": "/api/"
           },
           {
-            "path": "/ws/",
+            "path": "/quant/ws/",
             "type": "websocket",
             "proxyTarget": "http://127.0.0.1:5000",
             "proxyPath": "/ws/"
@@ -141,6 +143,89 @@
       }
     },
     {
+      "id": "deepquant-mcp",
+      "project": "deepquant",
+      "enabled": true,
+      "kind": "python",
+      "displayName": "QuantDinger MCP Server",
+      "sourcePath": "deepquant/deepquant/mcp_server",
+      "publicUrl": "",
+      "deployPath": "deepquant/backend/package",
+      "services": [
+        "quantdinger-mcp"
+      ],
+      "healthUrl": "http://127.0.0.1:7800/sse",
+      "nginxReload": false,
+      "deployHook": "",
+      "venvShared": true,
+      "build": {
+        "mode": "source-tar",
+        "artifactPattern": "deepquant-mcp-*.tar.gz",
+        "excludeDirs": [
+          ".venv",
+          "venv",
+          "logs",
+          "__pycache__",
+          ".git",
+          "node_modules",
+          "tests",
+          "docs",
+          ".idea",
+          ".github",
+          ".vscode",
+          ".mypy_cache",
+          ".pytest_cache",
+          ".ruff_cache",
+          ".playwright-cli",
+          "htmlcov",
+          "*.egg-info",
+          ".agents",
+          ".worktrees",
+          ".tmp"
+        ],
+        "excludeFiles": [
+          "*.pyc",
+          ".env",
+          ".env.remoteA",
+          ".env.remoteB",
+          ".env.local",
+          ".env.docker",
+          ".env.bak.*",
+          "Dockerfile",
+          ".dockerignore",
+          ".gitignore",
+          ".gitattributes",
+          ".python-version",
+          "cspell.json",
+          "uv.lock",
+          "openapi.json",
+          "test_results.txt",
+          ".coverage",
+          "AGENTS.md",
+          "AGENTS.zh-CN.md",
+          "nohup.out",
+          "pytest.ini",
+          "railway.json",
+          "requirements-windows.txt",
+          "docker-entrypoint.sh",
+          "env.testnet.example",
+          "start.sh",
+          "_diag_net.py",
+          "_diag_nosub.py",
+          "LICENSE",
+          "RELEASE.md",
+          "*.bak.*"
+        ],
+        "keyFiles": [
+          "configs/systemd/quantdinger-backend.service",
+          "configs/systemd/quantdinger-mcp.service"
+        ],
+        "includeFiles": [],
+        "includeEnv": [],
+        "extraSources": []
+      }
+    },
+    {
       "id": "financial-web",
       "project": "financial",
       "enabled": true,
@@ -153,6 +238,7 @@
       "healthUrl": "",
       "nginxReload": true,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "rootProject": true
       },
@@ -176,6 +262,7 @@
       "healthUrl": "",
       "nginxReload": true,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -210,6 +297,7 @@
       "healthUrl": "http://127.0.0.1:5001/api/health",
       "nginxReload": false,
       "deployHook": "scripts/deploy-financial-api.sh",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -313,6 +401,7 @@
       "healthUrl": "",
       "nginxReload": true,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -344,6 +433,7 @@
       "healthUrl": "http://127.0.0.1:8080/actuator/health",
       "nginxReload": false,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -385,6 +475,7 @@
       "healthUrl": "http://127.0.0.1:8081/health",
       "nginxReload": false,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -425,6 +516,7 @@
       "healthUrl": "http://127.0.0.1:8082/health",
       "nginxReload": false,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -500,6 +592,7 @@
       "healthUrl": "",
       "nginxReload": true,
       "deployHook": "",
+      "venvShared": false,
       "nginx": {
         "locations": [
           {
@@ -521,15 +614,15 @@
   "servers": {
     "server-a": {
       "nginxMode": "ssl-redirect",
-      "domain": "example.com",
-      "wwwDomain": "www.example.com",
-      "frontendUrl": "https://www.example.com"
+      "domain": "zhuochouacedemy.com",
+      "wwwDomain": "www.zhuochouacedemy.com",
+      "frontendUrl": "https://www.zhuochouacedemy.com"
     },
     "server-b": {
       "nginxMode": "ssl-combined",
-      "domain": "example.com",
-      "wwwDomain": "www.example.com",
-      "frontendUrl": "https://example.com"
+      "domain": "deepquant.club",
+      "wwwDomain": "www.deepquant.club",
+      "frontendUrl": "https://ai.deepquant.club"
     }
   },
   "nginxExtras": [

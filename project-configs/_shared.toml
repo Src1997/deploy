@@ -15,15 +15,15 @@ project_base = "/www/wwwroot/project"     # 服务器项目根；可被 deploy.e
 # nginx_mode 对应 generate-nginx.py --mode：http | ssl-redirect | ssl-combined
 [servers.server-a]
 nginx_mode = "ssl-redirect"        # 裸域 → www 301 + HTTPS（服务器 A）
-domain = "example.com"
-www_domain = "www.example.com"
-frontend_url = "https://www.example.com"
+domain = "zhuochouacedemy.com"
+www_domain = "www.zhuochouacedemy.com"
+frontend_url = "https://www.zhuochouacedemy.com"
 
 [servers.server-b]
 nginx_mode = "ssl-combined"        # 域名 + HTTPS 合并配置（服务器 B）
-domain = "example.com"
-www_domain = "www.example.com"
-frontend_url = "https://example.com"
+domain = "deepquant.club"
+www_domain = "www.deepquant.club"
+frontend_url = "https://ai.deepquant.club"
 
 # ── Python 后端打包公共排除列表 ──
 # Python (kind=python) 组件默认排除这些目录和文件。

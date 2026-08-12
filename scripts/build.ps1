@@ -14,10 +14,12 @@
     No script changes needed.
 
 .EXAMPLE
-    .\scripts\build.ps1                 # Interactive menu
-    .\scripts\build.ps1 financial       # Build single project
-    .\scripts\build.ps1 all             # Build all
-    .\scripts\build.ps1 financial,official-site
+    .\scripts\build.ps1                          # Interactive menu
+    .\scripts\build.ps1 financial                # Build single project group
+    .\scripts\build.ps1 deepquant-backend        # Build single component
+    .\scripts\build.ps1 deepquant-backend,financial-api  # Build N components
+    .\scripts\build.ps1 all                      # Build all
+    .\scripts\build.ps1 financial,official-site  # Build multiple groups
 #>
 
 param(
@@ -232,6 +234,8 @@ function Interactive-Menu {
         Write-Host "  [2] Build all ($($ProjectList.Count) projects)"
         Write-Host "  [3] List packages"
         Write-Host "  [0] Exit"
+        Write-Host ""
+        Write-Host "  Tip: CLI also accepts component IDs, e.g. build.ps1 deepquant-backend,financial-api" -ForegroundColor DarkGray
         Write-Host ""
         $choice = Read-Host "  Select [0-3]"
         switch ($choice) {

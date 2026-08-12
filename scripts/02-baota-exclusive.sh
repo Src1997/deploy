@@ -235,6 +235,20 @@ if [ -f /root/.bashrc ] && ! grep -q 'baota-path.sh' /root/.bashrc 2>/dev/null; 
 fi
 ok "已写入 /etc/profile.d/baota-path.sh"
 
+# ── journald 日志轮转（防止日志膨胀）──
+log "配置 journald 日志大小限制..."
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/10-size-limit.conf <<'EOF'
+# Limit journal disk usage to prevent unbounded growth
+[Journal]
+SystemMaxUse=500M
+SystemKeepFree=1G
+MaxFileSec=30day
+EOF
+chmod 644 /etc/systemd/journald.conf.d/10-size-limit.conf
+systemctl restart systemd-journald 2>/dev/null || true
+ok "journald 日志限制: 最大 500M, 保留 30 天"
+
 echo ""
 log "复检..."
 REMAIN=0

@@ -59,6 +59,7 @@ def snake_to_camel_key(key: str) -> str:
         "deploy_path": "deployPath",
         "health_url": "healthUrl",
         "deploy_hook": "deployHook",
+        "venv_shared": "venvShared",
         "package_manager": "packageManager",
         "build_script": "buildScript",
         "dist_dir": "distDir",
@@ -135,6 +136,7 @@ def component_to_entry(
         "healthUrl": component.get("health_url", ""),
         "nginxReload": component.get("nginx_reload", False),
         "deployHook": component.get("deploy_hook", ""),
+        "venvShared": component.get("venv_shared", False),
     }
 
     nginx = build_nginx(component)

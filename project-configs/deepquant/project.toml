@@ -1,7 +1,8 @@
 # project-configs/deepquant/project.toml — QuantDinger 项目
 #
-# 包含：前端 + 后端（含 MCP Server）
+# 包含：前端 + 后端（含 MCP Server） + MCP Server（可独立打包）
 # 注意：后端采用 source-tar 模式（源码在归档根），并附带 mcp_server 子目录。
+# deepquant-mcp 为独立组件，可单独打包仅含 MCP Server 源码。
 
 [project]
 id = "deepquant"
@@ -62,7 +63,7 @@ services = [
   proxy_path = "/api/"
 
   [[components.nginx.locations]]
-  path = "/ws/"
+  path = "/quant/ws/"
   type = "websocket"
   proxy_target = "http://127.0.0.1:5000"
   proxy_path = "/ws/"
@@ -80,3 +81,24 @@ services = [
   [[components.pack.extra_source]]
   path = "deepquant/deepquant/mcp_server"
   dest = "mcp_server"
+
+# QuantDinger MCP Server（可独立打包）
+# 单独打包时仅含 mcp_server 源码 + quantdinger-mcp.service 模板
+# 部署时需与 deepquant-backend 共享同一 venv
+[[components]]
+id = "deepquant-mcp"
+kind = "python"
+display_name = "QuantDinger MCP Server"
+source_path = "deepquant/deepquant/mcp_server"
+deploy_path = "deepquant/backend/package"
+nginx_reload = false
+health_url = "http://127.0.0.1:7800/sse"
+venv_shared = true
+services = [
+    "quantdinger-mcp",
+]
+
+  # ── 打包文件配置（source-tar：源码在归档根）──
+  [components.pack]
+  package_mode = "source-tar"
+  artifact_pattern = "deepquant-mcp-*.tar.gz"
