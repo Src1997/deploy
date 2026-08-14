@@ -87,12 +87,12 @@ function Check-DistFreshness {
     if (-not (Test-Path $DistDir)) { return }
 
     # -- Core scripts: compare source vs dist --
+    # NOTE: pack.ps1 is Windows-only, not copied to dist/ (server doesn't need it)
     $scriptPairs = @(
         @{ Src = Join-Path $ScriptsDir 'deploy.sh';             Dst = Join-Path $DistDir 'deploy.sh' }
         @{ Src = Join-Path $ScriptsDir 'tools\detect-status.sh'; Dst = Join-Path $DistDir 'detect-status.sh' }
         @{ Src = Join-Path $ScriptsDir 'tools\generate-nginx.py';Dst = Join-Path $DistDir 'generate-nginx.py' }
         @{ Src = Join-Path $ScriptsDir 'deploy-financial-api.sh';Dst = Join-Path $DistDir 'deploy-financial-api.sh' }
-        @{ Src = Join-Path $ScriptsDir 'pack.ps1';               Dst = Join-Path $DistDir 'pack.ps1' }
     )
     $stale = $false
     foreach ($pair in $scriptPairs) {
@@ -144,6 +144,9 @@ function Check-DistFreshness {
 }
 
 # ── Copy deploy assets to dist/ ──
+# Server-side needs: deploy.sh, lib/*.sh + config_loader.py, configs/,
+# project-configs/, deploy.env.example, and the target deploy.env.<target>.
+# Windows-only files (pack.ps1, _ps-common.ps1) are NOT copied.
 function Copy-DeployAssets {
     W-Step "Copying deploy assets to dist/..."
     $DistDir = Join-Path $DeployDir 'dist'
@@ -151,13 +154,30 @@ function Copy-DeployAssets {
         New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
     }
 
-    # Core scripts (sourced from scripts/ and scripts/tools/)
+    # Clean stale Windows-only files and extra deploy.env.* from previous runs.
+    # pack.ps1 and _ps-common.ps1 are Windows-only; deploy.env.server-a/server-b/etc.
+    # should not linger in dist/ when targeting a different environment.
+    $staleFiles = @(
+        (Join-Path $DistDir 'pack.ps1')
+        (Join-Path $DistDir 'lib\_ps-common.ps1')
+    )
+    Get-ChildItem $DistDir -Filter 'deploy.env.*' -File |
+        Where-Object { $_.Name -ne 'deploy.env.example' } |
+        ForEach-Object { $staleFiles += $_.FullName }
+    foreach ($f in $staleFiles) {
+        if (Test-Path $f) {
+            Remove-Item $f -Force
+            W-Warn "Cleaned stale: $(Split-Path $f -Leaf)"
+        }
+    }
+
+    # Core scripts (server-side only: deploy.sh, detect-status.sh, generate-nginx.py,
+    # deploy-financial-api.sh). pack.ps1 is Windows-only, NOT copied to dist/.
     $copy = @(
         (Join-Path $ScriptsDir 'deploy.sh'),
         (Join-Path $ScriptsDir 'tools\detect-status.sh'),
         (Join-Path $ScriptsDir 'tools\generate-nginx.py'),
-        (Join-Path $ScriptsDir 'deploy-financial-api.sh'),
-        (Join-Path $ScriptsDir 'pack.ps1')
+        (Join-Path $ScriptsDir 'deploy-financial-api.sh')
     )
     foreach ($f in $copy) {
         if (Test-Path $f) {
@@ -174,12 +194,18 @@ function Copy-DeployAssets {
         W-OK "Copied: configs/"
     }
 
-    # lib/ (includes config_loader.py, load-projects.sh, _ps-common.ps1, etc.)
+    # lib/ — copy only server-side files (*.sh + config_loader.py).
+    # _ps-common.ps1 is Windows-only, excluded from dist/.
     if (Test-Path $ScriptsDir\lib) {
         $dl = Join-Path $DistDir 'lib'
         if (Test-Path $dl) { Remove-Item $dl -Recurse -Force }
-        Copy-Item $ScriptsDir\lib $dl -Recurse -Force
-        W-OK "Copied: lib/"
+        New-Item -ItemType Directory -Path $dl -Force | Out-Null
+        Get-ChildItem $ScriptsDir\lib -File | Where-Object {
+            $_.Extension -in '.sh', '.py'
+        } | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $dl $_.Name) -Force
+        }
+        W-OK "Copied: lib/ (server-side .sh + .py only)"
     }
 
     # project-configs/ (for server-side TOML reading via config_loader.py)
@@ -196,14 +222,31 @@ function Copy-DeployAssets {
         W-OK "Copied: deploy.env.example"
     }
 
-    # Copy all deploy.env.* files (server-a, server-b, vm, etc.)
-    # These contain real passwords but dist/ is also gitignored, so it's safe.
-    Get-ChildItem $DeployDir -Filter 'deploy.env.*' -File |
-        Where-Object { $_.Name -ne 'deploy.env.example' } |
-        ForEach-Object {
-            Copy-Item $_.FullName (Join-Path $DistDir $_.Name) -Force
-            W-OK "Copied: $($_.Name)"
+    # Copy only the target-specific deploy.env.<target> file.
+    # All deploy.env.* files contain real passwords; dist/ is gitignored,
+    # but there is no reason to ship other environments' configs to a server.
+    # If DEPLOY_TARGET is set, copy deploy.env.<target>; otherwise copy deploy.env (local).
+    $targetSuffix = ''
+    if ($env:DEPLOY_TARGET) {
+        $targetSuffix = '.' + $env:DEPLOY_TARGET
+    }
+    $envFileName = "deploy.env${targetSuffix}"
+    $envSrcPath = Join-Path $DeployDir $envFileName
+    if (Test-Path $envSrcPath) {
+        Copy-Item $envSrcPath (Join-Path $DistDir $envFileName) -Force
+        W-OK "Copied: $envFileName"
+    } elseif ($envFileName -ne 'deploy.env') {
+        # Target-specific env not found, warn and fall back to deploy.env
+        W-Warn "$envFileName not found, trying deploy.env"
+        $fallbackPath = Join-Path $DeployDir 'deploy.env'
+        if (Test-Path $fallbackPath) {
+            Copy-Item $fallbackPath (Join-Path $DistDir 'deploy.env') -Force
+            W-OK "Copied: deploy.env (fallback)"
         }
+    } elseif (Test-Path $DeployDir\deploy.env) {
+        Copy-Item $DeployDir\deploy.env (Join-Path $DistDir 'deploy.env') -Force
+        W-OK "Copied: deploy.env"
+    }
 
     # -- Write .scripts-version stamp (for server-side freshness check) --
     # deploy.sh reads this on startup to detect stale scripts on the server.

@@ -39,6 +39,7 @@ exclude_dirs = [
 ]
 exclude_files = [
     "*.pyc", ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.vm", ".env.dev", ".env.staging", ".env.production",
     ".env.bak.*",
     "Dockerfile", ".dockerignore", ".gitignore", ".gitattributes", ".python-version",
     "cspell.json", "uv.lock", "openapi.json", "test_results.txt", ".coverage",
@@ -64,6 +65,7 @@ exclude_dirs = [
 ]
 exclude_files = [
     ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.vm", ".env.dev", ".env.staging", ".env.production",
     ".env.bak.*",
     ".gitignore", ".gitattributes",
     "pom.xml", "build.gradle", "settings.gradle", "gradlew", "gradlew.bat",
@@ -84,6 +86,7 @@ exclude_dirs = [
 ]
 exclude_files = [
     ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.vm", ".env.dev", ".env.staging", ".env.production",
     ".env.bak.*",
     ".gitignore", ".gitattributes", "go.sum",
     "Dockerfile", ".dockerignore",
@@ -103,6 +106,7 @@ exclude_dirs = [
 ]
 exclude_files = [
     ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    ".env.vm", ".env.dev", ".env.staging", ".env.production",
     ".env.bak.*",
     ".gitignore", ".gitattributes", ".dockerignore",
     "Dockerfile", ".eslintrc*", ".prettierrc*",
