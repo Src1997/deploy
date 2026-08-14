@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Phase 1: 安装宝塔面板（必须在 Docker 清理之后执行）
+# Phase 2: 安装宝塔面板（必须在环境清理之后执行）
 #
 # 用途：在干净的 Linux 服务器上安装宝塔面板（Linux 面板版）
-# 执行：SSH 到服务器后运行  bash 01-install-baota.sh
+# 执行：SSH 到服务器后运行  bash 02-install-baota.sh
 #
-# 前提：已运行 00-cleanup-docker.sh 彻底卸载 Docker
+# 前提：已运行 01-cleanup-server.sh 彻底卸载 Docker
 #
 # 安装完成后会输出面板地址、用户名、密码，请妥善保存
 # ═══════════════════════════════════════════════════════════════════════
@@ -22,7 +22,7 @@ err()  { echo -e "\033[31m[ERR]\033[0m $*" >&2; }
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Phase 1: 安装宝塔面板"
+echo "  Phase 2: 安装宝塔面板"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
@@ -56,31 +56,31 @@ fi
 
 # 确认 Docker 已卸载
 if command -v docker &>/dev/null; then
-    err "Docker 仍存在！请先运行 00-cleanup-docker.sh 彻底卸载 Docker"
-    echo "  bash 00-cleanup-docker.sh"
+err "Docker 仍存在！请先运行 01-cleanup-server.sh 彻底卸载 Docker"
+echo "  bash 01-cleanup-server.sh"
     exit 1
 fi
 ok "Docker 已卸载，环境干净"
 
-# 提示：Phase 0（Docker + 系统冲突）是否已完成
+# 提示：Phase 1（Docker + 系统冲突）是否已完成
 echo ""
-log "检查 Phase 0 是否已完成..."
-NEED_PHASE0=false
+log "检查 Phase 1 是否已完成..."
+NEED_PHASE1=false
 if command -v docker &>/dev/null; then
-    warn "Docker 仍存在 → 需要先跑 00-cleanup-docker.sh"
-    NEED_PHASE0=true
+    warn "Docker 仍存在 → 需要先跑 01-cleanup-server.sh"
+    NEED_PHASE1=true
 fi
-if [ -f "$(dirname "$0")/02-baota-exclusive.sh" ]; then
-    if ! bash "$(dirname "$0")/02-baota-exclusive.sh" --check >"/tmp/fin-deploy/bt-conflict-check.txt" 2>&1; then
-        warn "仍有系统防火墙/系统库冲突 → 建议先跑 00-cleanup-docker.sh（已含冲突清理）"
-        NEED_PHASE0=true
+if [ -f "$(dirname "$0")/lib-clear-conflicts.sh" ]; then
+if ! bash "$(dirname "$0")/lib-clear-conflicts.sh" --check >"/tmp/fin-deploy/bt-conflict-check.txt" 2>&1; then
+warn "仍有系统防火墙/系统库冲突 → 建议先跑 01-cleanup-server.sh（已含冲突清理）"
+        NEED_PHASE1=true
         grep -E '\[!\]|发现问题' "/tmp/fin-deploy/bt-conflict-check.txt" 2>/dev/null | head -15 || true
     else
         ok "系统冲突检查通过"
     fi
 fi
-if $NEED_PHASE0; then
-    echo "  bash $(dirname "$0")/00-cleanup-docker.sh"
+if $NEED_PHASE1; then
+    echo "  bash $(dirname "$0")/01-cleanup-server.sh"
     read -rp "  仍要继续安装宝塔？(y/N): " cont
     if [[ "$cont" != "y" && "$cont" != "Y" ]]; then
         exit 1
@@ -262,7 +262,7 @@ log "防火墙策略（宝塔独占）..."
 echo ""
 echo "  ┌──────────────────────────────────────────────────────────┐"
 echo "  │  主机防火墙：只用宝塔面板 → 安全                         │"
-echo "  │  请禁用系统 UFW / firewalld（见 02-baota-exclusive.sh） │"
+echo "  │  请禁用系统 UFW / firewalld（见 lib-clear-conflicts.sh） │"
 echo "  │                                                          │"
 echo "  │  宝塔安全 / 云安全组 仅放行：                            │"
 echo "  │    22(SSH)  80(HTTP)  443(HTTPS)  面板端口(常 8888)      │"
@@ -272,39 +272,60 @@ echo ""
 
 if systemctl is-active --quiet ufw 2>/dev/null || systemctl is-active --quiet firewalld 2>/dev/null; then
     err "检测到系统防火墙仍在运行，会与宝塔冲突！"
-    echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
+    echo "  请执行: bash $(dirname "$0")/lib-clear-conflicts.sh"
 fi
 
-if [ -f "$(dirname "$0")/02-baota-exclusive.sh" ]; then
-    echo "  复查命令: bash $(dirname "$0")/02-baota-exclusive.sh --check"
+if [ -f "$(dirname "$0")/lib-clear-conflicts.sh" ]; then
+echo "  复查命令: bash $(dirname "$0")/lib-clear-conflicts.sh --check"
 fi
 
 echo ""
 
-# ── 6. 下一步指引 ───────────────────────────────────────────────
+# ── 6. 下一步指引：登录宝塔手动安装组件 ───────────────────────
 ok "═══════════════════════════════════════════════════════════"
-ok "  Phase 1 宝塔安装完成！"
+ok "  Phase 2 宝塔安装完成！"
 ok "═══════════════════════════════════════════════════════════"
 echo ""
-echo "  下一步操作："
+echo "  ┌──────────────────────────────────────────────────────────┐"
+echo "  │  接下来需要你在浏览器中操作宝塔面板，手动安装组件       │"
+echo "  │  脚本不会自动安装这些组件，必须通过宝塔面板安装         │"
+echo "  └──────────────────────────────────────────────────────────┘"
 echo ""
+echo "  ── Step 1: 登录宝塔面板 ──"
 echo ""
-echo "  0. 查看进度：bash detect-status.sh"
-echo "  1. 浏览器访问宝塔面板地址，登录后绑定宝塔账号"
+echo "    浏览器打开上面的面板地址，登录后绑定宝塔账号（免费注册）"
 echo ""
-echo "  2. 通过宝塔面板安装基础组件（不要用 apt/yum 装同名软件）："
-echo "     软件商店 → 安装以下软件："
-echo "       - Nginx（稳定版）"
-echo "       - PostgreSQL（16.x）"
-echo "       - Redis（7.x）"
-echo "       - Python 项目管理器（Python 3.12）"
+echo "  ── Step 2: 软件商店安装以下组件 ──"
 echo ""
-echo "  3. 宝塔 → 安全：放行 22/80/443/面板端口（勿放行 5432/6379）"
+echo "    宝塔面板 → 左侧菜单 → 软件商店 → 搜索安装："
 echo ""
-echo "  4. 组件装完后复查冲突："
-echo "     bash 00-cleanup-docker.sh --conflicts-only --check"
+echo "    ┌──────────────────┬────────────┬───────────────────────────────────────┐"
+echo "    │ 组件             │ 推荐版本   │ 安装位置 / 说明                      │"
+echo "    ├──────────────────┼────────────┼───────────────────────────────────────┤"
+echo "    │ Nginx            │ 稳定版     │ 软件商店 → 搜索 Nginx → 安装          │"
+echo "    │ PostgreSQL       │ 16.x       │ 软件商店 → 搜索 PostgreSQL 管理器     │"
+echo "    │                  │            │   → 安装管理器后 → 版本管理 → 安装16  │"
+echo "    │                  │            │   → 密码管理 → 设置 root 密码         │"
+echo "    │ Redis            │ 7.x/8.x    │ 软件商店 → 搜索 Redis → 安装          │"
+echo "    │                  │            │   → 安装后设置密码（与 deploy.env 一致）│"
+echo "    │ Python 项目管理器 │ 自带 3.12  │ 软件商店 → 搜索 Python 项目管理器     │"
+echo "    └──────────────────┴────────────┴───────────────────────────────────────┘"
 echo ""
-echo "  5. bash 03-server-setup.sh"
+echo "  ── Step 3: 宝塔安全 → 放行端口 ──"
 echo ""
-echo "  6. 本地 build.ps1 → 上传 → bash deploy.sh all"
+echo "    宝塔面板 → 安全 → 放行端口："
+echo "      22 (SSH)  80 (HTTP)  443 (HTTPS)  面板端口(如 27895)"
+echo "    不要放行: 5432 (PostgreSQL)  6379 (Redis)"
+echo ""
+echo "  ── Step 4: 所有组件安装完成后 ──"
+echo ""
+echo "    回到 SSH 终端，运行检查脚本："
+echo "      bash 03-check-components.sh"
+echo ""
+echo "    检查通过后继续："
+echo "      bash 04-setup-server.sh"
+echo ""
+echo "  ────────────────────────────────────────────────────────────"
+echo "  ⏳ 脚本在此暂停，等你安装完组件后运行 03-check-components.sh"
+echo "  ────────────────────────────────────────────────────────────"
 echo ""

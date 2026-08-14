@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 02-baota-exclusive.sh — 清除与宝塔冲突的系统组件（宝塔独占）
+# lib-clear-conflicts.sh — 清除与宝塔冲突的系统组件（Phase 1 子模块）
 #
-# 通常由 00-cleanup-docker.sh 自动调用（Phase 0 已合并原 0b）。
+# 通常由 01-cleanup-server.sh 自动调用。
 # 也可在宝塔装完组件后单独复查：
-#   bash 02-baota-exclusive.sh --check
-#   bash 02-baota-exclusive.sh --yes
+#   bash lib-clear-conflicts.sh --check
+#   bash lib-clear-conflicts.sh --yes
 # =============================================================================
 
 set -euo pipefail
@@ -17,7 +17,7 @@ for arg in "$@"; do
         --yes|-y) ASSUME_YES=true ;;
         --check)  CHECK_ONLY=true ;;
         --help|-h)
-            echo "Usage: bash 02-baota-exclusive.sh [--check|--yes]"
+            echo "Usage: bash lib-clear-conflicts.sh [--check|--yes]"
             exit 0
             ;;
         *) echo "Unknown: $arg"; exit 1 ;;
@@ -125,7 +125,7 @@ done
 if [ -d /www/server/panel ]; then
     ok "已检测到宝塔面板"
 else
-    warn "尚未安装宝塔（可先清冲突，再跑 01-install-baota.sh）"
+    warn "尚未安装宝塔（可先清冲突，再跑 02-install-baota.sh）"
 fi
 
 echo ""

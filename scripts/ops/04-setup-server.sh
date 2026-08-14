@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Phase 2: 服务器环境准备
+# Phase 4: 服务器环境准备
 #
 # 用途：在宝塔面板上准备 PostgreSQL、Redis、Python 和目录结构
-# 执行：SSH 到服务器后运行  bash 03-server-setup.sh
+# 执行：SSH 到服务器后运行  bash 04-setup-server.sh
 #
 # 前提条件：
-#   - 宝塔面板已安装
-#   - 通过宝塔安装 Nginx、PostgreSQL、Redis
-#   - Python 3.11+ 已安装（宝塔 Python 项目管理器或系统自带）
+#   - 宝塔面板已安装（02-install-baota.sh）
+#   - 通过宝塔手动安装 Nginx、PostgreSQL、Redis、Python
+#   - 组件检查通过（03-check-components.sh）
 # ═══════════════════════════════════════════════════════════════════════
 
 # 不用 set -e，手动处理错误避免静默退出
@@ -21,12 +21,33 @@ err()  { echo -e "\033[31m[ERR]\033[0m $*" >&2; }
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Phase 2: 服务器环境准备"
+echo "  Phase 4: 服务器环境准备"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
 # 已部署 / 进度探测
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── 前置：检查宝塔组件是否全部安装 ─────────────────────────────
+log "前置检查：宝塔组件安装状态..."
+
+_CHECK_SCRIPT=""
+for _cand in "$SCRIPT_DIR/03-check-components.sh" "$SCRIPT_DIR/../ops/03-check-components.sh"; do
+    [ -f "$_cand" ] && _CHECK_SCRIPT="$_cand" && break
+done
+
+if [ -n "$_CHECK_SCRIPT" ]; then
+    if ! bash "$_CHECK_SCRIPT"; then
+        echo ""
+        err "组件检查未通过，无法继续环境准备"
+        echo "  请先在宝塔面板安装缺失组件，然后重新运行此脚本"
+        exit 1
+    fi
+else
+    warn "未找到 03-check-components.sh，跳过前置检查"
+fi
+
+echo ""
 
 if [ -f "$SCRIPT_DIR/lib/load-deploy-env.sh" ]; then
     # shellcheck source=lib/load-deploy-env.sh
@@ -41,19 +62,24 @@ else
     warn "缺少 scripts/lib/load-deploy-env.sh"
 fi
 
-if [ -f "$SCRIPT_DIR/detect-status.sh" ]; then
+# detect-status.sh now lives in scripts/tools/
+_detect_status=""
+for _cand in "$SCRIPT_DIR/../tools/detect-status.sh" "$SCRIPT_DIR/detect-status.sh"; do
+    [ -f "$_cand" ] && _detect_status="$_cand" && break
+done
+if [ -n "$_detect_status" ]; then
     log "当前部署进度："
-    bash "$SCRIPT_DIR/detect-status.sh" 2>/dev/null | sed -n '/Phase/p;/下一步/p;/判定/p' || true
+    bash "$_detect_status" 2>/dev/null | sed -n '/Phase/p;/Next step/p;/Verdict/p' || true
     echo ""
 fi
 
 # ── 配置（仅来自 deploy.env / 环境变量；无硬编码生产密码）──
 PG_USER="${PG_USER:-root}"
 PG_PASSWORD="${PG_PASSWORD:-}"
-PG_HOST="${PG_HOST:-localhost}"
+PG_HOST="${PG_HOST:-127.0.0.1}"
 PG_PORT="${PG_PORT:-5432}"
 
-REDIS_HOST="${REDIS_HOST:-localhost}"
+REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 
@@ -108,7 +134,7 @@ fi
 # 拒绝系统防火墙与系统自带栈
 if systemctl is-active --quiet ufw 2>/dev/null || systemctl is-active --quiet firewalld 2>/dev/null; then
     err "系统防火墙（ufw/firewalld）仍在运行，与宝塔冲突"
-    echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
+    echo "  请执行: bash $(dirname "$0")/lib-clear-conflicts.sh"
     MISSING_COMPONENTS=$((MISSING_COMPONENTS + 1))
 fi
 for svc in nginx apache2 httpd redis-server mysql mariadb; do
@@ -116,7 +142,7 @@ for svc in nginx apache2 httpd redis-server mysql mariadb; do
         unit_path=$(systemctl show -p FragmentPath "$svc" 2>/dev/null | cut -d= -f2-)
         if [[ "$unit_path" != /www/* ]]; then
             err "系统服务 $svc 仍在运行 ($unit_path)，会与宝塔抢端口"
-            echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
+            echo "  请执行: bash $(dirname "$0")/lib-clear-conflicts.sh"
             MISSING_COMPONENTS=$((MISSING_COMPONENTS + 1))
         fi
     fi
@@ -133,7 +159,7 @@ require_baota_bin() {
     path=$(command -v "$bin")
     if [[ "$path" != /www/server/* ]]; then
         err "$label: 当前是系统路径 $path（必须用宝塔 /www/server/...）"
-        echo "  请执行: bash $(dirname "$0")/02-baota-exclusive.sh"
+        echo "  请执行: bash $(dirname "$0")/lib-clear-conflicts.sh"
         echo "  并确认宝塔软件商店已安装对应组件"
         MISSING_COMPONENTS=$((MISSING_COMPONENTS + 1))
         return 1
@@ -173,7 +199,7 @@ fi
 
 # 检查 Docker 是否已卸载
 if command -v docker &>/dev/null; then
-    warn "Docker 仍存在！建议先运行 00-cleanup-docker.sh"
+    warn "Docker 仍存在！建议先运行 01-cleanup-server.sh"
 else
     ok "Docker 已卸载，环境干净"
 fi
@@ -464,11 +490,11 @@ done
 
 echo ""
 ok "══════════════════════════════════════════"
-ok "  Phase 2 环境准备完成！"
+ok "  Phase 4 环境准备完成！"
 ok "══════════════════════════════════════════"
 echo ""
 echo "  下一步："
-echo "    0. bash $(dirname "$0")/detect-status.sh   # 查看总进度"
+echo "    0. bash $SCRIPT_DIR/../tools/detect-status.sh   # 查看总进度"
 echo "    1. 本地执行: .\\scripts\\build.ps1 all"
 echo "    2. 上传 dist/ 到 $UPLOAD_DIR/（含 deploy.sh）"
 echo "    3. 服务器: cd $UPLOAD_DIR/dist && bash deploy.sh all --ip=服务器IP"

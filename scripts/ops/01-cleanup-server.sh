@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# Phase 0: 环境清理（Docker + 系统防火墙/系统自带 Web&DB）
+# Phase 1: 环境清理（Docker + 系统防火墙/系统自带 Web&DB）
 #
-# 合并原 0 + 0b：
+# 合并原 Docker 清理 + 系统冲突清理：
 #   A) 卸载 Docker、清旧容器/卷/服务/目录
 #   B) 禁用 ufw/firewalld，卸系统 nginx/pg/redis…（宝塔独占）
 #
 # 用法：
-#   bash 00-cleanup-docker.sh                 # 全量（按已完成项自动跳过）
-#   bash 00-cleanup-docker.sh --yes           # 跳过确认
-#   bash 00-cleanup-docker.sh --docker-only   # 只做 Docker 清理
-#   bash 00-cleanup-docker.sh --conflicts-only # 只做系统冲突清理（= 原 01b）
-#   bash 00-cleanup-docker.sh --check         # 只探测，不修改
+#   bash 01-cleanup-server.sh                 # 全量（按已完成项自动跳过）
+#   bash 01-cleanup-server.sh --yes           # 跳过确认
+#   bash 01-cleanup-server.sh --docker-only   # 只做 Docker 清理
+#   bash 01-cleanup-server.sh --conflicts-only # 只做系统冲突清理
+#   bash 01-cleanup-server.sh --check         # 只探测，不修改
 #
-# 也可单独跑：bash 02-baota-exclusive.sh（内部转调本脚本 --conflicts-only）
+# 系统冲突清理子模块：bash lib-clear-conflicts.sh（被本脚本自动调用）
 # ═══════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -47,7 +47,7 @@ command -v docker &>/dev/null && HAS_DOCKER=true
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  Phase 0: 环境清理（Docker + 系统冲突 → 宝塔独占）"
+echo "  Phase 1: 环境清理（Docker + 系统冲突 → 宝塔独占）"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
@@ -58,30 +58,39 @@ if $HAS_DOCKER; then
 else
     ok "  Docker: 已不存在 → 将跳过 Docker 卸载段"
 fi
-if [ -f "$SCRIPT_DIR/detect-status.sh" ]; then
-    bash "$SCRIPT_DIR/detect-status.sh" 2>/dev/null | sed -n '/Phase0 /p' || true
+# detect-status.sh now lives in scripts/tools/
+_detect_status=""
+for _cand in "$SCRIPT_DIR/../tools/detect-status.sh" "$SCRIPT_DIR/detect-status.sh"; do
+    [ -f "$_cand" ] && _detect_status="$_cand" && break
+done
+if [ -n "$_detect_status" ]; then
+    bash "$_detect_status" 2>/dev/null | sed -n '/Phase1 /p' || true
 fi
 
 if $CHECK_ONLY; then
     rc=0
-    if [ -f "$SCRIPT_DIR/detect-status.sh" ]; then
-        bash "$SCRIPT_DIR/detect-status.sh" || rc=$?
+    _detect_status=""
+    for _cand in "$SCRIPT_DIR/../tools/detect-status.sh" "$SCRIPT_DIR/detect-status.sh"; do
+        [ -f "$_cand" ] && _detect_status="$_cand" && break
+    done
+    if [ -n "$_detect_status" ]; then
+        bash "$_detect_status" || rc=$?
     fi
-    if [ -f "$SCRIPT_DIR/02-baota-exclusive.sh" ]; then
-        bash "$SCRIPT_DIR/02-baota-exclusive.sh" --check || rc=$?
+    if [ -f "$SCRIPT_DIR/lib-clear-conflicts.sh" ]; then
+        bash "$SCRIPT_DIR/lib-clear-conflicts.sh" --check || rc=$?
     fi
     exit "$rc"
 fi
 
 # 仅冲突清理（委托 01b，避免重复实现）
 if $CONFLICTS_ONLY; then
-    if [ -f "$SCRIPT_DIR/02-baota-exclusive.sh" ]; then
+    if [ -f "$SCRIPT_DIR/lib-clear-conflicts.sh" ]; then
         args=()
         $ASSUME_YES && args+=(--yes)
-        bash "$SCRIPT_DIR/02-baota-exclusive.sh" "${args[@]}"
+        bash "$SCRIPT_DIR/lib-clear-conflicts.sh" "${args[@]}"
         exit $?
     else
-        err "缺少 02-baota-exclusive.sh"
+        err "缺少 lib-clear-conflicts.sh"
         exit 1
     fi
 fi
@@ -518,17 +527,17 @@ echo ""
 fi  # end ! SKIP_DOCKER
 
 # ═══════════════════════════════════════════════════════════════
-# Step 13: 系统冲突清理（原 Phase 0b，已并入）
+# Step 13: 系统冲突清理（子模块 lib-clear-conflicts.sh）
 # ═══════════════════════════════════════════════════════════════
 if ! $DOCKER_ONLY; then
     log "Step 13: 清除系统防火墙 / 系统自带 Web&DB（宝塔独占）..."
-    if [ -f "$SCRIPT_DIR/02-baota-exclusive.sh" ]; then
+    if [ -f "$SCRIPT_DIR/lib-clear-conflicts.sh" ]; then
         args=()
         $ASSUME_YES && args+=(--yes)
-        # 若已干净，01b 会快速退出
-        bash "$SCRIPT_DIR/02-baota-exclusive.sh" "${args[@]}" || warn "冲突清理有警告，可用 --check 复查"
+        # 若已干净，子模块会快速退出
+        bash "$SCRIPT_DIR/lib-clear-conflicts.sh" "${args[@]}" || warn "冲突清理有警告，可用 --check 复查"
     else
-        warn "缺少 02-baota-exclusive.sh，跳过系统冲突清理"
+        warn "缺少 lib-clear-conflicts.sh，跳过系统冲突清理"
     fi
 else
     ok "已指定 --docker-only，跳过系统冲突清理"
@@ -539,7 +548,7 @@ fi
 # ═══════════════════════════════════════════════════════════════
 echo ""
 ok "═══════════════════════════════════════════════════════════"
-ok "  Phase 0 完成（Docker + 系统冲突）"
+ok "  Phase 1 完成（Docker + 系统冲突）"
 ok "═══════════════════════════════════════════════════════════"
 echo ""
 if $SKIP_DOCKER; then
@@ -559,13 +568,13 @@ if ${OCCUPIED:-false}; then
 fi
 
 echo "  查看总进度："
-echo "    bash $SCRIPT_DIR/detect-status.sh"
+echo "    bash $SCRIPT_DIR/../tools/detect-status.sh"
 echo ""
 echo "  下一步："
-echo "    1. bash 01-install-baota.sh          # 若宝塔未装"
+echo "    1. bash 02-install-baota.sh          # 若宝塔未装"
 echo "    2. 宝塔软件商店：Nginx / PostgreSQL / Redis / Python"
 echo "    3. 宝塔安全：放行 22/80/443/面板端口（勿放 5432/6379）"
-echo "    4. bash 00-cleanup-docker.sh --conflicts-only --check  # 组件装完后再查一次"
-echo "    5. bash 03-server-setup.sh"
+echo "    4. bash 03-check-components.sh       # 组件装完后检查"
+echo "    5. bash 04-setup-server.sh"
 echo "    6. 本地 build.ps1 → 上传 → bash deploy.sh all"
 echo ""

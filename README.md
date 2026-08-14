@@ -31,7 +31,7 @@
 | `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask / Python (systemd) |
 
 > 服务器绝对路径 = `PROJECT_BASE`（默认 `/www/wwwroot/project`）+ `deployPath`。  
-> 清单 SSOT：`project-configs/*.toml` → `python3 scripts/sync-manifest.py` → `projects.json`。
+> 清单 SSOT：`project-configs/*.toml`（由 `config_loader.py` 运行时直接读取，无需中间文件）。
 
 ## URL 路由
 
@@ -58,21 +58,20 @@
 
 ## 仓库结构与项目配置（SSOT）
 
-> 构建 / 部署以 `project-configs/*.toml`（人改）+ `projects.json`（机器读）为准，**不要**再往 `build.ps1` / `deploy.sh` 里写死项目路径。
+> 构建 / 部署以 `project-configs/*.toml`（人改，由 `config_loader.py` 运行时直接读取）为准，**不要**再往 `build.ps1` / `deploy.sh` 里写死项目路径。
 
 ### 架构设计
 
 ```
 project-configs/*.toml (SSOT, 人编辑)
-    ↓ sync-manifest.py
-projects.json (manifest, 机器读)
+    ↓ config_loader.py (运行时直接读取)
     ↓                     ↓
 pack.ps1 (打包)        deploy.sh (部署)
 ```
 
 - **一个配置源**：`project-configs/<name>/project.toml` 是唯一 SSOT
-- **一个打包器**：`pack.ps1` 读 `projects.json`，所有项目共用
-- **一个编译器**：`sync-manifest.py` 把 TOML 编译成 `projects.json`（含完整打包信息）
+- **一个打包器**：`pack.ps1` 通过 `config_loader.py` 读 TOML，所有项目共用
+- **一个读取器**：`config_loader.py` 运行时直接读 TOML，无需中间文件（替代原 sync-manifest.py + projects.json）
 - **新增项目**：只需在 `project-configs/` 下新建一个 `project.toml`，无需改任何脚本
 
 ### 支持的组件类型
@@ -100,18 +99,32 @@ deploy/
 │   ├── deepquant/project.toml      #   QuantDinger（web + backend + mcp）
 │   ├── official-site/project.toml  #   卓筹介绍站（frontend only）
 │   └── fullstack-demo/project.toml #  全栈示例（React + Java + Go + Node.js）
-├── projects.json                   # 生成产物（manifest, 机器读取源）
 ├── scripts/
-│   ├── sync-manifest.py            # TOML → JSON 编译器
 │   ├── pack.ps1                    # 统一打包脚本（所有项目共用）
-│   ├── build.ps1                   # 构建编排入口（sync → pack → copy assets）
-│   ├── deploy.sh                   # 服务器端部署/回滚
-│   ├── generate-nginx.py           # Nginx 配置动态生成
+│   ├── build.ps1                   # 构建编排入口（pack → copy assets）
+│   ├── deploy.sh                   # 服务器端部署/回滚（主入口，加载 lib/ 模块）
 │   ├── deploy-financial-api.sh     # 项目级部署钩子
-│   └── lib/                        # 共享库
-│       ├── load-deploy-env.sh      #   deploy.env 加载器
-│       ├── load-projects.sh        #   projects.json 加载器（Bash）
-│       └── load-projects.ps1       #   projects.json 加载器（PowerShell）
+│   ├── lib/                        # 共享库（Bash + PowerShell）
+│   │   ├── common.sh               #   颜色/日志/CRLF/新鲜度检查
+│   │   ├── preflight.sh            #   部署前检查
+│   │   ├── service-ops.sh          #   服务重启/健康检查/状态/日志
+│   │   ├── backup-rollback.sh      #   备份与回滚
+│   │   ├── nginx.sh                #   Nginx 配置生成与部署
+│   │   ├── deploy-kinds.sh         #   各类型部署（frontend/python/java/go/nodejs）
+│   │   ├── load-deploy-env.sh      #   deploy.env 加载器
+│   │   ├── load-projects.{sh,ps1}  #   TOML 配置加载器（via config_loader.py）
+│   │   ├── config_loader.py        #   TOML 配置直接读取器
+│   │   └── _ps-common.ps1          #   PowerShell 共享常量
+│   ├── ops/                        # 一次性运维脚本
+│   │   ├── 01-cleanup-server.sh    #   服务器清理（Docker + 系统冲突）
+│   │   ├── lib-clear-conflicts.sh  #   系统冲突清理子模块
+│   │   ├── 02-install-baota.sh     #   宝塔安装
+│   │   ├── 03-check-components.sh  #   宝塔组件检查
+│   │   ├── 04-setup-server.sh      #   服务器环境准备
+│   │   └── wsl-*.ps1               #   WSL 网络工具
+│   └── tools/                      # 工具脚本
+│       ├── detect-status.sh        #   部署进度检测
+│       └── generate-nginx.py       #   Nginx 配置动态生成
 ├── configs/                        # 静态配置资产
 │   ├── systemd/                    #   systemd unit 文件
 │   ├── financial-api.env.example   #   环境变量模板
@@ -129,7 +142,7 @@ deploy/
 
 1. 在工作区放好源码
 2. 在 `project-configs/` 下新建 `<项目名>/project.toml`（可复制现有项目修改）
-3. 运行 `.\scripts\build.ps1 <项目名>` — 自动 sync manifest + 打包
+3. 运行 `.\scripts\build.ps1 <项目名>` — 自动打包
 4. 上传 → 服务器 `bash deploy.sh`
 
 ### 项目配置文件格式（project.toml）
@@ -154,8 +167,8 @@ deploy/
 ### 解析优先级
 
 ```
-WORKSPACE_ROOT env  >  projects.json workspaceRoot  >  deploy 父目录
-PROJECT_BASE env    >  projects.json projectBase    >  /www/wwwroot/project
+WORKSPACE_ROOT env  >  TOML workspaceRoot  >  deploy 父目录
+PROJECT_BASE env    >  TOML projectBase    >  /www/wwwroot/project
 ```
 
 ---
@@ -275,7 +288,7 @@ bash deploy.sh financial-web --yes
 > **DRY_RUN 环境变量**：`DEPLOY_DRY_RUN=1` 作为环境变量传入时会覆盖 `deploy.env` 中的 `DEPLOY_DRY_RUN=0`，无需临时修改配置文件。
 
 ```powershell
-# 本地构建（自动 sync manifest + pack）
+# 本地构建（自动 pack）
 cd D:\Workspace\deploy
 .\scripts\build.ps1 financial
 

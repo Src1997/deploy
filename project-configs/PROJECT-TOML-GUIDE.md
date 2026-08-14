@@ -7,15 +7,14 @@
 
 ```
 project-configs/*.toml (SSOT, 人编辑)
-    ↓ sync-manifest.py
-projects.json (manifest, 机器读)
+    ↓ config_loader.py (运行时直接读取)
     ↓                     ↓
 pack.ps1 (打包)        deploy.sh (部署)
 ```
 
 - **一个配置源**：`project-configs/<name>/project.toml` 是唯一 SSOT
-- **一个打包器**：`pack.ps1` 读 `projects.json`，所有项目共用
-- **一个部署器**：`deploy.sh` 读 `projects.json`，所有项目共用（无项目硬编码分支）
+- **一个打包器**：`pack.ps1` 通过 `config_loader.py` 读 TOML，所有项目共用
+- **一个部署器**：`deploy.sh` 通过 `config_loader.py` 读 TOML，所有项目共用（无项目硬编码分支）
 - **新增项目**：只需在 `project-configs/` 下新建一个 `project.toml`
 
 ## 支持的组件类型

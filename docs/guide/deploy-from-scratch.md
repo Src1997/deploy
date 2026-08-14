@@ -2,7 +2,7 @@
 
 > **Category**: Guide
 
-从零开始：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`projects.yaml`）→ systemd + Nginx。
+从零开始：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/*.toml`）→ systemd + Nginx。
 
 ## 前提条件
 
@@ -17,18 +17,20 @@
 ```
 【云安全组】先放行 22 / 80 / 443 / 面板端口（勿放 5432、6379）
 
-Phase 0: 环境清理                 (00-cleanup-docker.sh)
+Phase 1: 服务器清理               (01-cleanup-server.sh)
          ├─ Docker 卸载（已卸则自动跳过）
-         └─ 系统防火墙/系统库冲突清理（原 0b，已并入）
-Phase 1: 安装宝塔面板             (01-install-baota.sh)     ← 已装则提示跳过
-Phase 2: 宝塔面板安装基础组件      (手动) Nginx/PG/Redis/Python
+         └─ 系统防火墙/系统库冲突清理（子模块 lib-clear-conflicts.sh）
+Phase 2: 安装宝塔面板             (02-install-baota.sh)     ← 已装则提示跳过
+         脚本结束后会输出面板地址和手动安装组件指引
+Phase 3: 宝塔面板手动安装组件      (手动) Nginx/PG/Redis/Python
          + 宝塔「安全」放行端口
-         + 建议复查: 00 --conflicts-only --check
-Phase 3: 创建数据库和目录          (03-server-setup.sh)
-Phase 4: 本地构建打包             (build.ps1 all)
-Phase 5: 上传到服务器             (scp dist + deploy.sh)
-Phase 6: 服务器部署               (deploy.sh all)           ← 已部署会提示确认
-Phase 7: 宝塔 Nginx 站点配置      (deploy.sh --nginx)
+         + 安装完成后运行检查: bash 03-check-components.sh
+Phase 4: 创建数据库和目录          (04-setup-server.sh)
+         脚本开头会自动调用 03-check-components.sh 检查组件
+Phase 5: 本地构建打包             (build.ps1 all)
+Phase 6: 上传到服务器             (scp dist + deploy.sh)
+Phase 7: 服务器部署               (deploy.sh all)           ← 已部署会提示确认
+Phase 8: 宝塔 Nginx 站点配置      (deploy.sh --nginx)
 验证:    detect-status.sh + curl health
 ```
 
@@ -36,28 +38,28 @@ Phase 7: 宝塔 Nginx 站点配置      (deploy.sh --nginx)
 
 ---
 
-## Phase 0: 环境清理 — Docker + 系统冲突（SSH）
+## Phase 1: 服务器清理 — Docker + 系统冲突（SSH）
 
 ```bash
-scp D:\Workspace\deploy\scripts\00-cleanup-docker.sh \
-    D:\Workspace\deploy\scripts\02-baota-exclusive.sh \
-    D:\Workspace\deploy\scripts\detect-status.sh \
+scp D:\Workspace\deploy\scripts\ops\01-cleanup-server.sh \
+    D:\Workspace\deploy\scripts\ops\lib-clear-conflicts.sh \
+    D:\Workspace\deploy\scripts\tools\detect-status.sh \
     root@服务器IP:/root/
 
 # 全量（Docker 已卸会自动跳过该段；随后自动做冲突清理）
-bash /root/00-cleanup-docker.sh
+bash /root/01-cleanup-server.sh
 
 # 仅查状态
 bash /root/detect-status.sh
-bash /root/00-cleanup-docker.sh --check
+bash /root/01-cleanup-server.sh --check
 ```
 
 | 子步骤 | 内容 | 已完成时 |
 |--------|------|----------|
 | Docker | 卸引擎、清容器/卷/镜像、旧服务/目录 | **自动跳过** |
-| 冲突清理（原 0b） | 禁用 ufw/firewalld，purge 系统 nginx/pg/redis… | **无冲突则快速退出** |
+| 冲突清理 | 禁用 ufw/firewalld，purge 系统 nginx/pg/redis… | **无冲突则快速退出** |
 
-兼容：`bash 02-baota-exclusive.sh` ≡ `bash 00-cleanup-docker.sh --conflicts-only`
+兼容：`bash lib-clear-conflicts.sh` ≡ `bash 01-cleanup-server.sh --conflicts-only`
 
 **冲突清理明细 / 端口策略：**
 
@@ -73,11 +75,11 @@ bash /root/00-cleanup-docker.sh --check
 
 ---
 
-## Phase 1: 安装宝塔面板（SSH）
+## Phase 2: 安装宝塔面板（SSH）
 
 ```bash
-scp D:\Workspace\deploy\scripts\01-install-baota.sh root@服务器IP:/root/
-bash /root/01-install-baota.sh
+scp D:\Workspace\deploy\scripts\ops\02-install-baota.sh root@服务器IP:/root/
+bash /root/02-install-baota.sh
 ```
 
 安装脚本会：
@@ -91,37 +93,39 @@ bash /root/01-install-baota.sh
 
 ## Phase 2: 宝塔面板安装基础组件（手动操作）
 
-登录宝塔面板后，进入 **软件商店** 安装以下组件：
+`02-install-baota.sh` 完成后会输出面板地址和详细安装指引。登录宝塔面板后，进入 **软件商店** 安装以下组件：
 
-| 组件 | 版本 | 用途 |
-|------|------|------|
-| **Nginx** | 稳定版 | 反向代理 + 静态文件服务 |
-| **PostgreSQL** | 16.x | 数据库（两个后端共享） |
-| **Redis** | 7.x | 缓存（两个后端共享） |
-| **Python 项目管理器** | — | 提供 Python 3.12（后端 venv 用） |
+| 组件 | 版本 | 用途 | 安装位置 |
+|------|------|------|--------|
+| **Nginx** | 稳定版 | 反向代理 + 静态文件服务 | 软件商店 → 搜索 Nginx → 安装 |
+| **PostgreSQL** | 16.x | 数据库（两个后端共享） | 软件商店 → 搜索 PostgreSQL 管理器 → 安装管理器 → 版本管理 → 安装 16 |
+| **Redis** | 7.x/8.x | 缓存（两个后端共享） | 软件商店 → 搜索 Redis → 安装 |
+| **Python 项目管理器** | — | 提供 Python 3.12（后端 venv 用） | 软件商店 → 搜索 Python 项目管理器 |
 
-**设置数据库密码（与 `deploy.env` 保持一致）：**
+**安装完成后，设置密码（与 `deploy.env` 保持一致）：**
+
+- PostgreSQL: 管理器 → 密码管理 → 设置 root 用户密码
+- Redis: 宝塔面板 → Redis → 设置密码
+
+**检查组件是否全部就绪：**
 
 ```bash
-cp deploy.env.example deploy.env
-# 编辑 deploy.env：填写 PG_PASSWORD / REDIS_PASSWORD
-
-# 宝塔 PostgreSQL
-su - postgres -c "psql -c \"ALTER USER root WITH PASSWORD '你的PG密码';\""
-
-# 宝塔 Redis：面板改 requirepass
+bash 03-check-components.sh
 ```
+
+检查通过后继续下一步。如果检查不通过，脚本会列出缺失组件和安装指引。
 
 ---
 
-## Phase 3: 创建数据库和目录（SSH）
+## Phase 4: 创建数据库和目录（SSH）
 
 ```bash
-scp D:\Workspace\deploy\scripts\03-server-setup.sh root@服务器IP:/root/
-bash /root/03-server-setup.sh
+scp D:\Workspace\deploy\scripts\ops\04-setup-server.sh root@服务器IP:/root/
+bash /root/04-setup-server.sh
 ```
 
 准备脚本会：
+- **自动调用 `03-check-components.sh` 检查组件是否就绪**（未通过则退出）
 - 检查宝塔安装的 Nginx、PostgreSQL、Redis、Python 3.11+
 - 验证 Docker 已彻底卸载
 - 创建数据库 `quant_zc`（financial-api）和 `quantdinger`（QuantDinger）
@@ -130,7 +134,7 @@ bash /root/03-server-setup.sh
 
 ---
 
-## Phase 4: 本地构建打包（Windows PowerShell）
+## Phase 5: 本地构建打包（Windows PowerShell）
 
 ```powershell
 cd D:\Workspace\deploy
@@ -141,7 +145,7 @@ cd D:\Workspace\deploy
 
 ---
 
-## Phase 5: 上传到服务器
+## Phase 6: 上传到服务器
 
 ```powershell
 scp -r D:\Workspace\deploy\dist root@服务器IP:/www/wwwroot/project/uploads/
@@ -149,7 +153,7 @@ scp -r D:\Workspace\deploy\dist root@服务器IP:/www/wwwroot/project/uploads/
 
 ---
 
-## Phase 6: 服务器一键部署（SSH）
+## Phase 7: 服务器一键部署（SSH）
 
 ```bash
 ssh root@服务器IP
@@ -165,7 +169,7 @@ bash deploy.sh all --ip=服务器IP
 
 ---
 
-## Phase 7: Nginx 配置
+## Phase 8: Nginx 配置
 
 ```bash
 # 部署 + 自动配置 Nginx（动态生成）
@@ -182,7 +186,7 @@ bash deploy.sh --nginx
 
 ---
 
-## Phase 7b: SSL 证书 + 宝塔邮局申请（域名部署）
+## Phase 8b: SSL 证书 + 宝塔邮局申请（域名部署）
 
 ### 1. 申请 SSL 证书（acme.sh + Let's Encrypt）
 

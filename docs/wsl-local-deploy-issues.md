@@ -4,7 +4,12 @@
 > **日期**: 2026-07-31（问题 1–11 初始）; 2026-07-31 追加（问题 12–13）  
 > **环境**: WSL Ubuntu 26.04 + 宝塔面板 + Windows 11  
 > **目标**: 在本地 WSL 中模拟服务器 A 的宝塔部署环境  
-> **索引**: [docs/README.md](./README.md)
+> **索引**: [docs/README.md](./README.md)  
+>   
+> **⚠️ 历史文档说明**：本文档记录的是 2026-07-31 的排障过程。  
+> 当时使用的 `projects.json` / `projects.yaml` / `pack-generic.ps1` 等工具已在本轮重构中废弃，  
+> 现由 `project-configs/*.toml` + `config_loader.py` + `pack.ps1` 替代。  
+> 文中提到的文件名仅供历史参考，不代表当前工具链。
 
 ## 一、对正式服务器部署的影响评估
 
@@ -212,7 +217,7 @@ echo "False" > /www/server/panel/data/ssl.pl
 
 **现象**: `build.ps1` 打包后端时，`pack-generic.ps1` 无法找到源码目录，报错退出。
 
-**原因**: `projects.json` 中部分项目的 `sourcePath` 是数组类型（如 financial-api 有多个源码目录），而 `Get-ProjectSourcePath` 函数直接拼接字符串，未处理数组。
+**原因**: TOML 配置中部分项目的 `sourcePath` 是数组类型（如 financial-api 有多个源码目录），而 `Get-ProjectSourcePath` 函数直接拼接字符串，未处理数组。
 
 **解决**: 修改 `load-projects.ps1` 中的 `Get-ProjectSourcePath` 函数：
 ```powershell

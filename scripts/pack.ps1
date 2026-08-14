@@ -1,7 +1,7 @@
 #requires -version 5.1
 <#
 .SYNOPSIS
-    Unified project packer — reads projects.json, packs frontend / python / java / go / nodejs components.
+    Unified project packer — reads project-configs/*.toml via config_loader.py, packs frontend / python / java / go / nodejs components.
 
 .DESCRIPTION
     All projects share this single script. Adding a new project = adding a
@@ -14,8 +14,8 @@
       go        — go build -> pack binary + configs -> tar.gz
       nodejs    — optional build (TS->JS) -> source copy + configs -> tar.gz
 
-    Prerequisite: run sync-manifest.py first to generate projects.json from
-    TOML configs. build.ps1 does this automatically.
+    Prerequisite: Python 3.11+ available on PATH (for config_loader.py).
+    build.ps1 calls this script automatically after syncing scripts.
 
     Layout conventions (preserve directory hierarchy, never flatten includes):
       package/                 # App source + VERSION (when mode = app-package)
@@ -48,6 +48,9 @@ $ErrorActionPreference = "Stop"
 $ScriptsDir = $PSScriptRoot
 $DeployDir = Split-Path $ScriptsDir -Parent
 
+# ── Shared constants & helpers (encoding, logging, Get-Python) ──
+. (Join-Path $ScriptsDir 'lib\_ps-common.ps1')
+
 # ── Workspace root resolution ──
 if ($env:WORKSPACE_ROOT) { $global:WorkspaceRoot = $env:WORKSPACE_ROOT }
 else { $global:WorkspaceRoot = Split-Path $DeployDir -Parent }
@@ -55,31 +58,20 @@ else { $global:WorkspaceRoot = Split-Path $DeployDir -Parent }
 # ── Output directory ──
 $OutDir = Join-Path $DeployDir 'dist\packages'
 
-# ── Logging helpers ──
-function W-Step  { param($msg) Write-Host "`n[*] $msg" -ForegroundColor Cyan }
-function W-OK    { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
-function W-Warn  { param($msg) Write-Host "[!] $msg" -ForegroundColor Yellow }
-function W-Err   { param($msg) Write-Host "[ERR] $msg" -ForegroundColor Red }
-function W-Info  { param($msg) Write-Host "    $msg" -ForegroundColor DarkGray }
-function W-Banner {
-    param($title)
-    Write-Host ""
-    Write-Host ("=" * 60) -ForegroundColor Cyan
-    Write-Host "  $title" -ForegroundColor Cyan
-    Write-Host ("=" * 60) -ForegroundColor Cyan
-    Write-Host ""
-}
-
-# ── Load projects.json (manifest) ──
+# ── Load manifest from TOML configs (via config_loader.py) ──
 function Load-Manifest {
-    $manifestPath = Join-Path $DeployDir 'projects.json'
-    if (-not (Test-Path $manifestPath)) {
-        W-Err "projects.json not found: $manifestPath"
-        W-Err "Run: python3 scripts/sync-manifest.py first"
+    $configLoader = Join-Path $ScriptsDir 'lib\config_loader.py'
+    if (-not (Test-Path $configLoader)) {
+        W-Err "config_loader.py not found: $configLoader"
         exit 1
     }
-    $data = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    return $data
+    $py = Get-Python
+    $jsonOut = & $py $configLoader --format json 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        W-Err "config_loader.py failed: $jsonOut"
+        exit 1
+    }
+    return $jsonOut | ConvertFrom-Json
 }
 
 # ── Get all project groups from manifest ──
@@ -280,7 +272,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $codeRoot 'VERSION') -Value $versionContent -Encoding UTF8
+    Set-Content -Path (Join-Path $codeRoot 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
     W-Info "[ok] $(if ($usePackagePrefix) { 'package/VERSION' } else { 'VERSION' })"
 
     # ── Extra sources (e.g. mcp_server) ──
@@ -485,7 +477,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $staging 'VERSION') -Value $versionContent -Encoding UTF8
+    Set-Content -Path (Join-Path $staging 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
     W-Info "[ok] VERSION"
 
     # ── Include files (relative to deploy root, preserve paths) ──
@@ -654,7 +646,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $staging 'VERSION') -Value $versionContent -Encoding UTF8
+    Set-Content -Path (Join-Path $staging 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
     W-Info "[ok] VERSION"
 
     # ── Include files (relative to deploy root, preserve paths) ──
@@ -844,7 +836,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $codeRoot 'VERSION') -Value $versionContent -Encoding UTF8
+    Set-Content -Path (Join-Path $codeRoot 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
     W-Info "[ok] $(if ($usePackagePrefix) { 'package/VERSION' } else { 'VERSION' })"
 
     # ── Include files (relative to deploy root, preserve paths) ──
@@ -952,7 +944,7 @@ $manifest = Load-Manifest
 $groups = Get-ProjectGroups $manifest
 
 W-Banner "Unified Packer"
-W-Info "Config source:  project-configs/ -> projects.json"
+W-Info "Config source:  project-configs/*.toml (via config_loader.py)"
 W-Info "Workspace root: $global:WorkspaceRoot"
 W-Info "Output dir:     $OutDir"
 W-Info "Projects found: $($groups.Count) groups, $($manifest.projects.Count) components"

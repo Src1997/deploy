@@ -19,7 +19,8 @@ Write-Host "[OK] .wslconfig written to $wslConfigPath" -ForegroundColor Green
 Write-Host "[3/4] Restarting WSL..." -ForegroundColor Cyan
 wsl --shutdown
 Start-Sleep 5
-wsl -d Ubuntu -u root -- bash -c "source /etc/profile.d/baota-path.sh; pg_isready -h 127.0.0.1 -p 5432; redis-cli -a 7d7ced854319d1df ping 2>/dev/null; echo WSL-services-OK"
+# 用 TCP 探测代替 redis-cli ping（避免硬编码密码）
+wsl -d Ubuntu -u root -- bash -c "source /etc/profile.d/baota-path.sh; pg_isready -h 127.0.0.1 -p 5432; echo 'PING' | nc -w 1 127.0.0.1 6379 > /dev/null 2>&1 && echo 'Redis: OK' || echo 'Redis: SKIP'; echo WSL-services-OK"
 Start-Sleep 2
 
 Write-Host "[4/4] Verifying Windows connection..." -ForegroundColor Cyan

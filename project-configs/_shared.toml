@@ -3,7 +3,7 @@
 # 所有项目共用的配置放在这里，单个项目的配置放在
 # project-configs/<name>/project.toml，可覆盖或追加此处定义。
 #
-# sync-manifest.py 会合并 _shared.toml + 各 project.toml → projects.json。
+# config_loader.py 会合并 _shared.toml + 各 project.toml → 运行时 manifest。
 
 # ── 全局默认值 ──
 [defaults]

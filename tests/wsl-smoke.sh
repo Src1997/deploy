@@ -5,7 +5,7 @@
 # Usage:
 #   cd /mnt/d/Workspace/deploy   # 或任意含本脚本的 deploy 根
 #   bash tests/wsl-smoke.sh
-#   bash tests/wsl-smoke.sh --pack    # 额外执行 pack-financial-api.sh
+#   bash tests/wsl-smoke.sh --pack    # 额外执行 pack.ps1（需 PowerShell）
 # ============================================================================
 set -euo pipefail
 
@@ -46,9 +46,9 @@ info "SCRIPTS_DIR   = $SCRIPTS_DIR"
 hr
 
 # ── T-L0: bash 语法 ─────────────────────────────────────────────
-info "T-L0-01: bash -n on scripts/*.sh"
+info "T-L0-01: bash -n on scripts/**/*.sh"
 syntax_fail=0
-for f in "$SCRIPTS_DIR"/*.sh "$SCRIPT_DIR"/*.sh; do
+for f in "$SCRIPTS_DIR"/*.sh "$SCRIPTS_DIR"/lib/*.sh "$SCRIPTS_DIR"/ops/*.sh "$SCRIPTS_DIR"/tools/*.sh "$SCRIPT_DIR"/*.sh; do
   [ -f "$f" ] || continue
   if bash -n "$f" 2>/tmp/deploy-bash-n.err; then
     ok "syntax $(basename "$f")"
@@ -68,16 +68,15 @@ else
   bad "cannot resolve workspace from deploy location"
 fi
 
-# pack 脚本是否用相对路径 / 清单（读脚本内容）
-if grep -qE 'load-projects\.sh|WORKSPACE_ROOT|SOURCE_DIR=.*WORKSPACE' \
-     "$SCRIPTS_DIR/pack-financial-api.sh" 2>/dev/null; then
-  ok "pack-financial-api.sh derives workspace from projects.json / WORKSPACE_ROOT"
+# pack.ps1 是否通过 config_loader.py 读取 TOML 配置
+if grep -qE 'config_loader|load-projects' "$SCRIPTS_DIR/pack.ps1" 2>/dev/null; then
+  ok "pack.ps1 uses config_loader.py for TOML configs"
 else
-  warn "pack-financial-api.sh relative path pattern not detected (check manually)"
+  warn "pack.ps1 config_loader pattern not detected (check manually)"
 fi
 
-if grep -qE 'Workspace\s*=\s*"D:\\Workspace"|Workspace\s*=\s*"D:/Workspace"' "$SCRIPTS_DIR/build.ps1" 2>/dev/null; then
-  warn "build.ps1 still hardcodes D:\\Workspace (P0 — expected until stage A)"
+if grep -qE 'D:\\Workspace|D:/Workspace' "$SCRIPTS_DIR/build.ps1" 2>/dev/null; then
+  warn "build.ps1 still hardcodes D:\\Workspace"
 else
   ok "build.ps1 has no hardcoded D:\\Workspace"
 fi
@@ -113,7 +112,7 @@ else
   bad "missing configs/*.env.example templates"
 fi
 
-# ── T-L0: deploy.sh --help（当前可能因函数顺序失败，记 WARN/FAIL）──
+# ── T-L0: deploy.sh --help ──
 info "T-L0-02: deploy.sh --help"
 set +e
 help_out=$(bash "$SCRIPTS_DIR/deploy.sh" --help 2>&1)
@@ -122,8 +121,26 @@ set -e
 if [ "$help_rc" -eq 0 ] && echo "$help_out" | grep -qiE 'help|用法|Usage|deploy'; then
   ok "deploy.sh --help works"
 else
-  warn "deploy.sh --help failed (rc=$help_rc) — known: show_help before definition (stage D)"
+  warn "deploy.sh --help failed (rc=$help_rc)"
   echo "$help_out" | head -5 >&2 || true
+fi
+
+# ── T-L0: config_loader.py 验证 ────────────────────────────────
+info "T-L0-06: config_loader.py --format check"
+if python3 "$SCRIPTS_DIR/lib/config_loader.py" --format check 2>&1; then
+  ok "config_loader.py validation passed"
+else
+  bad "config_loader.py validation failed"
+fi
+
+# ── T-L0: _probe-projects.sh 验证 ──────────────────────────────
+info "T-L0-07: _probe-projects.sh"
+probe_out=$(bash "$SCRIPTS_DIR/lib/_probe-projects.sh" 2>&1 || true)
+if echo "$probe_out" | grep -q 'PASS'; then
+  ok "_probe-projects.sh passed"
+else
+  warn "_probe-projects.sh had issues (may need deploy.env)"
+  echo "$probe_out" | tail -3 >&2 || true
 fi
 
 # ── T-L1: pack 结构（可选执行打包）────────────────────────────
@@ -133,8 +150,8 @@ if [ ! -d "$API_SRC/app" ]; then
   warn "skip pack checks: backend not found at $API_SRC"
 else
   if $DO_PACK; then
-    info "running pack-financial-api.sh ..."
-    bash "$SCRIPTS_DIR/pack-financial-api.sh"
+    info "running pack.ps1 via PowerShell ..."
+    pwsh -NoProfile -File "$SCRIPTS_DIR/pack.ps1" financial-api -DryRun 2>&1 || warn "pack.ps1 -DryRun failed (PowerShell required)"
   fi
   # 优先 dist/packages/（build 正式产出），再回退 dist/
   latest=$(ls -t "$DEPLOY_DIR"/dist/packages/financial-api-*.tar.gz 2>/dev/null | head -1 || true)
@@ -142,7 +159,7 @@ else
     latest=$(ls -t "$DEPLOY_DIR"/dist/financial-api-*.tar.gz 2>/dev/null | head -1 || true)
   fi
   if [ -z "$latest" ]; then
-    warn "no financial-api-*.tar.gz — run: bash tests/wsl-smoke.sh --pack"
+    warn "no financial-api-*.tar.gz — run: pwsh scripts/pack.ps1 financial-api"
   else
     ok "found archive: $latest"
     # 大包勿整表进变量再 echo（会撞 ARG_MAX）。
@@ -180,27 +197,6 @@ else
       warn "archive missing financial-api.service"
     fi
   fi
-fi
-
-# ── pack-financial-api.ps1 staging 顺序静态检查 ────────────────
-info "static: pack-financial-api.ps1 VERSION vs staging order"
-ps1="$SCRIPTS_DIR/pack-financial-api.ps1"
-if [ -f "$ps1" ]; then
-  ver_line=$(grep -n 'Join-Path \$staging .VERSION' "$ps1" | head -1 | cut -d: -f1 || echo 0)
-  stg_line=$(grep -n '\$staging = Join-Path' "$ps1" | head -1 | cut -d: -f1 || echo 0)
-  if [ "${ver_line:-0}" -gt 0 ] && [ "${stg_line:-0}" -gt 0 ] && [ "$ver_line" -lt "$stg_line" ]; then
-    warn "pack-financial-api.ps1 writes VERSION before \$staging is defined (L$ver_line < L$stg_line) — known P0"
-  else
-    ok "pack-financial-api.ps1 staging/VERSION order looks OK (or pattern changed)"
-  fi
-fi
-
-# ── Build-One pip 分支静态提示 ────────────────────────────────
-info "static: build.ps1 backend branch risk"
-if grep -A20 'if (\$p.PackScript)' "$SCRIPTS_DIR/build.ps1" 2>/dev/null | grep -q 'Frontend'; then
-  warn "Build-One still documents empty PackScript as Frontend path — verify pip backends"
-else
-  info "could not confirm Frontend fallback text (manual review Build-One)"
 fi
 
 hr

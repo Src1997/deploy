@@ -2,12 +2,18 @@
 dist/
 
 # 本地/服务器真实密码（禁止提交）
-# deploy.env          → 本地/虚拟机
+# deploy.env          → 本地
+# deploy.env.vm       → 虚拟机
 # deploy.env.server-a → 服务器 A
 # deploy.env.server-b → 服务器 B
 deploy.env
+deploy.env.vm
 deploy.env.server-a
 deploy.env.server-b
 
 # 数据库 dump（本地导出，不提交）
 scripts/dumps/
+
+# Python 缓存
+__pycache__/
+*.pyc

@@ -6,9 +6,8 @@
 .DESCRIPTION
     Config source = project-configs/<project>/project.toml (SSOT).
     This script:
-      1. Calls sync-manifest.py to compile TOML configs -> projects.json
-      2. Calls pack.ps1 to build & pack each selected project
-      3. Copies deploy assets to dist/ (self-contained, for server upload)
+      1. Calls pack.ps1 to build & pack each selected project
+      2. Copies deploy assets to dist/ (self-contained, for server upload)
 
     Adding a new project = create project-configs/<name>/project.toml.
     No script changes needed.
@@ -20,11 +19,13 @@
     .\scripts\build.ps1 deepquant-backend,financial-api  # Build N components
     .\scripts\build.ps1 all                      # Build all
     .\scripts\build.ps1 financial,official-site  # Build multiple groups
+    .\scripts\build.ps1 --scripts-only           # Only refresh dist/ scripts (skip package build)
 #>
 
 param(
     [Parameter(Position = 0)]
-    [string]$Project = ""
+    [string]$Project = "",
+    [switch]$ScriptsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,21 +34,8 @@ $DeployDir    = Split-Path $ScriptsDir -Parent
 $ConfigsDir   = Join-Path $DeployDir 'project-configs'
 $PackagesDir  = Join-Path $DeployDir 'dist\packages'
 
-# ── Logging helpers ──
-function W-Step  { param($msg) Write-Host "`n[*] $msg" -ForegroundColor Cyan }
-function W-OK    { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
-function W-Warn  { param($msg) Write-Host "[!] $msg" -ForegroundColor Yellow }
-function W-Err   { param($msg) Write-Host "[ERR] $msg" -ForegroundColor Red }
-function W-Info  { param($msg) Write-Host "    $msg" -ForegroundColor DarkGray }
-function W-Banner {
-    param($title)
-    Write-Host ""
-    Write-Host ("=" * 60) -ForegroundColor Cyan
-    Write-Host "  $title" -ForegroundColor Cyan
-    Write-Host ("=" * 60) -ForegroundColor Cyan
-    Write-Host ""
-}
-function W-HR { Write-Host "--------------------------------------------------" -ForegroundColor DarkGray }
+# ── Shared constants & helpers (encoding, logging, Get-Python) ──
+. (Join-Path $ScriptsDir 'lib\_ps-common.ps1')
 
 # ── Scan project configs ──
 function Get-ProjectConfigs {
@@ -60,39 +48,6 @@ function Get-ProjectConfigs {
     return $list
 }
 
-# ── Python locator (compatible with WorkBuddy managed binaries / python3 / python) ──
-function Get-Python {
-    $candidates = @()
-    # 1) WorkBuddy managed binary (most reliable, preferred)
-    $wb = Join-Path $env:USERPROFILE '.workbuddy\binaries\python\versions'
-    if (Test-Path $wb) {
-        $found = Get-ChildItem $wb -Filter 'python.exe' -Recurse -File |
-            Sort-Object FullName | Select-Object -First 1
-        if ($found) { $candidates += $found.FullName }
-    }
-    # 2) python3 / python on PATH
-    foreach ($c in @('python3', 'python')) {
-        try { $p = (Get-Command $c -ErrorAction Stop).Source; if ($p) { $candidates += $p } } catch { }
-    }
-    foreach ($p in $candidates) {
-        # Verify it actually runs (filters out Windows Store placeholders)
-        try {
-            $v = & $p -c "import sys; print(sys.version_info[0])" 2>$null
-            if ($LASTEXITCODE -eq 0 -and ($v -match '^\d+')) { return $p }
-        } catch { }
-    }
-    throw "No usable python3/python found (Windows Store placeholder excluded). Install Python 3.11+ or add to PATH."
-}
-
-# ── Sync TOML configs -> projects.json ──
-function Sync-Manifest {
-    W-Step "sync-manifest.py: compiling project-configs/*.toml -> projects.json"
-    $gen = Join-Path $ScriptsDir 'sync-manifest.py'
-    $py = Get-Python
-    & $py $gen
-    if ($LASTEXITCODE -ne 0) { W-Err "sync-manifest.py failed"; exit 1 }
-}
-
 # ── Build single project via pack.ps1 ──
 function Build-One([string]$folder) {
     W-Step "Packing project: $folder"
@@ -102,7 +57,7 @@ function Build-One([string]$folder) {
 }
 
 # ── Clean old archives (keep most recent N per project) ──
-$MaxArchivesPerProject = 3
+$MaxArchivesPerProject = 1
 function Clean-OldArchives {
     if (-not (Test-Path $PackagesDir)) { return }
     $groups = @{}
@@ -126,6 +81,68 @@ function Clean-OldArchives {
     }
 }
 
+# ── Check source-vs-dist freshness (warn if source is newer than dist copy) ──
+function Check-DistFreshness {
+    $DistDir = Join-Path $DeployDir 'dist'
+    if (-not (Test-Path $DistDir)) { return }
+
+    # -- Core scripts: compare source vs dist --
+    $scriptPairs = @(
+        @{ Src = Join-Path $ScriptsDir 'deploy.sh';             Dst = Join-Path $DistDir 'deploy.sh' }
+        @{ Src = Join-Path $ScriptsDir 'tools\detect-status.sh'; Dst = Join-Path $DistDir 'detect-status.sh' }
+        @{ Src = Join-Path $ScriptsDir 'tools\generate-nginx.py';Dst = Join-Path $DistDir 'generate-nginx.py' }
+        @{ Src = Join-Path $ScriptsDir 'deploy-financial-api.sh';Dst = Join-Path $DistDir 'deploy-financial-api.sh' }
+        @{ Src = Join-Path $ScriptsDir 'pack.ps1';               Dst = Join-Path $DistDir 'pack.ps1' }
+    )
+    $stale = $false
+    foreach ($pair in $scriptPairs) {
+        if ((Test-Path $pair.Src) -and (Test-Path $pair.Dst)) {
+            if ($pair.Src -and (Get-Item $pair.Src).LastWriteTime -gt (Get-Item $pair.Dst).LastWriteTime) {
+                W-Warn "Source newer than dist: $(Split-Path $pair.Src -Leaf)"
+                $stale = $true
+            }
+        }
+    }
+
+    # -- lib/ directory: compare each file --
+    $libSrc = Join-Path $ScriptsDir 'lib'
+    $libDst = Join-Path $DistDir 'lib'
+    if ((Test-Path $libSrc) -and (Test-Path $libDst)) {
+        Get-ChildItem $libSrc -File | ForEach-Object {
+            $dstFile = Join-Path $libDst $_.Name
+            if (Test-Path $dstFile) {
+                if ($_.LastWriteTime -gt (Get-Item $dstFile).LastWriteTime) {
+                    W-Warn "Source newer than dist: lib/$($_.Name)"
+                    $stale = $true
+                }
+            } else {
+                W-Warn "Missing in dist/: lib/$($_.Name)"
+                $stale = $true
+            }
+        }
+    }
+
+    # -- configs/ directory: compare each file recursively --
+    $cfgSrc = Join-Path $DeployDir 'configs'
+    $cfgDst = Join-Path $DistDir 'configs'
+    if ((Test-Path $cfgSrc) -and (Test-Path $cfgDst)) {
+        Get-ChildItem $cfgSrc -File -Recurse | ForEach-Object {
+            $rel = $_.FullName.Substring($cfgSrc.Length + 1)
+            $dstFile = Join-Path $cfgDst $rel
+            if (Test-Path $dstFile) {
+                if ($_.LastWriteTime -gt (Get-Item $dstFile).LastWriteTime) {
+                    W-Warn "Source newer than dist: configs/$rel"
+                    $stale = $true
+                }
+            }
+        }
+    }
+
+    if ($stale) {
+        W-Warn "dist/ has stale files. Run: .\scripts\build.ps1 --scripts-only"
+    }
+}
+
 # ── Copy deploy assets to dist/ ──
 function Copy-DeployAssets {
     W-Step "Copying deploy assets to dist/..."
@@ -134,14 +151,13 @@ function Copy-DeployAssets {
         New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
     }
 
-    # Core scripts
+    # Core scripts (sourced from scripts/ and scripts/tools/)
     $copy = @(
         (Join-Path $ScriptsDir 'deploy.sh'),
-        (Join-Path $ScriptsDir 'detect-status.sh'),
-        (Join-Path $ScriptsDir 'generate-nginx.py'),
+        (Join-Path $ScriptsDir 'tools\detect-status.sh'),
+        (Join-Path $ScriptsDir 'tools\generate-nginx.py'),
         (Join-Path $ScriptsDir 'deploy-financial-api.sh'),
-        (Join-Path $ScriptsDir 'pack.ps1'),
-        (Join-Path $ScriptsDir 'sync-manifest.py')
+        (Join-Path $ScriptsDir 'pack.ps1')
     )
     foreach ($f in $copy) {
         if (Test-Path $f) {
@@ -158,7 +174,7 @@ function Copy-DeployAssets {
         W-OK "Copied: configs/"
     }
 
-    # lib/
+    # lib/ (includes config_loader.py, load-projects.sh, _ps-common.ps1, etc.)
     if (Test-Path $ScriptsDir\lib) {
         $dl = Join-Path $DistDir 'lib'
         if (Test-Path $dl) { Remove-Item $dl -Recurse -Force }
@@ -166,17 +182,7 @@ function Copy-DeployAssets {
         W-OK "Copied: lib/"
     }
 
-    # scripts/ (for server-side fallback)
-    $ds = Join-Path $DistDir 'scripts'
-    if (-not (Test-Path $ds)) {
-        New-Item -ItemType Directory -Path $ds -Force | Out-Null
-    }
-    foreach ($f in @('generate-nginx.py', 'deploy-financial-api.sh', 'pack.ps1', 'sync-manifest.py')) {
-        $src = Join-Path $ScriptsDir $f
-        if (Test-Path $src) { Copy-Item $src (Join-Path $ds $f) -Force }
-    }
-
-    # project-configs/ (for server-side reference)
+    # project-configs/ (for server-side TOML reading via config_loader.py)
     if (Test-Path $ConfigsDir) {
         $dpc = Join-Path $DistDir 'project-configs'
         if (Test-Path $dpc) { Remove-Item $dpc -Recurse -Force }
@@ -184,17 +190,27 @@ function Copy-DeployAssets {
         W-OK "Copied: project-configs/"
     }
 
-    # projects.json (manifest, deploy.sh needs it)
-    if (Test-Path $DeployDir\projects.json) {
-        Copy-Item $DeployDir\projects.json (Join-Path $DistDir 'projects.json') -Force
-        W-OK "Copied: projects.json"
-    }
-
-    # deploy.env.example
+    # deploy.env.example (template, always copy)
     if (Test-Path $DeployDir\deploy.env.example) {
         Copy-Item $DeployDir\deploy.env.example (Join-Path $DistDir 'deploy.env.example') -Force
         W-OK "Copied: deploy.env.example"
     }
+
+    # Copy all deploy.env.* files (server-a, server-b, vm, etc.)
+    # These contain real passwords but dist/ is also gitignored, so it's safe.
+    Get-ChildItem $DeployDir -Filter 'deploy.env.*' -File |
+        Where-Object { $_.Name -ne 'deploy.env.example' } |
+        ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $DistDir $_.Name) -Force
+            W-OK "Copied: $($_.Name)"
+        }
+
+    # -- Write .scripts-version stamp (for server-side freshness check) --
+    # deploy.sh reads this on startup to detect stale scripts on the server.
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $stampFile = Join-Path $DistDir '.scripts-version'
+    Set-Content -Path $stampFile -Value $stamp -NoNewline -Encoding $global:PS_FILE_ENCODING
+    W-OK "Wrote .scripts-version: $stamp"
 }
 
 # ── Summary ──
@@ -314,10 +330,27 @@ if ($ProjectList.Count -eq 0) {
     exit 1
 }
 
-Sync-Manifest
 W-OK "Scanned $($ProjectList.Count) projects (project-configs/)"
 foreach ($r in $ProjectList) { W-Info $r.Folder }
 Write-Host ""
+
+# -- Scripts-only mode: refresh dist/ scripts without building packages --
+if ($ScriptsOnly) {
+    W-Banner "Scripts-only mode (skip package build)"
+    Copy-DeployAssets
+    Clean-OldArchives
+    W-OK "dist/ scripts refreshed. .scripts-version updated."
+    Write-Host ""
+    Write-Host "  Upload & deploy:" -ForegroundColor White
+    $DistDir = Join-Path $DeployDir 'dist'
+    Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
+    Write-Host "    cd /www/wwwroot/project/uploads/dist && bash deploy.sh" -ForegroundColor Cyan
+    Write-Host ""
+    exit 0
+}
+
+# -- Pre-build freshness check: warn if dist/ has stale scripts --
+Check-DistFreshness
 
 if ($Project -ne "") {
     if ($Project -eq 'all') {

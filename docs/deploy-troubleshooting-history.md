@@ -2,7 +2,11 @@
 
 > **Category**: Guide（人类排障档案，非规范约束）  
 > **Source**: 自 `README.md` 附录迁出（2026-07-31）  
-> **Scope**: 正式服务器 A/B 部署过程中的问题与修复；WSL 本地见 [wsl-local-deploy-issues.md](./wsl-local-deploy-issues.md)
+> **Scope**: 正式服务器 A/B 部署过程中的问题与修复；WSL 本地见 [wsl-local-deploy-issues.md](./wsl-local-deploy-issues.md)  
+>   
+> **⚠️ 历史文档说明**：本文档记录的修复涉及当时的工具链（如 `dist/scripts/` fallback、  
+> `pack-financial-api.ps1` 等），这些工具已在本轮重构中统一为 `pack.ps1` + `config_loader.py`。  
+> 文中提到的文件名和路径仅供历史参考。
 
 ### 1. Nginx 配置统一（2026-07-28）
 

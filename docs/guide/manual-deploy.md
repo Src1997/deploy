@@ -300,8 +300,8 @@ curl -sf http://127.0.0.1:5000/api/health | python3 -m json.tool
 ### 方式一：动态生成（推荐）
 
 ```bash
-# 从 projects.json 动态生成 Nginx 配置
-python3 scripts/generate-nginx.py \
+# 从 TOML 配置动态生成 Nginx 配置
+python3 scripts/tools/generate-nginx.py \
     --mode ssl-combined \
     --domain example.com \
     --www-domain www.example.com \

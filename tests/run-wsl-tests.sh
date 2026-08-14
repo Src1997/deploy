@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Comprehensive WSL test for all 6 improvements
+# Comprehensive WSL test for deploy modularization + config_loader
 set -euo pipefail
 
 DEPLOY_DIR="/mnt/d/Workspace/deploy"
@@ -14,7 +14,7 @@ hr()   { echo "─────────────────────�
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  deploy WSL comprehensive test (6 improvements)"
+echo "  deploy WSL comprehensive test (modularization + config_loader)"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
@@ -22,21 +22,24 @@ echo ""
 info "Step 1: Python tomllib availability"
 python3 -c "import tomllib" 2>/dev/null && ok "tomllib available (Python 3.11+)" || bad "tomllib missing (need Python 3.11+)"
 
-# ── Step 2: sync-manifest.py ──
-info "Step 2: sync-manifest.py"
-if python3 scripts/sync-manifest.py 2>&1; then
-    ok "sync-manifest.py executed successfully"
+# ── Step 2: config_loader.py validation ──
+info "Step 2: config_loader.py --format check"
+if python3 scripts/lib/config_loader.py --format check 2>&1; then
+    ok "config_loader.py validation passed"
 else
-    bad "sync-manifest.py failed"
+    bad "config_loader.py validation failed"
 fi
 echo ""
 
-# ── Step 3: Verify projects.json ──
-info "Step 3: Verify projects.json has new fields"
+# ── Step 3: Verify manifest fields via config_loader.py ──
+info "Step 3: Verify manifest has required fields (publicUrl, nginx, nginxExtras)"
 python3 -c "
-import json
-with open('projects.json') as f:
-    data = json.load(f)
+import json, subprocess, sys
+result = subprocess.run(['python3', 'scripts/lib/config_loader.py', '--format', 'json'], capture_output=True, text=True)
+if result.returncode != 0:
+    print(f'  FAIL: config_loader.py failed: {result.stderr}', file=sys.stderr)
+    sys.exit(1)
+data = json.loads(result.stdout)
 errors = []
 for p in data.get('projects', []):
     pub = p.get('publicUrl', None)
@@ -50,22 +53,22 @@ if not extras:
     errors.append('nginxExtras missing or empty')
 if errors:
     for e in errors:
-        print(f'  FAIL: {e}')
-    exit(1)
+        print(f'  FAIL: {e}', file=sys.stderr)
+    sys.exit(1)
 else:
     for p in data['projects']:
         pub = p.get('publicUrl', '')
         nginx = 'nginx:yes' if p.get('nginx') else 'nginx:no'
         print(f'  {p[\"id\"]:20s} publicUrl={pub:10s} {nginx}')
     print(f'  nginxExtras: {len(extras)} entries')
-    exit(0)
-" && ok "projects.json fields verified" || bad "projects.json field check failed"
+    sys.exit(0)
+" && ok "manifest fields verified" || bad "manifest field check failed"
 echo ""
 
 # ── Step 4: Bash syntax ──
 info "Step 4: Bash syntax check"
 syntax_fail=0
-for f in scripts/*.sh scripts/lib/*.sh tests/*.sh; do
+for f in scripts/*.sh scripts/lib/*.sh scripts/ops/*.sh scripts/tools/*.sh tests/*.sh; do
     [ -f "$f" ] || continue
     if bash -n "$f" 2>/dev/null; then
         ok "syntax $(basename "$f")"
@@ -115,7 +118,7 @@ echo ""
 
 # ── Step 7: Nginx generation (http mode) ──
 info "Step 7: Nginx generation (http mode)"
-nginx_http=$(python3 scripts/generate-nginx.py --mode http 2>&1 || true)
+nginx_http=$(python3 scripts/tools/generate-nginx.py --mode http 2>&1 || true)
 if echo "$nginx_http" | grep -q 'server {' && echo "$nginx_http" | grep -q 'location'; then
     ok "HTTP mode nginx config generated"
     echo "$nginx_http" | grep -q '/api/ws' && ok "  /api/ws location present" || bad "  /api/ws missing"
@@ -135,7 +138,7 @@ echo ""
 
 # ── Step 8: Nginx generation (ssl-redirect mode) ──
 info "Step 8: Nginx generation (ssl-redirect mode)"
-nginx_ssl=$(python3 scripts/generate-nginx.py --mode ssl-redirect --domain example.com --www-domain www.example.com 2>&1 || true)
+nginx_ssl=$(python3 scripts/tools/generate-nginx.py --mode ssl-redirect --domain example.com --www-domain www.example.com 2>&1 || true)
 if echo "$nginx_ssl" | grep -q 'listen 443' && echo "$nginx_ssl" | grep -q 'ssl_certificate'; then
     ok "SSL-redirect mode nginx config generated"
     echo "$nginx_ssl" | grep -q 'return 301 https' && ok "  HTTPS redirect present" || bad "  HTTPS redirect missing"
@@ -147,7 +150,7 @@ echo ""
 
 # ── Step 9: Nginx generation (ssl-combined mode) ──
 info "Step 9: Nginx generation (ssl-combined mode)"
-nginx_combined=$(python3 scripts/generate-nginx.py --mode ssl-combined --domain example.com --www-domain www.example.com 2>&1 || true)
+nginx_combined=$(python3 scripts/tools/generate-nginx.py --mode ssl-combined --domain example.com --www-domain www.example.com 2>&1 || true)
 if echo "$nginx_combined" | grep -q 'listen 80' && echo "$nginx_combined" | grep -q 'listen 443' && echo "$nginx_combined" | grep -q 'error_page 497'; then
     ok "SSL-combined mode nginx config generated"
 else

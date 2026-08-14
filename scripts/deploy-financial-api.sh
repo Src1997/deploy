@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
+# -- CRLF self-fix: Windows-edited scripts may carry \r, strip and re-exec --
+if grep -q $'\r' "${BASH_SOURCE[0]}" 2>/dev/null; then
+    sed -i 's/\r$//' "${BASH_SOURCE[0]}"
+    exec bash "${BASH_SOURCE[0]}" "$@"
+fi
+
 # ============================================================================
-# Financial API — Server-side one-click deploy script
+# Financial API - Server-side one-click deploy script
 #
 # Usage:
 #   ./deploy.sh                # Full: backup + extract + deps + migrate + seed + restart
@@ -34,8 +40,10 @@ _load_optional_env() {
              "${HOME}/deploy-sandbox/deploy.env"; do
         [ -n "$f" ] && [ -f "$f" ] || continue
         set -a
+        # Strip CRLF (\r) before sourcing - Windows-edited env files
+        # would inject \r into variable values causing garbled errors
         # shellcheck disable=SC1090
-        source "$f"
+        source <(sed 's/\r$//' "$f")
         set +a
         break
     done
@@ -47,6 +55,7 @@ PROJECT_BASE="${PROJECT_BASE:-/www/wwwroot/project}"
 DEPLOY_ROOT="${DEPLOY_ROOT:-$PROJECT_BASE/financial/financial-api}"
 PKG_DIR="${PKG_DIR:-$DEPLOY_ROOT/package}"
 BACKUP_DIR="${BACKUP_DIR:-$DEPLOY_ROOT/backup}"
+BACKUP_BASE="${BACKUP_BASE:-$PROJECT_BASE/backup}"
 VENV_DIR="${VENV_DIR:-$PKG_DIR/.venv}"
 ENV_FILE="${ENV_FILE:-$PKG_DIR/.env}"
 # 专用临时目录，禁止向 /tmp 顶层散落文件
@@ -54,7 +63,7 @@ DEPLOY_TMP_DIR="${DEPLOY_TMP_DIR:-/tmp/fin-deploy}"
 mkdir -p "$DEPLOY_TMP_DIR"
 export TMPDIR="$DEPLOY_TMP_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-MAX_BACKUPS="${MAX_BACKUPS:-5}"
+MAX_BACKUPS="${MAX_BACKUPS:-7}"
 CONFIGS_SRC="${CONFIGS_SRC:-$PROJECT_BASE/uploads/dist/configs}"
 
 # ── 密码（仅 deploy.env / 环境变量；禁止脚本内硬编码）──
@@ -219,8 +228,8 @@ if $DO_ROLLBACK; then
     systemctl start financial-api financial-crawler financial-worker financial-streaming
     sleep 2
 
-    if curl -sf http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
-        ok "API health check passed"
+if curl -sf --max-time 5 http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
+ok "API health check passed"
     else
         warn "API health check failed — check: journalctl -u financial-api -n 30"
     fi
@@ -427,15 +436,15 @@ DEBUG=false
 APP_ROLE=api
 HOST=127.0.0.1
 PORT=5001
-POSTGRES_HOST=localhost
+POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
 POSTGRES_USER=root
 POSTGRES_PASSWORD=${PG_PASSWORD}
 POSTGRES_DB=quant_zc
-DATABASE_URL=postgresql+psycopg2://root:${PG_PASSWORD}@localhost:5432/quant_zc
+DATABASE_URL=postgresql+psycopg2://root:${PG_PASSWORD}@127.0.0.1:5432/quant_zc
 REDIS_ENABLED=true
-REDIS_URL=redis://:${REDIS_PASSWORD}@localhost:6379/0
-ARQ_REDIS_URL=redis://:${REDIS_PASSWORD}@localhost:6379/1
+REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:6379/0
+ARQ_REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:6379/1
 AUTH_MODE=local
 AUTH_SECRET_KEY=${AUTH_KEY}
 AUTH_UPSTREAM_URL=http://127.0.0.1:5000
@@ -527,29 +536,34 @@ ok "Dependencies installed"
 # ── 5. Ensure logs directory ─────────────────────────────────────────────────
 mkdir -p "${PKG_DIR}/logs"
 
-# ── 5.5 数据库备份（迁移前 pg_dump）───────────────────────────────────
+# ── 5.5 Database backup (pg_dump before migration) ──────────────────────
 db_backup() {
-    # 从 .env 读取数据库名，回退到默认值
+    # Read DB name from .env, fallback to default
     local db_name="quant_zc"
     if [[ -f "$ENV_FILE" ]]; then
         local parsed_db
         parsed_db=$(grep '^POSTGRES_DB=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '[:space:]')
         [[ -n "$parsed_db" ]] && db_name="$parsed_db"
     fi
-    local db_backup_dir="${PKG_DIR}/logs/db-backups"
+    # Database backups go under BACKUP_BASE (same as code backups)
+    local db_backup_dir="${BACKUP_BASE:-$PROJECT_BASE/backup}/db-backups/$db_name"
     mkdir -p "$db_backup_dir"
     local db_file="${db_backup_dir}/${TIMESTAMP}.sql.gz"
     log "Backing up database ($db_name) before migration..."
-    if PGPASSWORD="${PG_PASSWORD}" pg_dump -U root -h localhost "$db_name" 2>/dev/null | gzip > "$db_file"; then
+    if PGPASSWORD="${PG_PASSWORD}" pg_dump -U root -h 127.0.0.1 "$db_name" 2>/dev/null | gzip > "$db_file"; then
         local db_size
         db_size=$(du -h "$db_file" | cut -f1)
         ok "Database backup: $db_file ($db_size)"
-        # 清理旧备份（保留 5 个）
+        # Rotate old backups (keep MAX_BACKUPS)
         local count
         count=$(ls -1 "$db_backup_dir"/*.sql.gz 2>/dev/null | wc -l)
-        [ "$count" -gt 5 ] && ls -t "$db_backup_dir"/*.sql.gz | tail -n +6 | xargs rm -f 2>/dev/null
+        if (( count > MAX_BACKUPS )); then
+            ls -t "$db_backup_dir"/*.sql.gz | tail -n +$((MAX_BACKUPS + 1)) | xargs rm -f 2>/dev/null
+            log "Rotated old DB backups (kept ${MAX_BACKUPS})"
+        fi
     else
         warn "Database backup failed — continuing anyway (migration will proceed)"
+        rm -f "$db_file" 2>/dev/null
     fi
 }
 
@@ -724,8 +738,8 @@ if $DO_RESTART; then
     sleep 2
 
     # Health check
-    if curl -sf http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
-        ok "API health check passed"
+if curl -sf --max-time 5 http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
+ok "API health check passed"
     else
         warn "API health check failed — check: journalctl -u financial-api -n 30"
         warn "If needed, rollback with: bash deploy.sh --rollback"
@@ -733,7 +747,7 @@ if $DO_RESTART; then
 
     # Post-deploy verification: navigation API returns expected structure
     local nav_count
-    nav_count=$(curl -sf http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
+    nav_count=$(curl -sf --max-time 5 http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('data',d) if isinstance(d,dict) else d))" 2>/dev/null || echo "0")
     if [[ "$nav_count" -gt 0 ]]; then
         ok "Navigation API verified ($nav_count nodes)"
@@ -744,7 +758,7 @@ if $DO_RESTART; then
 
     # Post-deploy verification: quant-trading is visible in allowedMenuIds
     local has_quant
-    has_quant=$(curl -sf http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
+    has_quant=$(curl -sf --max-time 5 http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); data=d.get('data',d) if isinstance(d,dict) else d; print('quant-trading' in data.get('allowedMenuIds',[]))" 2>/dev/null || echo "False")
     if [[ "$has_quant" == "True" ]]; then
         ok "quant-trading visible in allowedMenuIds"

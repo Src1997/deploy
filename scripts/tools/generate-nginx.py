@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate Nginx config from projects.json.
+"""Generate Nginx config from TOML project configs.
 
 Usage:
-    python3 scripts/generate-nginx.py --mode http
-    python3 scripts/generate-nginx.py --mode ssl-redirect --domain example.com --www-domain www.example.com
-    python3 scripts/generate-nginx.py --mode ssl-combined --domain example.com --www-domain www.example.com
+    python3 scripts/tools/generate-nginx.py --mode http
+    python3 scripts/tools/generate-nginx.py --mode ssl-redirect --domain example.com --www-domain www.example.com
+    python3 scripts/tools/generate-nginx.py --mode ssl-combined --domain example.com --www-domain www.example.com
 
 Modes:
     http           - HTTP only (no SSL), server_name _
@@ -12,21 +12,28 @@ Modes:
     ssl-combined   - SSL combined HTTP+HTTPS in one server block
 """
 import argparse
-import json
 import os
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEPLOY_DIR = os.path.dirname(SCRIPT_DIR)
-JSON_PATH = os.path.join(DEPLOY_DIR, 'projects.json')
+
+# -- Import config_loader (shared TOML reader) --
+for _lib in [os.path.join(SCRIPT_DIR, 'lib'),
+              os.path.join(SCRIPT_DIR, '..', 'lib')]:
+    if os.path.isfile(os.path.join(_lib, 'config_loader.py')):
+        sys.path.insert(0, _lib)
+        break
+
+import config_loader  # noqa: E402
 
 
 def load_projects():
-    if not os.path.exists(JSON_PATH):
-        print(f'Error: {JSON_PATH} not found', file=sys.stderr)
+    """Load project manifest directly from TOML configs."""
+    configs_dir = config_loader.find_configs_dir(__import__('pathlib').Path(SCRIPT_DIR))
+    if not configs_dir.is_dir():
+        print(f'Error: project-configs/ not found near {SCRIPT_DIR}', file=sys.stderr)
         sys.exit(1)
-    with open(JSON_PATH, encoding='utf-8') as f:
-        return json.load(f)
+    return config_loader.load_manifest(configs_dir)
 
 
 def generate_static_location(loc, deploy_path, project_base):
@@ -224,8 +231,7 @@ server {{
 
 # -- HTTPS bare domain -> www redirect --
 server {{
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name {domain};
 
     ssl_certificate    /www/server/panel/vhost/cert/{www_domain}/fullchain.pem;
@@ -237,8 +243,7 @@ server {{
 
 # -- HTTPS main site (www) --
 server {{
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name {www_domain};
 
     ssl_certificate    /www/server/panel/vhost/cert/{www_domain}/fullchain.pem;
@@ -285,8 +290,7 @@ def generate_header_ssl_combined(domain, www_domain):
     cert_domain = www_domain or domain or '_'
     return f"""server {{
     listen 80;
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name _;
 
     # -- SSL --
@@ -347,7 +351,7 @@ def generate_footer():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate Nginx config from projects.json')
+    parser = argparse.ArgumentParser(description='Generate Nginx config from TOML project configs')
     parser.add_argument('--mode', choices=['http', 'ssl-redirect', 'ssl-combined'],
                         default='http', help='Nginx mode')
     parser.add_argument('--domain', default='', help='Bare domain (for SSL)')
@@ -386,6 +390,13 @@ def main():
     static_blocks = []
     root_block = None
 
+    # First pass: find rootProject (determines whether to skip "/" static locations)
+    has_root = any(
+        p.get('nginx', {}).get('rootProject')
+        for p in projects
+        if p.get('enabled', True)
+    )
+
     for proj in projects:
         if not proj.get('enabled', True):
             continue
@@ -398,6 +409,9 @@ def main():
             continue
 
         for loc in nginx.get('locations', []):
+            # Skip static location "/" when a rootProject handles the root path
+            if loc.get('path') == '/' and loc.get('type', 'static') == 'static' and has_root:
+                continue
             block = generate_location_block(loc, proj, project_base)
             loc_type = loc.get('type', 'static')
             if loc_type == 'websocket':
