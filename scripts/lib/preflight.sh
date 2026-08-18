@@ -31,7 +31,7 @@ preflight() {
         ok "磁盘空间：$(df -h "$check_path" | awk 'NR==2{print $4}') 可用"
     fi
 
-    # 2. PostgreSQL running (check systemd, init.d, or pg_isready fallback)
+    # 2. PostgreSQL running (check + auto-start if down)
     # Load baota PATH so pg_isready/psql are found in non-interactive SSH
     [ -f /etc/profile.d/baota-path.sh ] && . /etc/profile.d/baota-path.sh 2>/dev/null || true
     if timeout 5 systemctl is-active --quiet bt-pgsql 2>/dev/null \
@@ -40,11 +40,35 @@ preflight() {
         || timeout 5 pg_isready -h "$PG_HOST" -U "$PG_USER" >/dev/null 2>&1; then
         ok "PostgreSQL：运行中"
     else
-        err "PostgreSQL 未运行或不可连接（bt-pgsql/bt-postgresql/init.d/pgsql 或 pg_isready 检查失败）"
-        ((errors++))
+        warn "PostgreSQL 未运行，尝试自动启动..."
+        # Try multiple start methods: systemd -> init.d -> pg_ctl as postgres user
+        local pg_started=0
+        if timeout 10 systemctl start bt-pgsql 2>/dev/null \
+            || timeout 10 systemctl start bt-postgresql 2>/dev/null \
+            || timeout 10 /etc/init.d/pgsql start 2>/dev/null; then
+            sleep 3
+            if timeout 5 pg_isready -h "$PG_HOST" -U "$PG_USER" >/dev/null 2>&1; then
+                ok "PostgreSQL：自动启动成功"
+                pg_started=1
+            fi
+        fi
+        # Fallback: pg_ctl as postgres user (BaoTa installs PG under /www/server/pgsql)
+        if [ "$pg_started" -eq 0 ] && [ -x /www/server/pgsql/bin/pg_ctl ] && [ -d /www/server/pgsql/data ]; then
+            if su - postgres -c "/www/server/pgsql/bin/pg_ctl start -D /www/server/pgsql/data -l /tmp/pg-preflight.log" 2>/dev/null; then
+                sleep 3
+                if timeout 5 pg_isready -h "$PG_HOST" -U "$PG_USER" >/dev/null 2>&1; then
+                    ok "PostgreSQL：pg_ctl 启动成功"
+                    pg_started=1
+                fi
+            fi
+        fi
+        if [ "$pg_started" -eq 0 ]; then
+            err "PostgreSQL 自动启动失败（尝试了 systemd / init.d / pg_ctl）"
+            ((errors++))
+        fi
     fi
 
-    # 3. Redis running (password may be empty)
+    # 3. Redis running (check + auto-start if down)
     local redis_args=(-h "${REDIS_HOST:-127.0.0.1}" -p "${REDIS_PORT:-6379}")
     if [ -n "${REDIS_PASSWORD:-}" ]; then
         redis_args+=(-a "$REDIS_PASSWORD")
@@ -52,8 +76,40 @@ preflight() {
     if timeout 5 redis-cli "${redis_args[@]}" ping >/dev/null 2>&1; then
         ok "Redis：运行中"
     else
-        err "Redis 未运行或密码不正确"
-        ((errors++))
+        warn "Redis 未运行，尝试自动启动..."
+        local redis_started=0
+        # For remote Redis (REDIS_HOST is not localhost), don't try to start
+        local redis_is_local=1
+        case "${REDIS_HOST:-127.0.0.1}" in
+            127.0.0.1|localhost|::1) redis_is_local=1 ;;
+            *) redis_is_local=0 ;;
+        esac
+        if [ "$redis_is_local" -eq 1 ]; then
+            if timeout 10 systemctl start bt-redis 2>/dev/null \
+                || timeout 10 systemctl start redis 2>/dev/null \
+                || timeout 10 /etc/init.d/redis start 2>/dev/null; then
+                sleep 2
+                if timeout 5 redis-cli "${redis_args[@]}" ping >/dev/null 2>&1; then
+                    ok "Redis：自动启动成功"
+                    redis_started=1
+                fi
+            fi
+            # Fallback: direct redis-server with BaoTa config
+            if [ "$redis_started" -eq 0 ] && [ -x /www/server/redis/src/redis-server ]; then
+                /www/server/redis/src/redis-server /www/server/redis/redis.conf 2>/dev/null &
+                sleep 2
+                if timeout 5 redis-cli "${redis_args[@]}" ping >/dev/null 2>&1; then
+                    ok "Redis：redis-server 启动成功"
+                    redis_started=1
+                fi
+            fi
+        else
+            warn "Redis ($REDIS_HOST) 是远程实例，跳过自动启动"
+        fi
+        if [ "$redis_started" -eq 0 ]; then
+            err "Redis 自动启动失败或远程不可连接"
+            ((errors++))
+        fi
     fi
 
     # 4. Backend port check (extract port from healthUrl)

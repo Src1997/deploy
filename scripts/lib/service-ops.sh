@@ -6,13 +6,28 @@
 # Depends on: PROJECTS, SERVICES, HEALTH_URL, PROJECT_SERVICE,
 #             PROJECT_DISPLAY_NAME, NO_RESTART, LOG_LINES, LOG_LEVEL
 
+# Detect Supervisor (BaoTa plugin or system)
+_SUPERVISORCTL=""
+if [ -x /www/server/panel/plugin/supervisor/bin/supervisorctl ]; then
+    _SUPERVISORCTL="/www/server/panel/plugin/supervisor/bin/supervisorctl"
+elif command -v supervisorctl &>/dev/null; then
+    _SUPERVISORCTL=$(command -v supervisorctl)
+fi
+
 restart_service() {
     if $NO_RESTART; then warn "跳过重启 (--no-restart)"; return; fi
     local svc="$1"
     log "重启 $svc..."
-    systemctl restart "$svc" 2>/dev/null || warn "$svc 重启失败"
-    sleep 2
-    systemctl is-active "$svc" >/dev/null 2>&1 && ok "$svc 运行中" || warn "$svc 未运行"
+    # Try Supervisor first, fall back to systemctl
+    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+        $_SUPERVISORCTL restart "$svc" 2>/dev/null || warn "$svc Supervisor restart failed"
+        sleep 2
+        $_SUPERVISORCTL status "$svc" 2>/dev/null | grep -q RUNNING && ok "$svc 运行中 (Supervisor)" || warn "$svc 未运行"
+    else
+        systemctl restart "$svc" 2>/dev/null || warn "$svc 重启失败"
+        sleep 2
+        systemctl is-active "$svc" >/dev/null 2>&1 && ok "$svc 运行中" || warn "$svc 未运行"
+    fi
 }
 
 health_check() {
@@ -56,9 +71,15 @@ show_status() {
     printf "  %-22s %-10s %s\n" "SERVICE" "STATUS" "HEALTH"
     hr
     for svc in "${services[@]}"; do
-        local status=$(systemctl is-active "$svc" 2>/dev/null || echo "n/a")
+        local status
+        # Try Supervisor first, fall back to systemctl
+        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+            status=$("$_SUPERVISORCTL" status "$svc" 2>/dev/null | awk '{print $2}' || echo "n/a")
+        else
+            status=$(systemctl is-active "$svc" 2>/dev/null || echo "n/a")
+        fi
         local color
-        [ "$status" = "active" ] && color="$GREEN" || color="$RED"
+        [ "$status" = "RUNNING" ] || [ "$status" = "active" ] && color="$GREEN" || color="$RED"
         local health=""
         for p in "${PROJECTS[@]}"; do
             if echo "${SERVICES[$p]:-}" | grep -qw "$svc"; then
@@ -114,15 +135,28 @@ show_logs() {
             case "$mode" in
                 0)
                     banner "实时日志: $svc"
-                    journalctl -u "$svc" -f
+                    # Try Supervisor tail first, fall back to journalctl
+                    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+                        $_SUPERVISORCTL tail -f "$svc" stderr
+                    else
+                        journalctl -u "$svc" -f
+                    fi
                     ;;
                 50)
                     banner "最近 50 行: $svc"
-                    journalctl -u "$svc" -n 50 --no-pager
+                    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+                        $_SUPERVISORCTL tail "$svc" stderr -50 2>/dev/null || tail -50 "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null || journalctl -u "$svc" -n 50 --no-pager
+                    else
+                        journalctl -u "$svc" -n 50 --no-pager
+                    fi
                     ;;
                 error)
                     banner "ERROR 日志: $svc"
-                    journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
+                    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+                        grep -iE 'error|traceback|exception' "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null | tail -30 || journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
+                    else
+                        journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
+                    fi
                     ;;
             esac
         else
@@ -142,16 +176,28 @@ show_logs() {
 
     if [ -n "$LOG_LEVEL" ] && [ "$LOG_LEVEL" = "error" ]; then
         banner "ERROR 日志: $svc"
-        journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
+        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+            grep -iE 'error|traceback|exception' "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null | tail -30 || journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
+        else
+            journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
+        fi
         return
     fi
 
     local lines="${LOG_LINES:-50}"
     if [ "$lines" = "0" ]; then
         banner "实时日志: $svc"
-        journalctl -u "$svc" -f
+        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+            $_SUPERVISORCTL tail -f "$svc" stderr
+        else
+            journalctl -u "$svc" -f
+        fi
     else
         banner "最近 $lines 行: $svc"
-        journalctl -u "$svc" -n "$lines" --no-pager
+        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+            $_SUPERVISORCTL tail "$svc" stderr -"$lines" 2>/dev/null || tail -"$lines" "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null || journalctl -u "$svc" -n "$lines" --no-pager
+        else
+            journalctl -u "$svc" -n "$lines" --no-pager
+        fi
     fi
 }

@@ -150,6 +150,40 @@ check_python() {
     fi
 }
 
+check_supervisor() {
+    # BaoTa Supervisor plugin installs to /www/server/panel/plugin/supervisor/
+    local sv_dir="/www/server/panel/plugin/supervisor"
+    local sv_bin=""
+    local sv_ctl=""
+
+    # Detect binary paths (BaoTa plugin or system)
+    if [ -x "${sv_dir}/bin/supervisord" ]; then
+        sv_bin="${sv_dir}/bin/supervisord"
+        sv_ctl="${sv_dir}/bin/supervisorctl"
+    elif command -v supervisord &>/dev/null; then
+        sv_bin=$(command -v supervisord)
+        sv_ctl=$(command -v supervisorctl 2>/dev/null || echo "")
+    fi
+
+    if [ -n "$sv_bin" ]; then
+        local ver
+        ver=$("$sv_bin" --version 2>/dev/null | head -1 || echo "unknown")
+        ok "Supervisor: $ver"
+
+        # Check if supervisord is running
+        if pgrep -f supervisord &>/dev/null 2>&1; then
+            ok "Supervisor 服务运行中"
+        else
+            warn "Supervisor 已安装但服务未运行，请在宝塔面板启动"
+            MISSING=$((MISSING + 1))
+        fi
+    else
+        err "Supervisor: 未安装"
+        MISSING=$((MISSING + 1))
+        return 1
+    fi
+}
+
 check_baota_panel() {
     if [ -f "/etc/init.d/bt" ] || [ -d "/www/server/panel" ]; then
         ok "宝塔面板: 已安装"
@@ -238,6 +272,14 @@ print_install_guide() {
         echo ""
     fi
 
+    # Supervisor
+    if ! pgrep -f supervisord &>/dev/null 2>&1 && [ ! -x /www/server/panel/plugin/supervisor/bin/supervisord ]; then
+        echo "  [缺失] Supervisor"
+        echo "    → 软件商店 → 搜索 Supervisor → 安装"
+        echo "    → 安装后在 Supervisor 管理器中启动服务"
+        echo ""
+    fi
+
     echo "  ── 安全设置 ──"
     echo ""
     echo "  宝塔面板 → 安全 → 放行端口："
@@ -266,6 +308,7 @@ run_checks() {
     check_postgresql
     check_redis
     check_python
+    check_supervisor
     check_firewall
     check_docker
 
