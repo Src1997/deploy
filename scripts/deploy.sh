@@ -180,6 +180,8 @@ show_help() {
     --nginx --dynamic   动态生成 Nginx 配置（从 TOML 配置生成 location 块）
     --sync-nginx        从 TOML 配置重新生成 Nginx 配置并 reload
     --sync-scripts      从 dist/ 同步最新部署脚本到当前目录（修复脚本过期）
+                        注意：如果 dist/ 本身也是旧的，需在 Windows 端运行：
+                        .\scripts\build.ps1 --scripts-only -Upload -Target <target>
     --help              显示此帮助
 
   环境变量：

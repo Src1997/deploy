@@ -2,7 +2,7 @@
 
 > **Category**: Guide
 
-从零开始：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/*.toml`）→ systemd + Nginx。
+从零开始：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/*.toml`）→ Supervisor 进程守护 + Nginx。
 
 ## 前提条件
 
@@ -19,14 +19,15 @@
 
 Phase 1: 服务器清理               (01-cleanup-server.sh)
          ├─ Docker 卸载（已卸则自动跳过）
-         └─ 系统防火墙/系统库冲突清理（子模块 lib-clear-conflicts.sh）
-Phase 2: 安装宝塔面板             (02-install-baota.sh)     ← 已装则提示跳过
+         └─ 系统防火墙/系统库冲突清理（子模块 lib-clear-conflicts.sh）nPhase 2: 安装宝塔面板             (02-install-baota.sh)     ← 已装则提示跳过
          脚本结束后会输出面板地址和手动安装组件指引
-Phase 3: 宝塔面板手动安装组件      (手动) Nginx/PG/Redis/Python
+Phase 3: 宝塔面板手动安装组件      (手动) Nginx/PG/Redis/Python/Supervisor
          + 宝塔「安全」放行端口
          + 安装完成后运行检查: bash 03-check-components.sh
 Phase 4: 创建数据库和目录          (04-setup-server.sh)
          脚本开头会自动调用 03-check-components.sh 检查组件
+Phase 4b: Supervisor 进程守护       (05-setup-supervisor.sh)
+         配置 6 个 Python 后端进程守护 + 基础设施开机自启
 Phase 5: 本地构建打包             (build.ps1 all)
 Phase 6: 上传到服务器             (scp dist + deploy.sh)
 Phase 7: 服务器部署               (deploy.sh all)           ← 已部署会提示确认
@@ -101,6 +102,7 @@ bash /root/02-install-baota.sh
 | **PostgreSQL** | 16.x | 数据库（两个后端共享） | 软件商店 → 搜索 PostgreSQL 管理器 → 安装管理器 → 版本管理 → 安装 16 |
 | **Redis** | 7.x/8.x | 缓存（两个后端共享） | 软件商店 → 搜索 Redis → 安装 |
 | **Python 项目管理器** | — | 提供 Python 3.12（后端 venv 用） | 软件商店 → 搜索 Python 项目管理器 |
+| **Supervisor** | 最新版 | 进程守护 + 开机自启 | 软件商店 → 搜索 Supervisor → 安装 |
 
 **安装完成后，设置密码（与 `deploy.env` 保持一致）：**
 
@@ -134,6 +136,36 @@ bash /root/04-setup-server.sh
 
 ---
 
+## Phase 4b: Supervisor 进程守护 + 开机自启（SSH）
+
+```bash
+scp D:\Workspace\deploy\scripts\ops\05-setup-supervisor.sh root@服务器IP:/root/
+bash /root/05-setup-supervisor.sh
+```
+
+该脚本自动完成：
+
+1. **基础设施开机自启**：Nginx / Redis / PostgreSQL 的 init.d 注册到 rc.d
+2. **项目进程守护**：为 6 个 Python 后端创建 Supervisor INI 配置
+   - `financial-api` (uvicorn :5001)
+   - `financial-crawler` (爬虫调度)
+   - `financial-streaming` (流式推送)
+   - `financial-worker` (arq 后台任务)
+   - `quantdinger-backend` (gunicorn :5000)
+   - `quantdinger-mcp` (MCP :7800)
+3. **清理旧 systemd unit**：删除之前的 systemd service 文件，避免与 Supervisor 冲突
+4. **重载 Supervisor**：reread + update + start 所有进程
+5. **验证**：端口监听、API 健康检查
+
+常用参数：
+```bash
+bash 05-setup-supervisor.sh --check     # 仅检查状态
+bash 05-setup-supervisor.sh --infra     # 仅配置基础设施开机自启
+bash 05-setup-supervisor.sh --projects  # 仅配置项目进程守护
+```
+
+---
+
 ## Phase 5: 本地构建打包（Windows PowerShell）
 
 ```powershell
@@ -162,8 +194,8 @@ bash deploy.sh all --ip=服务器IP
 ```
 
 部署脚本自动完成：
-1. **financial-api**: 代码同步 → venv → .env → 依赖 → 迁移 → 种子 → systemd → 启动
-2. **QuantDinger 后端**: 代码同步 → venv → .env → 依赖 → init.sql → systemd → 启动
+1. **financial-api**: 代码同步 → venv → .env → 依赖 → 迁移 → 种子 → Supervisor → 启动
+2. **QuantDinger 后端**: 代码同步 → venv → .env → 依赖 → init.sql → Supervisor → 启动
 3. **静态站点**: 解压到对应目录
 4. **Nginx**: 动态生成配置并重载（`--nginx`）
 
@@ -255,7 +287,7 @@ bash deploy.sh --nginx
 
 ```bash
 bash deploy.sh financial-api
-systemctl restart financial-api
+supervisorctl restart financial-api
 ```
 
 ### 5. 验证

@@ -8,6 +8,7 @@
 
 多项目宝塔部署工具箱：从零搭建服务器 → 配置驱动打包 → 增量部署/回滚 → 日常运维。
 本地 Windows 构建（PowerShell），服务器 Ubuntu/宝塔运行（Bash）。
+进程守护使用宝塔 Supervisor 插件（统一管理 + 开机自启）。
 
 ## 目录结构
 
@@ -21,7 +22,7 @@ deploy/
     lib/                   # 共享库（Bash + PowerShell）
       common.sh            # 颜色、日志、CRLF 修复、新鲜度检查（101 行）
       preflight.sh         # 部署前检查（102 行）
-      service-ops.sh       # 服务重启、健康检查、状态总览、日志查看（143 行）
+      service-ops.sh       # 服务重启、健康检查、状态总览、日志查看（支持 Supervisor + systemctl）
       backup-rollback.sh   # 备份与回滚（247 行）
       nginx.sh             # Nginx 配置生成与部署（126 行）
       deploy-kinds.sh      # 各类型部署函数（frontend/python/java/go/nodejs）（542 行）
@@ -35,8 +36,9 @@ deploy/
       01-cleanup-server.sh    # Phase 1: Docker + 系统冲突清理
       lib-clear-conflicts.sh  # 系统冲突清理子模块（被 01 调用，也可单独跑）
       02-install-baota.sh     # Phase 2: 安装宝塔面板（输出手动安装组件指引）
-      03-check-components.sh  # Phase 3: 检查宝塔组件是否全部安装完成
+      03-check-components.sh  # Phase 3: 检查宝塔组件是否全部安装完成（含 Supervisor）
       04-setup-server.sh      # Phase 4: 创建数据库和目录（开头调用 03-check）
+      05-setup-supervisor.sh  # Phase 4b: Supervisor 进程守护 + 基础设施开机自启
       wsl-*.ps1 / wsl-autostart.sh
     tools/                 # 工具脚本
       detect-status.sh     # 部署进度检测

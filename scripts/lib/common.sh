@@ -44,10 +44,10 @@ _check_script_freshness() {
             echo -e "\033[33m[!] WARNING: deploy scripts on this server are STALE.\033[0m" >&2
             echo -e "\033[33m[!] dist/.scripts-version: $version_ts\033[0m" >&2
             echo -e "\033[33m[!] This deploy.sh last modified: $(date -d "@$script_mtime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'unknown')\033[0m" >&2
-            echo -e "\033[33m[!] The dist/ directory contains newer scripts. Re-upload or run:\033[0m" >&2
-            echo -e "\033[33m[!]   cp $candidate_dir/deploy.sh $script_dir/deploy.sh\033[0m" >&2
-            echo -e "\033[33m[!]   cp $candidate_dir/detect-status.sh $script_dir/detect-status.sh\033[0m" >&2
-            echo -e "\033[33m[!]   cp -r $candidate_dir/lib/* $script_dir/lib/ 2>/dev/null; true\033[0m" >&2
+            echo -e "\033[33m[!] The dist/ directory contains newer scripts.\033[0m" >&2
+            echo -e "\033[33m[!] Quick fix (Windows PowerShell):\033[0m" >&2
+            echo -e "\033[33m[!]   .\scripts\build.ps1 --scripts-only -Upload -Target <target>\033[0m" >&2
+            echo -e "\033[33m[!] Or manual: rm -rf dist/ on server, then scp -r dist/ from Windows.\033[0m" >&2
             echo "" >&2
             return 1
         fi
