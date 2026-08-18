@@ -20,12 +20,16 @@
     .\scripts\build.ps1 all                      # Build all
     .\scripts\build.ps1 financial,official-site  # Build multiple groups
     .\scripts\build.ps1 --scripts-only           # Only refresh dist/ scripts (skip package build)
+    .\scripts\build.ps1 financial-api -Upload -Target vm  # Build + upload to VM
+    .\scripts\build.ps1 --scripts-only -Upload -Target vm # Refresh scripts + upload
 #>
 
 param(
     [Parameter(Position = 0)]
     [string]$Project = "",
-    [switch]$ScriptsOnly
+    [switch]$ScriptsOnly,
+    [switch]$Upload,
+    [string]$Target = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -208,6 +212,26 @@ function Copy-DeployAssets {
         W-OK "Copied: lib/ (server-side .sh + .py only)"
     }
 
+    # ops/ — copy only server-side .sh files (ops scripts like 05-setup-supervisor.sh).
+    # wsl-*.ps1 / wsl-autostart.sh are Windows-only or WSL-specific, excluded from dist/.
+    if (Test-Path $ScriptsDir\ops) {
+        $do = Join-Path $DistDir 'scripts\ops'
+        if (Test-Path $do) { Remove-Item $do -Recurse -Force }
+        New-Item -ItemType Directory -Path $do -Force | Out-Null
+        # Copy top-level .sh files (01-*.sh, 02-*.sh, etc.)
+        Get-ChildItem $ScriptsDir\ops -File | Where-Object {
+            $_.Extension -eq '.sh'
+        } | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $do $_.Name) -Force
+        }
+        # Copy lib-clear-conflicts.sh (sub-module sourced by 01-cleanup-server.sh)
+        $libConflicts = Join-Path $ScriptsDir\ops 'lib-clear-conflicts.sh'
+        if (Test-Path $libConflicts) {
+            Copy-Item $libConflicts (Join-Path $do 'lib-clear-conflicts.sh') -Force
+        }
+        W-OK "Copied: scripts/ops/ (server-side .sh only)"
+    }
+
     # project-configs/ (for server-side TOML reading via config_loader.py)
     if (Test-Path $ConfigsDir) {
         $dpc = Join-Path $DistDir 'project-configs'
@@ -250,9 +274,10 @@ function Copy-DeployAssets {
 
     # -- Write .scripts-version stamp (for server-side freshness check) --
     # deploy.sh reads this on startup to detect stale scripts on the server.
+    # Use .NET writer to guarantee no BOM (avoids garbled date parsing on Linux).
     $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $stampFile = Join-Path $DistDir '.scripts-version'
-    Set-Content -Path $stampFile -Value $stamp -NoNewline -Encoding $global:PS_FILE_ENCODING
+    [System.IO.File]::WriteAllText($stampFile, $stamp, $global:PS_UTF8_NO_BOM)
     W-OK "Wrote .scripts-version: $stamp"
 }
 
@@ -277,9 +302,96 @@ function Show-Summary([string[]]$built) {
     Write-Host ""
     Write-Host "  Upload & deploy:" -ForegroundColor White
     $DistDir = Join-Path $DeployDir 'dist'
-    Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
-    Write-Host "    cd /www/wwwroot/project/uploads/dist && bash deploy.sh" -ForegroundColor Cyan
+    if ($Upload) {
+        Invoke-Upload -DistDir $DistDir -Target $Target
+    } else {
+        Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
+        Write-Host "    cd /www/wwwroot/project/uploads/dist && bash deploy.sh" -ForegroundColor Cyan
+    }
     Write-Host ""
+}
+
+# ── Upload dist/ to server (delete old dist first, then scp) ──
+function Invoke-Upload {
+    param(
+        [Parameter(Mandatory)][string]$DistDir,
+        [string]$Target = ""
+    )
+    W-Step "Uploading dist/ to server..."
+
+    # Determine SSH host from deploy.env.<target> or SSH config
+    $sshHost = ''
+    $envFile = ''
+    if ($Target) {
+        $envFile = Join-Path $DeployDir "deploy.env.$Target"
+    } elseif ($env:DEPLOY_TARGET) {
+        $envFile = Join-Path $DeployDir "deploy.env.$($env:DEPLOY_TARGET)"
+    } else {
+        $envFile = Join-Path $DeployDir 'deploy.env'
+    }
+
+    # Try to find SSH host alias from known targets
+    # VM target uses 'vm' SSH alias; server-a uses 'serverA'; server-b uses 'serverB'
+    $targetName = if ($Target) { $Target } elseif ($env:DEPLOY_TARGET) { $env:DEPLOY_TARGET } else { '' }
+    switch ($targetName) {
+        'vm'       { $sshHost = 'vm' }
+        'server-a' { $sshHost = 'serverA' }
+        'server-b' { $sshHost = 'serverB' }
+        default    {
+            # Try reading PROJECT_BASE from env file to infer host
+            if (Test-Path $envFile) {
+                $lines = Get-Content $envFile
+                $baseLine = $lines | Where-Object { $_ -match '^PROJECT_BASE=' } | Select-Object -First 1
+                if ($baseLine -match '=/www/wwwroot') {
+                    # Default to serverA if not VM
+                    $sshHost = 'serverA'
+                }
+            }
+            if (-not $sshHost) {
+                W-Warn "Cannot determine SSH host for target '$targetName'."
+                $sshHost = Read-Host "  Enter SSH host alias (e.g. vm, serverA, serverB, or user@ip)"
+            }
+        }
+    }
+
+    $remotePath = '/www/wwwroot/project/uploads/dist'
+
+    # Step 1: Delete old dist/ on server (clean slate, avoids stale file accumulation)
+    W-Info "Deleting old $remotePath on $sshHost..."
+    & ssh $sshHost "rm -rf $remotePath" 2>&1 | ForEach-Object { W-Info $_ }
+    if ($LASTEXITCODE -ne 0) {
+        W-Warn "ssh rm -rf failed (may not exist yet), continuing with scp..."
+    } else {
+        W-OK "Old dist/ deleted on server"
+    }
+
+    # Step 2: Upload fresh dist/
+    W-Info "Uploading $DistDir to ${sshHost}:$remotePath ..."
+    & scp -r $DistDir "${sshHost}:$remotePath" 2>&1 | ForEach-Object { W-Info $_ }
+    if ($LASTEXITCODE -ne 0) {
+        W-Err "scp upload failed"
+        return $false
+    }
+    W-OK "dist/ uploaded to $sshHost"
+
+    # Step 3: Also upload deploy.env.<target> (not included in dist/ by default)
+    if ($targetName -and (Test-Path $envFile)) {
+        $remoteEnv = "$remotePath/deploy.env.$targetName"
+        W-Info "Uploading deploy.env.$targetName ..."
+        & scp $envFile "${sshHost}:$remoteEnv" 2>&1 | ForEach-Object { W-Info $_ }
+        if ($LASTEXITCODE -eq 0) { W-OK "deploy.env.$targetName uploaded" }
+    }
+
+    Write-Host ""
+    Write-Host "  Deploy command:" -ForegroundColor White
+    $deployCmd = if ($targetName) {
+        "ssh $sshHost 'cd $remotePath && DEPLOY_TARGET=$targetName bash deploy.sh all --ip=__IP__ --yes'"
+    } else {
+        "ssh $sshHost 'cd $remotePath && bash deploy.sh all --yes'"
+    }
+    Write-Host "    $deployCmd" -ForegroundColor Cyan
+    Write-Host ""
+    return $true
 }
 
 # ── Interactive menu ──
@@ -384,10 +496,14 @@ if ($ScriptsOnly) {
     Clean-OldArchives
     W-OK "dist/ scripts refreshed. .scripts-version updated."
     Write-Host ""
-    Write-Host "  Upload & deploy:" -ForegroundColor White
     $DistDir = Join-Path $DeployDir 'dist'
-    Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
-    Write-Host "    cd /www/wwwroot/project/uploads/dist && bash deploy.sh" -ForegroundColor Cyan
+    if ($Upload) {
+        Invoke-Upload -DistDir $DistDir -Target $Target
+    } else {
+        Write-Host "  Upload & deploy:" -ForegroundColor White
+        Write-Host "    scp -r $DistDir serverA:/www/wwwroot/project/uploads/" -ForegroundColor Cyan
+        Write-Host "    cd /www/wwwroot/project/uploads/dist && bash deploy.sh" -ForegroundColor Cyan
+    }
     Write-Host ""
     exit 0
 }
