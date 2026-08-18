@@ -66,13 +66,16 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 MAX_BACKUPS="${MAX_BACKUPS:-7}"
 CONFIGS_SRC="${CONFIGS_SRC:-$PROJECT_BASE/uploads/dist/configs}"
 
-# ── 密码（仅 deploy.env / 环境变量；禁止脚本内硬编码）──
+# ── 密码与配置（仅 deploy.env / 环境变量；禁止脚本内硬编码）──
 PG_PASSWORD="${PG_PASSWORD:-}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 SMTP_PASSWORD="${SMTP_PASSWORD:-}"
 DOMAIN="${DOMAIN:-}"
 WWW_DOMAIN="${WWW_DOMAIN:-}"
 APP_NAME="${APP_NAME:-MyApp}"
+# 数据库用户/库名（deploy.env 中可覆盖，默认 root/quant_zc）
+PG_USER="${PG_USER:-root}"
+POSTGRES_DB="${POSTGRES_DB:-quant_zc}"
 
 _require_secrets() {
     if [ -z "${PG_PASSWORD}" ] || [ "${PG_PASSWORD}" = "CHANGE_ME" ] \
@@ -425,6 +428,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
             -e "s|__DOMAIN__|${DOMAIN}|g" \
             -e "s|__WWW_DOMAIN__|${WWW_DOMAIN}|g" \
             -e "s|__APP_NAME__|${APP_NAME}|g" \
+            -e "s|__PG_USER__|${PG_USER:-root}|g" \
+            -e "s|__POSTGRES_DB__|${POSTGRES_DB:-quant_zc}|g" \
             "$template" > "$ENV_FILE"
         ok ".env generated from template: $template"
     else
@@ -438,10 +443,10 @@ HOST=127.0.0.1
 PORT=5001
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
-POSTGRES_USER=root
+POSTGRES_USER=${PG_USER}
 POSTGRES_PASSWORD=${PG_PASSWORD}
-POSTGRES_DB=quant_zc
-DATABASE_URL=postgresql+psycopg2://root:${PG_PASSWORD}@127.0.0.1:5432/quant_zc
+POSTGRES_DB=${POSTGRES_DB}
+DATABASE_URL=postgresql+psycopg2://${PG_USER}:${PG_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
 REDIS_ENABLED=true
 REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:6379/0
 ARQ_REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:6379/1
@@ -517,6 +522,56 @@ sync_env() {
 
 sync_env
 
+# ── 2.6 CORS_ORIGINS 增量更新（追加 SERVER_IP + Tailscale IP）─────────
+# 确保 CORS_ORIGINS 包含当前 SERVER_IP 和 Tailscale 穿透 IP
+# 安全保证：只在已有 CORS_ORIGINS 行追加缺失的 IP，不删除已有值
+update_cors_origins() {
+    local env_file="$ENV_FILE"
+    [[ ! -f "$env_file" ]] && return
+
+    local cors_line
+    cors_line=$(grep '^CORS_ORIGINS=' "$env_file" 2>/dev/null | head -1 || echo "")
+    [[ -z "$cors_line" ]] && return
+
+    local cors_val="${cors_line#CORS_ORIGINS=}"
+    local changed=0
+    local additions=()
+
+    # Add SERVER_IP if provided and not already in CORS
+    if [[ -n "${SERVER_IP:-}" ]]; then
+        if ! echo "$cors_val" | grep -q "http://${SERVER_IP}"; then
+            cors_val="${cors_val},http://${SERVER_IP}"
+            additions+=("http://${SERVER_IP}")
+            changed=1
+        fi
+    fi
+
+    # Add Tailscale server IP if configured and not already in CORS
+    if [[ -n "${TAILSCALE_SERVER_IP:-}" ]]; then
+        if ! echo "$cors_val" | grep -q "http://${TAILSCALE_SERVER_IP}"; then
+            cors_val="${cors_val},http://${TAILSCALE_SERVER_IP}"
+            additions+=("http://${TAILSCALE_SERVER_IP}")
+            changed=1
+        fi
+    fi
+
+    # Add Tailscale local IP if configured and not already in CORS
+    if [[ -n "${TAILSCALE_LOCAL_IP:-}" ]]; then
+        if ! echo "$cors_val" | grep -q "http://${TAILSCALE_LOCAL_IP}"; then
+            cors_val="${cors_val},http://${TAILSCALE_LOCAL_IP}"
+            additions+=("http://${TAILSCALE_LOCAL_IP}")
+            changed=1
+        fi
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+        sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=${cors_val}|" "$env_file"
+        log "CORS_ORIGINS 已追加: ${additions[*]}"
+    fi
+}
+
+update_cors_origins
+
 # ── 3. Ensure .venv exists (first-deploy only) ───────────────────────────────
 if [[ ! -d "$VENV_DIR" ]]; then
     log "Creating virtual environment (first deploy)..."
@@ -591,9 +646,9 @@ install_service() {
     tmp_file=$(mktemp)
     case "$name" in
         financial-api)
-            cat > "$tmp_file" <<'SVC'
+            cat > "$tmp_file" <<SVC
 [Unit]
-Description=卓筹商学院 API Server
+Description=${APP_NAME} API Server
 After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
@@ -615,9 +670,9 @@ WantedBy=multi-user.target
 SVC
             ;;
         financial-crawler)
-            cat > "$tmp_file" <<'SVC'
+            cat > "$tmp_file" <<SVC
 [Unit]
-Description=卓筹商学院 Crawler Enqueue Scheduler
+Description=${APP_NAME} Crawler Enqueue Scheduler
 After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
@@ -641,9 +696,9 @@ WantedBy=multi-user.target
 SVC
             ;;
         financial-worker)
-            cat > "$tmp_file" <<'SVC'
+            cat > "$tmp_file" <<SVC
 [Unit]
-Description=卓筹商学院 arq Worker
+Description=${APP_NAME} arq Worker
 After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
@@ -666,9 +721,9 @@ WantedBy=multi-user.target
 SVC
             ;;
         financial-streaming)
-            cat > "$tmp_file" <<'SVC'
+            cat > "$tmp_file" <<SVC
 [Unit]
-Description=卓筹商学院 Streaming
+Description=${APP_NAME} Streaming
 After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
