@@ -272,7 +272,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $codeRoot 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
+    [System.IO.File]::WriteAllText((Join-Path $codeRoot 'VERSION'), $versionContent, $global:PS_UTF8_NO_BOM)
     W-Info "[ok] $(if ($usePackagePrefix) { 'package/VERSION' } else { 'VERSION' })"
 
     # ── Extra sources (e.g. mcp_server) ──
@@ -477,7 +477,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $staging 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
+    [System.IO.File]::WriteAllText((Join-Path $staging 'VERSION'), $versionContent, $global:PS_UTF8_NO_BOM)
     W-Info "[ok] VERSION"
 
     # ── Include files (relative to deploy root, preserve paths) ──
@@ -646,7 +646,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $staging 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
+    [System.IO.File]::WriteAllText((Join-Path $staging 'VERSION'), $versionContent, $global:PS_UTF8_NO_BOM)
     W-Info "[ok] VERSION"
 
     # ── Include files (relative to deploy root, preserve paths) ──
@@ -836,7 +836,7 @@ project=$id
 built=$timestamp
 host=$env:COMPUTERNAME
 "@
-    Set-Content -Path (Join-Path $codeRoot 'VERSION') -Value $versionContent -Encoding $global:PS_FILE_ENCODING
+    [System.IO.File]::WriteAllText((Join-Path $codeRoot 'VERSION'), $versionContent, $global:PS_UTF8_NO_BOM)
     W-Info "[ok] $(if ($usePackagePrefix) { 'package/VERSION' } else { 'VERSION' })"
 
     # ── Include files (relative to deploy root, preserve paths) ──

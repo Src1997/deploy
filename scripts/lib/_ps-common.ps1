@@ -8,10 +8,16 @@
 #
 # Licensed under the same repo conventions as the rest of scripts/.
 
-# -- File encoding: use UTF-8 for all generated text files --
-# PS 5.1 defaults to ASCII; PS 7 defaults to UTF-8. Standardize here.
+# -- File encoding: use UTF-8 (no BOM) for all generated text files --
+# PS 5.1 'UTF8' writes BOM (EF BB BF) which causes garbled output on Linux.
+# PS 7 'UTF8' is BOM-less but we use a .NET encoder for PS 5.1 compatibility.
+# This encoder is BOM-free regardless of PowerShell version.
 if (-not $global:PS_FILE_ENCODING) {
     $global:PS_FILE_ENCODING = 'UTF8'
+}
+# BOM-free UTF-8 encoder instance (works on both PS 5.1 and PS 7)
+if (-not $global:PS_UTF8_NO_BOM) {
+    $global:PS_UTF8_NO_BOM = [System.Text.UTF8Encoding]::new($false)
 }
 
 # -- Logging helpers (shared across build.ps1 and pack.ps1) --
@@ -32,26 +38,27 @@ if (-not (Get-Command -Name W-Step -ErrorAction SilentlyContinue)) {
     function W-HR { Write-Host "--------------------------------------------------" -ForegroundColor DarkGray }
 }
 
-# -- Write text file with shared encoding --
+# -- Write text file with BOM-free UTF-8 (avoids \ufeff on Linux) --
 function Write-TextFile {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Value,
         [switch]$NoNewline
     )
+    # Use .NET writer to guarantee no BOM on both PS 5.1 and PS 7
     if ($NoNewline) {
-        Set-Content -Path $Path -Value $Value -NoNewline -Encoding $global:PS_FILE_ENCODING
+        [System.IO.File]::WriteAllText($Path, $Value, $global:PS_UTF8_NO_BOM)
     } else {
-        Set-Content -Path $Path -Value $Value -Encoding $global:PS_FILE_ENCODING
+        [System.IO.File]::WriteAllText($Path, $Value + "`n", $global:PS_UTF8_NO_BOM)
     }
 }
 
-# -- Read text file with shared encoding --
+# -- Read text file with UTF-8 encoding (strips BOM if present) --
 function Read-TextFile {
     param(
         [Parameter(Mandatory)][string]$Path
     )
-    return Get-Content $Path -Raw -Encoding $global:PS_FILE_ENCODING
+    return Get-Content $Path -Raw -Encoding UTF8
 }
 
 # -- Python locator (finds python3/python, excludes Windows Store placeholders) --
