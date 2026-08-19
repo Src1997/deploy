@@ -19,4 +19,4 @@ __pycache__/
 *.pyc
 
 # 临时文件（网络配置等）
-scripts/tmp/
+tmp/
