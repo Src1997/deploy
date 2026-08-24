@@ -231,8 +231,9 @@ if $DO_ROLLBACK; then
     systemctl start financial-api financial-crawler financial-worker financial-streaming
     sleep 2
 
-if curl -sf --max-time 5 http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
-ok "API health check passed"
+    # Health check
+    if curl -sf --max-time 5 http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
+        ok "API health check passed"
     else
         warn "API health check failed — check: journalctl -u financial-api -n 30"
     fi
@@ -605,7 +606,7 @@ db_backup() {
     mkdir -p "$db_backup_dir"
     local db_file="${db_backup_dir}/${TIMESTAMP}.sql.gz"
     log "Backing up database ($db_name) before migration..."
-    if PGPASSWORD="${PG_PASSWORD}" pg_dump -U root -h 127.0.0.1 "$db_name" 2>/dev/null | gzip > "$db_file"; then
+    if PGPASSWORD="${PG_PASSWORD}" pg_dump -U "${PG_USER:-root}" -h 127.0.0.1 "$db_name" 2>/dev/null | gzip > "$db_file"; then
         local db_size
         db_size=$(du -h "$db_file" | cut -f1)
         ok "Database backup: $db_file ($db_size)"
@@ -629,11 +630,24 @@ log "Running alembic upgrade head..."
 "$VENV_DIR/bin/alembic" upgrade head
 ok "Database migration complete"
 
-# ── 7. Seed (optional) ───────────────────────────────────────────────────────
+# ── 7. Seed (optional, gated by SEED_ON_STARTUP) ───────────────────────────
+# 部署脚本默认执行 seed（首次部署需要初始化数据），但可通过以下方式跳过：
+#   1. 命令行参数 --no-seed
+#   2. .env 中 SEED_ON_STARTUP=false（生产环境推荐）
+# 这与 app/main.py lifespan 中的条件检查保持一致，防止重启时 seed 覆盖运行时配置。
 if $DO_SEED; then
-    log "Running seed..."
-    "$VENV_DIR/bin/python" -m app.db.seed
-    ok "Seed complete"
+    # 检查 .env 中的 SEED_ON_STARTUP（不在函数体内，不用 local）
+    _seed_on_startup=""
+    if [[ -f "$ENV_FILE" ]]; then
+        _seed_on_startup=$(grep '^SEED_ON_STARTUP=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || echo "")
+    fi
+    if [[ "$_seed_on_startup" == "false" ]]; then
+        warn "SEED_ON_STARTUP=false in .env, skipping seed (runtime configs preserved)"
+    else
+        log "Running seed..."
+        "$VENV_DIR/bin/python" -m app.db.seed
+        ok "Seed complete"
+    fi
 fi
 
 # ── 8. Install/update systemd service files ────────────────────────────────
@@ -655,9 +669,9 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+WorkingDirectory=${PKG_DIR}
 Environment=APP_ROLE=api
-ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 5001 --no-access-log
+ExecStart=${VENV_DIR}/bin/uvicorn app.main:app --host 127.0.0.1 --port 5001 --no-access-log
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -679,11 +693,11 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+WorkingDirectory=${PKG_DIR}
 Environment=APP_ROLE=crawler
 Environment=CRAWLER_ENABLED=true
 Environment=CRAWLER_ENQUEUE_ENABLED=true
-ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m app.crawler scheduler
+ExecStart=${VENV_DIR}/bin/python -m app.crawler scheduler
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -705,10 +719,10 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+WorkingDirectory=${PKG_DIR}
 Environment=APP_ROLE=crawler
 Environment=CRAWLER_ENABLED=true
-ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/arq worker.settings.WorkerSettings
+ExecStart=${VENV_DIR}/bin/arq worker.settings.WorkerSettings
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -730,10 +744,10 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+WorkingDirectory=${PKG_DIR}
 Environment=APP_ROLE=crawler
 Environment=CRAWLER_ENABLED=true
-ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m worker.streaming
+ExecStart=${VENV_DIR}/bin/python -m worker.streaming
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -768,23 +782,9 @@ install_service financial-crawler
 install_service financial-worker
 install_service financial-streaming
 
-# ── 8.5 Generate Nginx config (from template) ────────────────────────────────
-# 将 fastbull.conf 模板中的 __WEB_PATH__ 占位符替换为实际路径
-# 生成 fastbull-generated.conf，用户粘贴到宝塔面板
-gen_nginx_config() {
-    local template="$PKG_DIR/nginx/fastbull.conf"
-    local output="$PKG_DIR/nginx/fastbull-generated.conf"
-
-    if [ -f "$template" ]; then
-        sed "s|__WEB_PATH__|${WEB_PATH}|g" "$template" > "$output"
-        ok "Nginx config generated: $output"
-        echo "  Paste this config into 宝塔面板 → 网站设置 → 配置文件"
-    else
-        warn "Nginx template not found: $template (skipping)"
-    fi
-}
-
-gen_nginx_config
+# NOTE: Nginx config is managed by deploy.sh → lib/nginx.sh → generate-nginx.py
+# (SSOT). Do NOT generate Nginx config here — that would create a conflicting
+# duplicate path. deploy-financial-api.sh only handles backend services.
 
 # ── 9. Restart services ──────────────────────────────────────────────────────
 if $DO_RESTART; then
@@ -793,15 +793,14 @@ if $DO_RESTART; then
     sleep 2
 
     # Health check
-if curl -sf --max-time 5 http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
-ok "API health check passed"
+    if curl -sf --max-time 5 http://127.0.0.1:5001/api/health > /dev/null 2>&1; then
+        ok "API health check passed"
     else
         warn "API health check failed — check: journalctl -u financial-api -n 30"
         warn "If needed, rollback with: bash deploy.sh --rollback"
     fi
 
     # Post-deploy verification: navigation API returns expected structure
-    local nav_count
     nav_count=$(curl -sf --max-time 5 http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('data',d) if isinstance(d,dict) else d))" 2>/dev/null || echo "0")
     if [[ "$nav_count" -gt 0 ]]; then
@@ -812,7 +811,6 @@ ok "API health check passed"
     fi
 
     # Post-deploy verification: quant-trading is visible in allowedMenuIds
-    local has_quant
     has_quant=$(curl -sf --max-time 5 http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); data=d.get('data',d) if isinstance(d,dict) else d; print('quant-trading' in data.get('allowedMenuIds',[]))" 2>/dev/null || echo "False")
     if [[ "$has_quant" == "True" ]]; then

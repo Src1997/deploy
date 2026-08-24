@@ -288,10 +288,12 @@ def generate_header_ssl_combined(domain, www_domain):
     """Generate SSL combined HTTP+HTTPS in one server block."""
     # Use www_domain for cert path, fall back to domain
     cert_domain = www_domain or domain or '_'
+    # Build explicit server_name list (bare domain + www, or fallback to _)
+    server_names = f"{domain} {www_domain}".strip() if (domain or www_domain) else "_"
     return f"""server {{
     listen 80;
     listen 443 ssl http2;
-    server_name _;
+    server_name {server_names};
 
     # -- SSL --
     ssl_certificate    /www/server/panel/vhost/cert/{cert_domain}/fullchain.pem;
