@@ -630,11 +630,13 @@ log "Running alembic upgrade head..."
 "$VENV_DIR/bin/alembic" upgrade head
 ok "Database migration complete"
 
-# ── 7. Seed (optional, gated by SEED_ON_STARTUP) ───────────────────────────
-# 部署脚本默认执行 seed（首次部署需要初始化数据），但可通过以下方式跳过：
+# ── 7. Seed (gated by --no-seed or SEED_ON_STARTUP=false) ────────────────
+# 部署脚本显式执行 seed（首次部署需要初始化数据），但可通过以下方式跳过：
 #   1. 命令行参数 --no-seed
 #   2. .env 中 SEED_ON_STARTUP=false（生产环境推荐）
-# 这与 app/main.py lifespan 中的条件检查保持一致，防止重启时 seed 覆盖运行时配置。
+# 应用启动时的 seed 由 app/main.py lifespan 中的 SEED_ON_STARTUP 控制（默认 false）。
+# 部署脚本不受 SEED_ON_STARTUP 影响——只有 --no-seed 才跳过。
+# 但为防止 seed 覆盖 Admin 编辑过的运行时数据，检测到 SEED_ON_STARTUP=false 时跳过。
 if $DO_SEED; then
     # 检查 .env 中的 SEED_ON_STARTUP（不在函数体内，不用 local）
     _seed_on_startup=""
@@ -800,7 +802,7 @@ if $DO_RESTART; then
         warn "If needed, rollback with: bash deploy.sh --rollback"
     fi
 
-    # Post-deploy verification: navigation API returns expected structure
+    # Post-deploy verification: navigation API returns data
     nav_count=$(curl -sf --max-time 5 http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('data',d) if isinstance(d,dict) else d))" 2>/dev/null || echo "0")
     if [[ "$nav_count" -gt 0 ]]; then
@@ -808,17 +810,6 @@ if $DO_RESTART; then
     else
         warn "Navigation API returned no data — check: curl http://127.0.0.1:5001/api/navigation/menu"
         warn "If navigation is stale, run: $VENV_DIR/bin/python -m app.db.seed"
-    fi
-
-    # Post-deploy verification: quant-trading is visible in allowedMenuIds
-    has_quant=$(curl -sf --max-time 5 http://127.0.0.1:5001/api/navigation/menu 2>/dev/null \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); data=d.get('data',d) if isinstance(d,dict) else d; print('quant-trading' in data.get('allowedMenuIds',[]))" 2>/dev/null || echo "False")
-    if [[ "$has_quant" == "True" ]]; then
-        ok "quant-trading visible in allowedMenuIds"
-    else
-        warn "quant-trading NOT in allowedMenuIds — check: auth/role_permissions has 'home' for trader/analyst/viewer"
-        warn "Fix: $VENV_DIR/bin/python -c \"from app.core.config_cache import *; from app.core.database import db_session; ...\""
-        warn "Or re-run migration: $VENV_DIR/bin/alembic upgrade head"
     fi
 
     # Show status

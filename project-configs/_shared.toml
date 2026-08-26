@@ -28,7 +28,7 @@ frontend_url = "https://ai.deepquant.club"
 # ── Python 后端打包公共排除列表 ──
 # Python (kind=python) 组件默认排除这些目录和文件。
 # 单个项目可在 [components.pack] 中用 extra_exclude_dirs / extra_exclude_files 追加。
-# 安全：.env.remoteA / .env.remoteB / .env.bak.* 含明文凭据，默认全排除。
+# 安全：.env.remote* / .env.bak.* 含明文凭据，默认全排除。
 #       仅 include_env 显式列出的 .env 才允许进包。
 [python_defaults]
 exclude_dirs = [
@@ -36,14 +36,18 @@ exclude_dirs = [
     "tests", "docs", ".idea", ".github", ".vscode",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".playwright-cli",
     "htmlcov", "*.egg-info", ".agents", ".worktrees", ".tmp",
+    ".catpaw", ".superpowers",
 ]
 exclude_files = [
-    "*.pyc", ".env", ".env.remoteA", ".env.remoteB", ".env.local", ".env.docker",
+    "*.pyc", ".env", ".env.local", ".env.docker",
     ".env.vm", ".env.dev", ".env.staging", ".env.production",
-    ".env.bak.*",
+    ".env.test", ".env.remote",
+    # .env.remote* / .env.bak.* — glob 排除所有 remote 和 backup 变体
+    ".env.remote*", ".env.bak.*",
     "Dockerfile", ".dockerignore", ".gitignore", ".gitattributes", ".python-version",
     "cspell.json", "uv.lock", "openapi.json", "test_results.txt", ".coverage",
     "AGENTS.md", "AGENTS.zh-CN.md",
+    "README.zh-CN.md",
     "nohup.out", "pytest.ini", "railway.json", "requirements-windows.txt",
     "docker-entrypoint.sh", "env.testnet.example", "start.sh",
     "_diag_net.py", "_diag_nosub.py",
