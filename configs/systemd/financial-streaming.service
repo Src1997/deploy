@@ -1,15 +1,15 @@
 [Unit]
-Description=卓筹商学院 Streaming (flash_news_ws)
-After=network.target bt-postgresql.service redis.service
+Description=__APP_NAME__ Streaming (flash_news_ws)
+After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+WorkingDirectory=__PKG_DIR__
 Environment=APP_ROLE=crawler
 Environment=CRAWLER_ENABLED=true
-ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/python -m worker.streaming
+ExecStart=__VENV_DIR__/bin/python -m worker.streaming
 Restart=always
 RestartSec=5
 TimeoutStopSec=15

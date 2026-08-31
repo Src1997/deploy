@@ -371,3 +371,9 @@ bash deploy.sh --status
 bash deploy.sh --logs financial-api --lines=100
 bash deploy.sh --logs deepquant-backend --logs=error
 ```
+
+---
+
+> **注**：上文中的 `scripts/deploy-financial-api.sh` 已于 2026-08-31 泛化为 `scripts/deploy-python.sh`（通用 Python/FastAPI 部署钩子）。
+> 历史记录中保留旧名以保持上下文准确性，当前文件名见 [AGENTS.md](../AGENTS.md) 目录结构。
+

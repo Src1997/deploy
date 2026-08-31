@@ -95,6 +95,7 @@ pack.ps1 (打包)        deploy.sh (部署)
 deploy/
 ├── project-configs/               # SSOT: 项目打包配置（人编辑源）
 │   ├── _shared.toml                #   共享默认值（排除列表、服务器定义）
+│   ├── PROJECT-TOML-GUIDE.md       #   project.toml 配置指南（字段详解 + 完整示例）
 │   ├── financial/project.toml      #   金融项目（web + admin + api）
 │   ├── deepquant/project.toml      #   QuantDinger（web + backend + mcp）
 │   ├── official-site/project.toml  #   卓筹介绍站（frontend only）
@@ -103,7 +104,7 @@ deploy/
 │   ├── pack.ps1                    # 统一打包脚本（所有项目共用）
 │   ├── build.ps1                   # 构建编排入口（pack → copy assets）
 │   ├── deploy.sh                   # 服务器端部署/回滚（主入口，加载 lib/ 模块）
-│   ├── deploy-financial-api.sh     # 项目级部署钩子
+│   ├── deploy-python.sh         # Python 后端通用部署钩子
 │   ├── lib/                        # 共享库（Bash + PowerShell）
 │   │   ├── common.sh               #   颜色/日志/CRLF/新鲜度检查
 │   │   ├── preflight.sh            #   部署前检查
@@ -145,6 +146,102 @@ deploy/
 3. 运行 `.\scripts\build.ps1 <项目名>` — 自动打包
 4. 上传 → 服务器 `bash deploy.sh`
 
+### 新增 Python / FastAPI 后端
+
+Python 后端通过通用钩子 `scripts/deploy-python.sh` 部署，**零项目名硬编码**——所有专有参数由 `project.toml` 驱动。新增一个 Python 后端只需 4 步：
+
+#### Step 1: `project.toml` 声明组件
+
+```toml
+[[components]]
+id = "my-api"                         # 组件 ID（全局唯一）
+kind = "python"
+display_name = "我的 API 后端"
+source_path = "my-project/my-api"       # 工作区相对路径
+deploy_path = "my-project/my-api/package"  # 服务器路径（PROJECT_BASE 之下）
+health_url = "http://127.0.0.1:5002/api/health"  # 端口 SSOT（钩子从此提取端口）
+deploy_hook = "scripts/deploy-python.sh"  # 启用通用钩子
+services = ["my-api"]                   # Supervisor/systemd 服务名列表
+
+# 钩子可选参数（按需配置）
+post_deploy_check_path = "/api/menu"    # 部署后验证的业务端点（空 = 跳过）
+web_path = "/myapp"                     # .env 模板中 __WEB_PATH__ 占位符的值
+
+  # 打包配置
+  [components.pack]
+  package_mode = "app-package"          # app-package（源码进 package/）或 source-tar（源码在归档根）
+  artifact_pattern = "my-api-*.tar.gz"
+  include_files = [
+      "scripts/deploy-python.sh",       # 钩子脚本随包上传
+      "configs/my-api.env.example",     # .env 模板
+  ]
+  include_env = ["configs/my-api.env"]  # 显式白名单：允许真实 .env 进包
+```
+
+**钩子自动注入的环境变量**（`deploy.sh` → `deploy-python.sh`）：
+
+| 环境变量 | 来源 | 说明 |
+|----------|------|------|
+| `COMPONENT_ID` | TOML `id` | 组件身份（必传，钩子据此推导 `.env.example` 文件名、归档名等） |
+| `API_PORT` | TOML `health_url` 端口 | 端口 SSOT，钩子从中提取 |
+| `SERVICES` | TOML `services` | 服务名列表（空格分隔） |
+| `POST_DEPLOY_CHECK_PATH` | TOML `post_deploy_check_path` | 部署后业务端点验证 |
+| `WEB_PATH` | TOML `web_path` | `.env` 模板 `__WEB_PATH__` 占位符渲染 |
+
+#### Step 2: 创建 `.env` 模板
+
+在 `configs/` 下创建 `<id>.env.example`（如 `my-api.env.example`），使用占位符：
+
+```bash
+PORT=__PORT__                           # 钩子渲染时替换为 health_url 端口
+PG_PASSWORD=__PG_PASSWORD__             # deploy.env 中的 PG_PASSWORD
+REDIS_PASSWORD=__REDIS_PASSWORD__
+WEB_PATH=__WEB_PATH__                   # 可选：需要 web_path 配置
+AUTH_SECRET_KEY=__AUTH_SECRET_KEY__     # 首次部署自动生成
+```
+
+> 模板查找顺序：`configs/<id>.env.example` → `PKG_DIR/.env.example`
+
+#### Step 3: systemd 模板（可选，Supervisor 回退用）
+
+在 `configs/systemd/` 下创建 `<service-name>.service`：
+
+```ini
+[Unit]
+Description=My API Backend
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=__PKG_DIR__
+ExecStart=__VENV_DIR__/bin/uvicorn app.main:app --host 0.0.0.0 --port __API_PORT__
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> 占位符 `__PKG_DIR__` / `__VENV_DIR__` / `__API_PORT__` / `__APP_NAME__` 由钩子自动替换。
+> **Supervisor 优先**：若服务已在 Supervisor 注册，systemd 模板会被跳过。
+
+#### Step 4: Supervisor 注册
+
+在服务器上运行 `05-setup-supervisor.sh` 注册进程守护，或在 `configs/systemd/` 放好模板让钩子自动安装 systemd unit。
+
+#### 验证
+
+```bash
+# WSL 中验证钩子泛化测试（12 场景）
+wsl bash -c "cd /mnt/d/Workspace/deploy && bash tests/test-hook-generalization.sh"
+
+# 本地打包验证
+.\scripts\build.ps1 my-api
+
+# 服务器部署
+bash deploy.sh my-api --yes
+```
+
 ### 项目配置文件格式（project.toml）
 
 每个 `project.toml` 包含：
@@ -157,6 +254,11 @@ deploy/
 | `[[components]]` | 组件列表（`frontend` / `python` / `java` / `go` / `nodejs`），每个组件含源码路径、构建配置、打包配置 |
 | `[components.build]` | 前端/Java/Go/Node.js 构建配置：包管理器、构建命令、输出目录、JAR/二进制模式等 |
 | `[components.pack]` | Python/Node.js 打包配置：排除列表、包含文件、include_env（安全 .env 白名单） |
+| `deploy_hook` | Python 组件可选：指定部署钩子脚本（`scripts/deploy-python.sh`），启用 venv+migrate+seed 全流程 |
+| `post_deploy_check_path` | Python 组件可选：部署后业务端点验证路径（如 `/api/navigation/menu`），空 = 跳过 |
+| `web_path` | Python 组件可选：`.env` 模板 `__WEB_PATH__` 占位符的值（如 `/financial`） |
+| `services` | Python 组件：Supervisor/systemd 服务名列表（如 `["financial-api", "financial-crawler"]`） |
+| `health_url` | Python 组件：健康检查 URL，**端口从此提取**（如 `http://127.0.0.1:5001/api/health`） |
 
 ### 安全设计
 

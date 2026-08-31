@@ -88,6 +88,8 @@ _KEY_MAP = {
     "build_command": "buildCommand",
     "binary_name": "binaryName",
     "binary_dir": "binaryDir",
+    "post_deploy_check_path": "postDeployCheckPath",
+    "web_path": "webPath",
 }
 
 
@@ -135,6 +137,8 @@ def _component_to_entry(
         "nginxReload": component.get("nginx_reload", False),
         "deployHook": component.get("deploy_hook", ""),
         "venvShared": component.get("venv_shared", False),
+        "postDeployCheckPath": component.get("post_deploy_check_path", ""),
+        "webPath": component.get("web_path", ""),
     }
 
     nginx = _build_nginx(component)
@@ -332,7 +336,8 @@ def to_bash_eval(manifest: dict, project_base: str = "") -> str:
     # Declare associative arrays (idempotent with -gA)
     lines.append("declare -gA DEPLOY_PATH ARTIFACT_NAME SERVICES HEALTH_URL "
                  "NGINX_RELOAD DEPLOY_HOOK PROJECT_KIND PROJECT_DISPLAY_NAME "
-                 "PUBLIC_URL PROJECT_ROOT VENV_SHARED PROJECT_ID")
+                 "PUBLIC_URL PROJECT_ROOT VENV_SHARED PROJECT_ID "
+                 "POST_DEPLOY_CHECK_PATH WEB_PATH")
 
     # Collect enabled project IDs
     enabled = [p for p in manifest["projects"] if p.get("enabled", True)]
@@ -362,6 +367,8 @@ def to_bash_eval(manifest: dict, project_base: str = "") -> str:
         lines.append(f"PROJECT_ROOT[{pid}]={'true' if p.get('nginx', {}).get('rootProject') else 'false'}")
         lines.append(f"VENV_SHARED[{pid}]={'true' if p.get('venvShared') else 'false'}")
         lines.append(f"PROJECT_ID[{pid}]={shlex.quote(p.get('project', ''))}")
+        lines.append(f"POST_DEPLOY_CHECK_PATH[{pid}]={shlex.quote(p.get('postDeployCheckPath', ''))}")
+        lines.append(f"WEB_PATH[{pid}]={shlex.quote(p.get('webPath', ''))}")
 
     return "\n".join(lines)
 

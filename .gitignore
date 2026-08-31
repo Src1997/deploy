@@ -20,3 +20,6 @@ __pycache__/
 
 # 临时文件（网络配置等）
 tmp/
+
+# 脚本临时产物（openapi 导出等）
+scripts/openapi_tmp.json

@@ -1,20 +1,20 @@
 [Unit]
-Description=卓筹商学院 API Server
-After=network.target bt-postgresql.service
+Description=__APP_NAME__ API Server
+After=network.target bt-postgresql.service bt-redis.service
 Wants=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/www/wwwroot/project/financial/financial-api/package
+WorkingDirectory=__PKG_DIR__
 Environment=APP_ROLE=api
-ExecStart=/www/wwwroot/project/financial/financial-api/package/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 5001 --no-access-log
+ExecStart=__VENV_DIR__/bin/uvicorn app.main:app --host 127.0.0.1 --port __API_PORT__ --no-access-log
 Restart=always
 RestartSec=5
 TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=fastbull-api
+SyslogIdentifier=financial-api
 LimitNOFILE=65536
 
 [Install]

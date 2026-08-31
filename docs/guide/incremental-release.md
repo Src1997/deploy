@@ -7,14 +7,17 @@
 
 ## 支持的项目
 
-| 项目名 | 说明 | kind | 构建方式 | 重启服务 |
-|--------|------|------|----------|----------|
-| `financial-web` | 行情/社区前端 | frontend | pnpm build | nginx reload |
-| `financial-admin` | 管理后台 | frontend | pnpm build | nginx reload |
-| `financial-api` | FastAPI 后端 | python | 源码 robocopy (app-package) | financial-api + crawler + worker + streaming |
-| `official-site` | 卓筹介绍站 | frontend | pnpm build | nginx reload |
-| `deepquant-web` | QuantDinger 前端 | frontend | pnpm build | nginx reload |
-| `deepquant-backend` | QuantDinger 后端 | python | 源码 robocopy (source-tar) | quantdinger-backend |
+| 项目名 | 说明 | kind | 构建方式 | deploy_hook | 重启服务 |
+|--------|------|------|----------|-------------|----------|
+| `financial-web` | 行情/社区前端 | frontend | pnpm build | — | nginx reload |
+| `financial-admin` | 管理后台 | frontend | pnpm build | — | nginx reload |
+| `financial-api` | FastAPI 后端 | python | 源码 robocopy (app-package) | `deploy-python.sh` | financial-api + crawler + worker + streaming |
+| `official-site` | 卓筹介绍站 | frontend | pnpm build | — | nginx reload |
+| `deepquant-web` | QuantDinger 前端 | frontend | pnpm build | — | nginx reload |
+| `deepquant-backend` | QuantDinger 后端 | python | 源码 robocopy (source-tar) | —（内联 venv+pip） | quantdinger-backend |
+
+> Python 组件设 `deploy_hook = "scripts/deploy-python.sh"` 后，部署全流程（venv → pip install → migrate → seed → restart → health check）由钩子处理；不设则走 `deploy-kinds.sh` 内联逻辑（venv + pip，无 migrate/seed）。
+> 钩子通过 `COMPONENT_ID` 环境变量识别组件身份，所有专有参数（端口、服务列表、健康检查路径等）从 `project.toml` 自动注入，零硬编码。
 
 > 组件类型（`kind`）：`frontend` / `python` / `java` / `go` / `nodejs`，详见 [README.md 支持的组件类型](../README.md#支持的组件类型)。
 > Java 部署 JAR/WAR + systemd；Go 部署二进制 + systemd；Node.js 部署源码 + `npm ci --production` + systemd。

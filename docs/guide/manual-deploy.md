@@ -1,4 +1,4 @@
-# 手动部署
+    # 手动部署
 
 > **Category**: Guide
 
@@ -89,7 +89,7 @@ nginx -t && nginx -s reload
 
 ### 完整流程（9 步）
 
-以下步骤对应 `deploy-financial-api.sh` 的内部流程，可逐项手动执行。
+以下步骤对应 `deploy-python.sh` 的内部流程，可逐项手动执行。
 
 #### Step 1: 上传代码包
 

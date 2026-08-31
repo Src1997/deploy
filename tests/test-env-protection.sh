@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 验证 deploy-financial-api.sh 的 .env 保护逻辑
+# 验证 deploy-python.sh 的 .env 保护逻辑
 # 测试场景：
 #   1. 包内携带 .env → 部署脚本不应覆盖生产 .env
 #   2. sync_env 跳过含 __PLACEHOLDER__ 的值

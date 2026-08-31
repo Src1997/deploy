@@ -289,8 +289,8 @@ do_deploy_api_extract() {
   else
     warn "no VERSION file in package"
   fi
-  if [ -f "$target/package/deploy-financial-api.sh" ]; then
-    ok "deploy-financial-api.sh present (dry-run: not executing full deploy)"
+  if [ -f "$target/package/deploy-python.sh" ]; then
+    ok "deploy-python.sh present (dry-run: not executing full deploy)"
   fi
 }
 

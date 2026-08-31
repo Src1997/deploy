@@ -96,7 +96,7 @@ function Check-DistFreshness {
         @{ Src = Join-Path $ScriptsDir 'deploy.sh';             Dst = Join-Path $DistDir 'deploy.sh' }
         @{ Src = Join-Path $ScriptsDir 'tools\detect-status.sh'; Dst = Join-Path $DistDir 'detect-status.sh' }
         @{ Src = Join-Path $ScriptsDir 'tools\generate-nginx.py';Dst = Join-Path $DistDir 'generate-nginx.py' }
-        @{ Src = Join-Path $ScriptsDir 'deploy-financial-api.sh';Dst = Join-Path $DistDir 'deploy-financial-api.sh' }
+        @{ Src = Join-Path $ScriptsDir 'deploy-python.sh';Dst = Join-Path $DistDir 'deploy-python.sh' }
     )
     $stale = $false
     foreach ($pair in $scriptPairs) {
@@ -176,12 +176,12 @@ function Copy-DeployAssets {
     }
 
     # Core scripts (server-side only: deploy.sh, detect-status.sh, generate-nginx.py,
-    # deploy-financial-api.sh). pack.ps1 is Windows-only, NOT copied to dist/.
+    # deploy-python.sh). pack.ps1 is Windows-only, NOT copied to dist/.
     $copy = @(
         (Join-Path $ScriptsDir 'deploy.sh'),
         (Join-Path $ScriptsDir 'tools\detect-status.sh'),
         (Join-Path $ScriptsDir 'tools\generate-nginx.py'),
-        (Join-Path $ScriptsDir 'deploy-financial-api.sh')
+        (Join-Path $ScriptsDir 'deploy-python.sh')
     )
     foreach ($f in $copy) {
         if (Test-Path $f) {

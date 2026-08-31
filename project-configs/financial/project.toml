@@ -72,7 +72,9 @@ source_path = "financial/financial-api"
 deploy_path = "financial/financial-api/package"
 nginx_reload = false
 health_url = "http://127.0.0.1:5001/api/health"
-deploy_hook = "scripts/deploy-financial-api.sh"
+deploy_hook = "scripts/deploy-python.sh"
+post_deploy_check_path = "/api/navigation/menu"
+web_path = "/financial"
 services = [
     "financial-api",
     "financial-crawler",
@@ -101,7 +103,7 @@ services = [
   package_mode = "app-package"        # app-package=源码进 package/；source-tar=源码在归档根
   artifact_pattern = "financial-api-*.tar.gz"
   include_files = [
-      "scripts/deploy-financial-api.sh",
+      "scripts/deploy-python.sh",
       "configs/financial-api.env.example",
   ]
   # ★ 显式允许真实 .env 进包（把 configs/financial-api.env 放到 deploy 根；缺失仅告警跳过）

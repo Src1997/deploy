@@ -194,10 +194,15 @@ bash deploy.sh all --ip=服务器IP
 ```
 
 部署脚本自动完成：
-1. **financial-api**: 代码同步 → venv → .env → 依赖 → 迁移 → 种子 → Supervisor → 启动
-2. **QuantDinger 后端**: 代码同步 → venv → .env → 依赖 → init.sql → Supervisor → 启动
-3. **静态站点**: 解压到对应目录
-4. **Nginx**: 动态生成配置并重载（`--nginx`）
+1. **financial-api**（via `deploy-python.sh` 钩子）：代码同步 → venv → .env 渲染 → 依赖安装 → Alembic 迁移 → 种子数据 → Supervisor 启动 → 健康检查 → 业务端点验证
+2. **QuantDinger 后端**（内联 venv+pip）：代码同步 → venv → 依赖 → Supervisor → 启动
+3. **静态站点**：解压到对应目录
+4. **Nginx**：动态生成配置并重载（`--nginx`）
+
+> Python 组件通过 `deploy_hook = "scripts/deploy-python.sh"` 启用全流程部署钩子。
+> 钩子不写死任何项目名——组件身份由 `COMPONENT_ID` 环境变量注入，端口从 `health_url` 提取，
+> 服务列表从 `services` 字段传入，所有参数由 `project.toml` 驱动。
+> 详见 [README.md 新增 Python 后端](../README.md#新增-python--fastapi-后端)。
 
 ---
 

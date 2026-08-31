@@ -10,7 +10,8 @@
 #             PACKAGES_DIR, CONFIGS_SRC, DIST_ROOT, DEPLOY_TMP_DIR,
 #             PG_PASSWORD, REDIS_PASSWORD, SERVER_IP, FRONTEND_URL,
 #             ADMIN_PASSWORD, MCP_AGENT_TOKEN, ASSUME_YES, SCRIPT_DIR,
-#             SCRIPT_DIR_DEPLOY, find_file, check_package_freshness,
+#             SCRIPT_DIR_DEPLOY, POST_DEPLOY_CHECK_PATH, WEB_PATH,
+#             find_file, check_package_freshness,
 #             backup_frontend, backup_backend, restart_service, health_check,
 #             nginx_reload, nginx_has_location, sync_nginx
 
@@ -101,7 +102,16 @@ deploy_python() {
         if [ -n "$DEPLOY_SCRIPT" ]; then
             local yes_flag=""
             $ASSUME_YES && yes_flag="--yes"
+            # 从 health_url 提取端口（端口 SSOT），连同组件身份 / 服务清单传给钩子。
+            # 钩子按 COMPONENT_ID 自描述：<id>.env.example / <id>-*.tar.gz / 服务名等约定推导。
+            local hook_port=""
+            hook_port=$(printf '%s' "${HEALTH_URL[$id]:-}" | sed -n 's|^[a-z]*://[^/]*:\([0-9][0-9]*\).*|\1|p')
             DEPLOY_ROOT="$api_parent" PKG_DIR="$pkg_dir" \
+                COMPONENT_ID="$id" \
+                API_PORT="$hook_port" \
+                SERVICES="${SERVICES[$id]:-}" \
+                POST_DEPLOY_CHECK_PATH="${POST_DEPLOY_CHECK_PATH[$id]:-}" \
+                WEB_PATH="${WEB_PATH[$id]:-}" \
                 bash "$DEPLOY_SCRIPT" --no-restart $yes_flag || warn "$hook_rel 有警告"
             ok "$id 代码已同步（via deployHook）"
         else

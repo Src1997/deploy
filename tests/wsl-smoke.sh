@@ -182,12 +182,12 @@ else
       warn "archive missing package/VERSION (check pack script order bug)"
     fi
     # 部署资产应保留相对路径，禁止拍扁到 package/ 根
-    if tar_has '^(\./)?scripts/deploy-financial-api\.sh$'; then
-      ok "archive contains scripts/deploy-financial-api.sh (hierarchical)"
-    elif tar_has '^(\./)?package/deploy-financial-api\.sh$'; then
-      warn "archive has flattened package/deploy-financial-api.sh (legacy)"
+    if tar_has '^(\./)?scripts/deploy-python\.sh$'; then
+      ok "archive contains scripts/deploy-python.sh (hierarchical)"
+    elif tar_has '^(\./)?package/deploy-python\.sh$'; then
+      warn "archive has flattened package/deploy-python.sh (legacy)"
     else
-      bad "archive missing scripts/deploy-financial-api.sh"
+      bad "archive missing scripts/deploy-python.sh"
     fi
     if tar_has '^(\./)?configs/systemd/financial-api\.service$'; then
       ok "archive contains configs/systemd/ (hierarchical)"

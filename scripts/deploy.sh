@@ -80,7 +80,7 @@ DIST_ROOT="${DIST_ROOT:-$PROJECT_BASE/uploads/dist}"
 CONFIGS_SRC="${CONFIGS_SRC:-$DIST_ROOT/configs}"
 
 BACKUP_BASE="${BACKUP_BASE:-$PROJECT_BASE/backup}"
-MAX_BACKUPS="${MAX_BACKUPS:-7}"
+MAX_BACKUPS="${MAX_BACKUPS:-5}"
 PG_USER="${PG_USER:-root}"
 PG_PASSWORD="${PG_PASSWORD:-}"
 PG_HOST="${PG_HOST:-127.0.0.1}"
@@ -322,7 +322,7 @@ if $SYNC_SCRIPTS; then
             exit 1
         fi
         echo "[*] Syncing scripts from $dist_dir/ to $script_dir/ ..."
-        local files=(deploy.sh detect-status.sh deploy-financial-api.sh generate-nginx.py)
+        local files=(deploy.sh detect-status.sh deploy-python.sh generate-nginx.py)
         for f in "${files[@]}"; do
             if [ -f "$dist_dir/$f" ]; then
                 cp "$dist_dir/$f" "$script_dir/$f"
