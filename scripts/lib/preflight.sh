@@ -20,6 +20,33 @@ preflight() {
         return 1
     fi
 
+    # 0. deploy_path 唯一性
+    # python 组件的部署流程是「清空整个 deploy_path（保留 .env/.venv/logs/data）
+    # → 解压到 deploy_path 根」，因此两个组件共用同一 deploy_path 时，后部署的
+    # 一方必然抹掉另一方的代码（2026-08-24 deepquant-mcp 覆盖 backend 包，
+    # 导致 quantdinger-backend 静默崩溃 21 天）。这里直接拦死。
+    local _seen_paths="" _dup_found=0 _p _dp
+    for _p in "${PROJECTS[@]}"; do
+        _dp="${DEPLOY_PATH[$_p]:-}"
+        [ -z "$_dp" ] && continue
+        if echo " $_seen_paths " | grep -q " $_dp "; then
+            err "deploy_path 冲突：$_dp 被多个组件共用（${PROJECT_DISPLAY_NAME[$_p]:-$_p}）→ 部署会互相覆盖"
+            _dup_found=1
+        else
+            _seen_paths="$_seen_paths $_dp"
+        fi
+    done
+    if [ "$_dup_found" = "1" ]; then
+        if [ "${DEPLOY_ALLOW_PATH_CONFLICT:-0}" = "1" ]; then
+            warn "DEPLOY_ALLOW_PATH_CONFLICT=1：已知存在 deploy_path 冲突，继续部署（后果自负）"
+        else
+            err "请给每个组件分配唯一 deploy_path；辅助服务请用 pack.extra_source 打进主组件的包"
+            ((errors++))
+        fi
+    else
+        ok "deploy_path：所有组件互不冲突"
+    fi
+
     # 1. Disk space (at least 1GB available)
     local check_path="${PROJECT_BASE:-/www/wwwroot/project}"
     local avail_kb

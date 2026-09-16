@@ -121,24 +121,31 @@ services = [                              # 部署后重启的 systemd 服务
   # dest = "mcp_server"
 
 # ═══════════════════════════════════════════════════════════════
-# 组件 3：共享 venv 的辅助服务（如 MCP Server）
+# 组件 3：辅助服务（如 MCP Server）—— ⚠️ 不要照抄本段！
 # ═══════════════════════════════════════════════════════════════
-# [[components]]
-# id = "my-mcp"
-# kind = "python"
-# display_name = "MCP Server"
-# source_path = "my-project/mcp_server"
-# deploy_path = "my-project/backend/package"  # 与 backend 共享同一目录和 venv
-# nginx_reload = false
-# health_url = "http://127.0.0.1:7800/sse"
-# venv_shared = true                       # 共享 venv（不创建新的，检查存在性）
-# services = [
-#     "my-mcp",
-# ]
+# ⚠️ 反例（历史上真的这么配过，2026-08-24 造成过一次线上静默故障）：
+#
+#   [[components]]
+#   id = "my-mcp"
+#   source_path = "my-project/mcp_server"
+#   deploy_path = "my-project/backend/package"  # ← 与 backend 同目录
+#   venv_shared = true
+#
+# 为什么有害：deploy-kinds.sh 的 python 分支是
+#   「清空 pkg_dir（保留 .env/.venv/logs/data）→ tar 解压到 pkg_dir 根」。
+# 两个组件的 deploy_path 相同、源码树不同时，后部署的一方会把前一方的代码
+# 整个抹掉（前端看不出问题，直到下次重启服务才崩）。
+#
+# ✅ 正确做法：把辅助源码作为主组件的「附加源码目录」打进同一个包
 #
 #   [components.pack]
-#   package_mode = "source-tar"
-#   artifact_pattern = "my-mcp-*.tar.gz"
+#   [[components.pack.extra_source]]
+#   path = "my-project/mcp_server"
+#   dest = "mcp_server"          # 归档内 → package/mcp_server/
+#
+# 部署主组件时 deploy-kinds.sh 会自动检测 `$pkg_dir/mcp_server/pyproject.toml`
+# 并 `pip install` 到共享 venv；辅助服务的 systemd 单元写在主组件的 services
+# 列表里即可（示例见 deepquant/project.toml）。
 ```
 
 ## 字段速查
@@ -256,7 +263,12 @@ systemd 服务模板占位符：
 ## 注意事项
 
 - **WebSocket 路径**：必须与前端实际连接路径一致（如 `/app/ws/` 而非 `/ws/`）
-- **共享 venv**：`venv_shared = true` 的组件必须先部署主组件
+- **⚠️ deploy_path 必须唯一**：`kind = "python"` 的部署会先清空整个 deploy_path 再解压，
+  两个组件共用同一 deploy_path 会互相覆盖（2026-08-24 已发生过一次静默故障）。
+  辅助服务请用 `pack.extra_source` 打进主组件的包，不要另开组件。
+- **共享 venv**：`venv_shared = true` 时只是**检查** venv 是否存在（不会创建），
+  venv 路径仍取 `deploy_path/.venv`。所以它只在「两个组件确实共用同一个
+  deploy_path」时才有意义 —— 而这正是要避免的配置，实际部署请勿使用。
 - **.env 安全**：默认全排除，仅 `include_env` 白名单中的文件进包
 - **健康检查**：`health_url` 用 `http://127.0.0.1:<port>/<path>`（服务器内网地址）
 - **MCP 自动检测**：后端包内如有 `mcp_server/pyproject.toml`，deploy.sh 自动安装

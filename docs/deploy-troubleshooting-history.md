@@ -377,3 +377,45 @@ bash deploy.sh --logs deepquant-backend --logs=error
 > **注**：上文中的 `scripts/deploy-financial-api.sh` 已于 2026-08-31 泛化为 `scripts/deploy-python.sh`（通用 Python/FastAPI 部署钩子）。
 > 历史记录中保留旧名以保持上下文准确性，当前文件名见 [AGENTS.md](../AGENTS.md) 目录结构。
 
+
+---
+
+### 17. 双服务器 crawler 共享 Redis 抢锁 → B 爬虫集体停摆（2026-09-07）
+
+**问题**：服务器 B（103.100.211.12）`financial-api` 的财经日历爬虫停更。`fin_crawl_runs` 显示**全部 13 个爬虫任务**在 2026-09-02 09:03 集体停摆（calendar_events 最后 09:03:18，flash_news 最后 09:03:32），进程却都存活。
+
+**根因（共享 Redis 多实例未隔离）**：
+- 服务器 A（47.86.32.234）于 9/2 部署并启动了同一套 financial 全套服务；A 的 `.env` 中 `REDIS_URL`/`ARQ_REDIS_URL` 指向 B 的 Redis（deploy.env.server-a 的 `REDIS_HOST=103.100.211.12`，用于行情共享）。
+- crawler 调度 leader 锁 `fin:crawler:scheduler:leader` 用 `settings.redis_url`（B Redis DB0），arq 队列 `financial:scripts` 用 `ARQ_REDIS_URL`（B Redis DB1）——**A/B 共用同一把锁 + 同一个队列**。
+- A 的 scheduler 抢到锁 → B scheduler 9/2 起不再入队（进程活着但 0 产出）；B 的 arq worker 仍消费共享队列里 A 的任务，但 `crawl_run_id` 在 B 库不存在 → **0.01s 白干丢弃**。A 侧被 B worker 抢走一半任务空转 → pending 堆积 655、calendar_updown failed 192。
+
+**次要瓶颈（A/B 都受影响，早于事故已存在）**：`request_interval_sec=2.0` 是进程级全局节流（`app/crawler/http/client.py` `_throttle` 单例），calendar_updown 每次抓近 7 天 ~196 个事件 × 每事件 1 次请求 = 392s > `runner.py` 300s 脚本超时 → **必超时**；`arq_max_jobs=4` 被慢任务占满后队列积压。
+
+**修复**：
+1. A 停爬虫止血：`systemctl stop+disable financial-crawler.service financial-worker.service`
+2. B 夺回 leader：`systemctl restart financial-crawler.service`
+3. 吞吐调优（两台 DB `fin_data_source_configs` source='crawler'，改后**重启 worker 生效**）：
+   `request_interval_sec: 2.0 → 0.5`（上游实测 0.1~0.9s，2 req/s 安全）、`arq_max_jobs: 4 → 8`
+4. A 独立恢复（**纯配置隔离，零代码改动**）——systemd drop-in（部署重写主 unit 不删）：
+   - `/etc/systemd/system/financial-crawler.service.d/override.conf`：`REDIS_URL`/`ARQ_REDIS_URL` → B Redis `:6379/2`（锁与队列与 B 的 DB0/DB1 隔离）
+   - `/etc/systemd/system/financial-worker.service.d/override.conf`：`ARQ_REDIS_URL` → DB2；`REDIS_URL` 保持 DB0（redis_bus 广播/实时推送不受影响）
+5. 默认配置固化（防 seed 覆盖）：`seed_datasource_configs` 对非 None fixture 值做 **upsert 强制覆盖** → 已改本地 `financial/financial-api`：`app/db/fixtures/config/datasource.py` 与 `app/config/_crawler.py` 默认 `0.5`/`8`；A/B 库手 UPDATE 同步。
+
+**验证**：B 锁在 DB0、A 锁在 DB2（`redis-cli -n 0/2 GET fin:crawler:scheduler:leader` 各自独立）；A/B 的 calendar_events（114/114）与 calendar_updown（~320/130）均恢复 success，互不干扰。
+
+**架构约定（防再犯）**：
+- 行情是"一分多"：B 为唯一上游行情（Finnhub WSS）leader，用单一 key 接数据，经 **B Redis DB0 Pub/Sub** 分发给 B 内 worker + 跨机 A（A 的 streaming 订阅 DB0）。此链路不得改动。
+- 爬虫是"各自独立"：A/B 各自库、各自抓。**共享 Redis 实例时 crawler 的锁与队列必须按实例隔离**（不同 Redis DB 或不同 key/队列名）；新增第二台部署 crawler 前必须检查 `REDIS_URL`/`ARQ_REDIS_URL` 不与既有实例冲突。
+
+**常用检查**：
+```bash
+# B 服务器
+redis-cli -a <pw> -n 0 GET fin:crawler:scheduler:leader   # B crawler 锁（DB0）
+# A 服务器（锁在 B Redis DB2）
+redis-cli -a <pw> -h 103.100.211.12 -n 2 GET fin:crawler:scheduler:leader
+# 运行记录
+PGPASSWORD=root1.0 psql -h localhost -U root -d quant_zc \
+  -c "SELECT job_name,status,count(*),max(started_at) FROM fin_crawl_runs WHERE started_at>now()-interval '24 hours' GROUP BY job_name,status ORDER BY job_name;"
+# 服务
+systemctl is-active financial-api financial-crawler financial-worker financial-streaming
+```

@@ -1,7 +1,9 @@
 [Unit]
 Description=QuantDinger Backend API Server
-After=network.target bt-postgresql.service
-Wants=network.target
+# 依赖真实的 PG 单元（宝塔 SysV 脚本被 systemd 包装成的 generated unit）。
+# 原先写的 bt-postgresql.service 并不存在 → 顺序声明被静默忽略。
+After=network-online.target pgsql.service
+Wants=network-online.target pgsql.service
 
 [Service]
 Type=simple

@@ -1,7 +1,9 @@
 [Unit]
 Description=__APP_NAME__ Streaming (flash_news_ws)
-After=network.target bt-postgresql.service bt-redis.service
-Wants=network.target
+# 依赖真实的 PG/Redis 单元（宝塔 SysV 脚本被 systemd 包装成的 generated unit）。
+# 原先写的 bt-postgresql.service / bt-redis.service 并不存在 → 顺序声明被静默忽略。
+After=network-online.target pgsql.service redis.service
+Wants=network-online.target pgsql.service redis.service
 
 [Service]
 Type=simple

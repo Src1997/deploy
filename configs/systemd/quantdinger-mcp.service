@@ -1,7 +1,7 @@
 [Unit]
 Description=QuantDinger MCP Server (SSE on port 7800)
-After=network.target quantdinger-backend.service
-Wants=network.target
+After=network-online.target quantdinger-backend.service
+Wants=network-online.target quantdinger-backend.service
 
 [Service]
 Type=simple

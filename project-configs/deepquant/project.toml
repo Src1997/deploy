@@ -1,8 +1,22 @@
 # project-configs/deepquant/project.toml — QuantDinger 项目
 #
-# 包含：前端 + 后端（含 MCP Server） + MCP Server（可独立打包）
-# 注意：后端采用 source-tar 模式（源码在归档根），并附带 mcp_server 子目录。
-# deepquant-mcp 为独立组件，可单独打包仅含 MCP Server 源码。
+# 包含：前端 + 后端（后端包内已携带 MCP Server 源码）
+# 注意：后端采用 source-tar 模式（源码在归档根），并附带 mcp_server/ 子目录。
+#
+# ★★ 2026-09-15 重要修复：不要再定义独立的 deepquant-mcp 组件 ★★
+#   原配置里 deepquant-backend 与 deepquant-mcp 共用 deploy_path
+#   ("deepquant/backend/package")，但 deploy-kinds.sh 的 python 分支是
+#   「清空 pkg_dir（保留 .env/.venv/logs/data）→ tar 解压到 pkg_dir 根」，
+#   而两边的源码树不同（backend_api_python vs mcp_server），于是后部署的一方
+#   会把前一方的代码整个覆盖掉。
+#   实际事故：deepquant-mcp 于 2026-08-24 覆盖了 backend 包，导致
+#     - quantdinger-backend 缺 run.py / gunicorn_config.py → 无限崩溃重启
+#     - quantdinger-mcp 因 pkg 根没有 mcp_server/ 子目录，跳过了依赖安装
+#       → ModuleNotFoundError: No module named 'mcp'
+#   正确做法（本文件已采用）：MCP 由 deepquant-backend 组件携带（见 extra_source
+#   → 归档内 mcp_server/），deploy-kinds.sh 的「MCP 自动检测」会自动
+#   `pip install <pkg>/mcp_server` 装进共享 venv；quantdinger-mcp 服务已经
+#   写在 backend 组件的 services 里，会被一起安装/重启。无需单独部署。
 
 [project]
 id = "deepquant"
@@ -82,23 +96,20 @@ services = [
   path = "deepquant/deepquant/mcp_server"
   dest = "mcp_server"
 
-# QuantDinger MCP Server（可独立打包）
-# 单独打包时仅含 mcp_server 源码 + quantdinger-mcp.service 模板
-# 部署时需与 deepquant-backend 共享同一 venv
-[[components]]
-id = "deepquant-mcp"
-kind = "python"
-display_name = "QuantDinger MCP Server"
-source_path = "deepquant/deepquant/mcp_server"
-deploy_path = "deepquant/backend/package"
-nginx_reload = false
-health_url = "http://127.0.0.1:7800/sse"
-venv_shared = true
-services = [
-    "quantdinger-mcp",
-]
-
-  # ── 打包文件配置（source-tar：源码在归档根）──
-  [components.pack]
-  package_mode = "source-tar"
-  artifact_pattern = "deepquant-mcp-*.tar.gz"
+# ═══════════════════════════════════════════════════════════════
+# MCP Server 不再作为独立组件（见文件头「2026-09-15 重要修复」）
+# ═══════════════════════════════════════════════════════════════
+# 原组件定义（已删除，保留说明供排查历史问题）：
+#
+#   [[components]]
+#   id = "deepquant-mcp"
+#   kind = "python"
+#   source_path = "deepquant/deepquant/mcp_server"
+#   deploy_path = "deepquant/backend/package"   # ← 与 backend 冲突：会清空对方代码
+#   venv_shared = true
+#   services = ["quantdinger-mcp"]
+#
+# 为什么不能保留：deploy-kinds.sh 的 python 分支会先清空整个 pkg_dir 再解压，
+# 两个组件共用一个 deploy_path 时，后部署的一方必然抹掉另一方。
+# MCP 已由 deepquant-backend 归档内的 mcp_server/ 子目录交付并被自动安装，
+# quantdinger-mcp 服务也在 backend 组件的 services 列表中。
