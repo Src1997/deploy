@@ -14,12 +14,24 @@ elif command -v supervisorctl &>/dev/null; then
     _SUPERVISORCTL=$(command -v supervisorctl)
 fi
 
+# _svc_in_supervisor <name>：程序是否已注册到 Supervisor（只看注册，不看运行状态）
+#
+# 必须用全量列表匹配，不能用 `supervisorctl status <name>` 的退出码：
+# 对 STOPPED / FATAL 的程序，supervisorctl 返回非 0，会被误判成「不在 Supervisor」，
+# 从而回退到 systemctl —— 而 05-setup-supervisor.sh 已经把同名 systemd unit 删掉了，
+# 结果就是重启失败却被 warn 吞掉、部署照常报成功。
+# 全新服务器首次部署时（代码未到位，程序全是 FATAL）必然踩到这条。
+_svc_in_supervisor() {
+    [ -n "$_SUPERVISORCTL" ] || return 1
+    "$_SUPERVISORCTL" status 2>/dev/null | awk '{print $1}' | grep -qx "$1"
+}
+
 restart_service() {
     if $NO_RESTART; then warn "跳过重启 (--no-restart)"; return; fi
     local svc="$1"
     log "重启 $svc..."
     # Try Supervisor first, fall back to systemctl
-    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+    if _svc_in_supervisor "$svc"; then
         $_SUPERVISORCTL restart "$svc" 2>/dev/null || warn "$svc Supervisor restart failed"
         sleep 2
         $_SUPERVISORCTL status "$svc" 2>/dev/null | grep -q RUNNING && ok "$svc 运行中 (Supervisor)" || warn "$svc 未运行"
@@ -73,7 +85,7 @@ show_status() {
     for svc in "${services[@]}"; do
         local status
         # Try Supervisor first, fall back to systemctl
-        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+        if _svc_in_supervisor "$svc"; then
             status=$("$_SUPERVISORCTL" status "$svc" 2>/dev/null | awk '{print $2}' || echo "n/a")
         else
             status=$(systemctl is-active "$svc" 2>/dev/null || echo "n/a")
@@ -136,7 +148,7 @@ show_logs() {
                 0)
                     banner "实时日志: $svc"
                     # Try Supervisor tail first, fall back to journalctl
-                    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+                    if _svc_in_supervisor "$svc"; then
                         $_SUPERVISORCTL tail -f "$svc" stderr
                     else
                         journalctl -u "$svc" -f
@@ -144,7 +156,7 @@ show_logs() {
                     ;;
                 50)
                     banner "最近 50 行: $svc"
-                    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+                    if _svc_in_supervisor "$svc"; then
                         $_SUPERVISORCTL tail "$svc" stderr -50 2>/dev/null || tail -50 "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null || journalctl -u "$svc" -n 50 --no-pager
                     else
                         journalctl -u "$svc" -n 50 --no-pager
@@ -152,7 +164,7 @@ show_logs() {
                     ;;
                 error)
                     banner "ERROR 日志: $svc"
-                    if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+                    if _svc_in_supervisor "$svc"; then
                         grep -iE 'error|traceback|exception' "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null | tail -30 || journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
                     else
                         journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
@@ -176,7 +188,7 @@ show_logs() {
 
     if [ -n "$LOG_LEVEL" ] && [ "$LOG_LEVEL" = "error" ]; then
         banner "ERROR 日志: $svc"
-        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+        if _svc_in_supervisor "$svc"; then
             grep -iE 'error|traceback|exception' "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null | tail -30 || journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
         else
             journalctl -u "$svc" --no-pager | grep -iE 'error|traceback|exception' | tail -30
@@ -187,14 +199,14 @@ show_logs() {
     local lines="${LOG_LINES:-50}"
     if [ "$lines" = "0" ]; then
         banner "实时日志: $svc"
-        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+        if _svc_in_supervisor "$svc"; then
             $_SUPERVISORCTL tail -f "$svc" stderr
         else
             journalctl -u "$svc" -f
         fi
     else
         banner "最近 $lines 行: $svc"
-        if [ -n "$_SUPERVISORCTL" ] && $_SUPERVISORCTL status "$svc" &>/dev/null 2>&1; then
+        if _svc_in_supervisor "$svc"; then
             $_SUPERVISORCTL tail "$svc" stderr -"$lines" 2>/dev/null || tail -"$lines" "/www/server/panel/plugin/supervisor/log/${svc}/stderr.log" 2>/dev/null || journalctl -u "$svc" -n "$lines" --no-pager
         else
             journalctl -u "$svc" -n "$lines" --no-pager

@@ -33,7 +33,12 @@ _check_script_freshness() {
         version_file="$candidate_dir/.scripts-version"
         [ -f "$version_file" ] || continue
         script_mtime=$(stat -c %Y "${BASH_SOURCE[0]}" 2>/dev/null || stat -f %m "${BASH_SOURCE[0]}" 2>/dev/null || echo 0)
-        version_ts=$(cat "$version_file" 2>/dev/null | tr -d '[:space:]')
+        # 只去掉 CR / BOM / 首尾空白，保留日期中间的空格。
+        # 原写法 tr -d '[:space:]' 会把 "2026-09-15 14:22:20" 挤成 "2026-09-1514:22:20"，
+        # date -d 解析失败 → version_epoch=0 → 直接 return 0，新鲜度告警永久失效。
+        version_ts=$(tr -d '\r' < "$version_file" 2>/dev/null \
+            | sed -e '1s/^\xEF\xBB\xBF//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+            | head -1)
         [ -z "$version_ts" ] && return 0
         local version_epoch
         version_epoch=$(date -d "$version_ts" +%s 2>/dev/null || echo 0)

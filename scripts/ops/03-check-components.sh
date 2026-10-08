@@ -105,9 +105,18 @@ check_redis() {
         else
             # 尝试从 deploy.env 读取密码
             local redis_pw=""
-            if [ -f "$(dirname "$0")/../deploy.env" ]; then
-                redis_pw=$(grep '^REDIS_PASSWORD=' "$(dirname "$0")/../deploy.env" 2>/dev/null | cut -d= -f2- || true)
-            fi
+            local _sd _env_f
+            _sd="$(cd "$(dirname "$0")" && pwd)"
+            # deploy.env 在 dist/ 根，本脚本在 dist/scripts/ops/ → ../../deploy.env。
+            # 原来只找 ../deploy.env（= dist/scripts/deploy.env，不存在），
+            # 导致 Redis 设了密码时读不到密码 → 误判组件缺失 → 03 退出 1 卡死 04。
+            for _env_f in "${DEPLOY_ENV_FILE:-}" \
+                          "$_sd/../../deploy.env" "$_sd/../deploy.env" \
+                          "$_sd/deploy.env" "$(pwd)/deploy.env"; do
+                [ -n "$_env_f" ] && [ -f "$_env_f" ] || continue
+                redis_pw=$(grep '^REDIS_PASSWORD=' "$_env_f" 2>/dev/null | cut -d= -f2- | tr -d '\r' || true)
+                [ -n "$redis_pw" ] && break
+            done
             if [ -n "$redis_pw" ]; then
                 ping_result=$("$bin" -h 127.0.0.1 -p 6379 -a "$redis_pw" ping 2>/dev/null || echo "FAIL")
                 if [ "$ping_result" = "PONG" ]; then
@@ -178,9 +187,10 @@ check_supervisor() {
             MISSING=$((MISSING + 1))
         fi
     else
-        err "Supervisor: 未安装"
-        MISSING=$((MISSING + 1))
-        return 1
+        # Supervisor 是可选组件：部署链路（deploy-python.sh / lib/service-ops.sh）
+        # 都会在未安装时自动回落到 systemd（服务器 B、本地虚拟机均为 systemd 模式）。
+        # 之前这里 MISSING++ + return 1，会把 systemd 形态的服务器全部卡死在 03/04。
+        warn "Supervisor: 未安装（可选，将使用 systemd 托管进程）"
     fi
 }
 
@@ -272,11 +282,11 @@ print_install_guide() {
         echo ""
     fi
 
-    # Supervisor
+    # Supervisor（可选——未安装时部署链路自动回落 systemd）
     if ! pgrep -f supervisord &>/dev/null 2>&1 && [ ! -x /www/server/panel/plugin/supervisor/bin/supervisord ]; then
-        echo "  [缺失] Supervisor"
-        echo "    → 软件商店 → 搜索 Supervisor → 安装"
-        echo "    → 安装后在 Supervisor 管理器中启动服务"
+        echo "  [可选] Supervisor 未安装"
+        echo "    → 部署将使用 systemd 托管进程（服务器 B 即此形态）"
+        echo "    → 如需改用 Supervisor：软件商店 → 搜索 Supervisor → 安装"
         echo ""
     fi
 

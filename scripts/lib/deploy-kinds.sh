@@ -106,13 +106,18 @@ deploy_python() {
             # 钩子按 COMPONENT_ID 自描述：<id>.env.example / <id>-*.tar.gz / 服务名等约定推导。
             local hook_port=""
             hook_port=$(printf '%s' "${HEALTH_URL[$id]:-}" | sed -n 's|^[a-z]*://[^/]*:\([0-9][0-9]*\).*|\1|p')
-            DEPLOY_ROOT="$api_parent" PKG_DIR="$pkg_dir" \
+            # 钩子内部失败（venv 创建 / pip install / alembic upgrade head / 密钥校验）
+            # 不能再降级成 warn：那会让「部署完成」落在「新代码 + 旧 schema」的损坏中间态。
+            if ! DEPLOY_ROOT="$api_parent" PKG_DIR="$pkg_dir" \
                 COMPONENT_ID="$id" \
                 API_PORT="$hook_port" \
                 SERVICES="${SERVICES[$id]:-}" \
                 POST_DEPLOY_CHECK_PATH="${POST_DEPLOY_CHECK_PATH[$id]:-}" \
                 WEB_PATH="${WEB_PATH[$id]:-}" \
-                bash "$DEPLOY_SCRIPT" --no-restart $yes_flag || warn "$hook_rel 有警告"
+                bash "$DEPLOY_SCRIPT" --no-restart $yes_flag; then
+                err "$hook_rel 执行失败，中止 $id 部署"
+                return 1
+            fi
             ok "$id 代码已同步（via deployHook）"
         else
             rm -rf "$DEPLOY_TMP_DIR/${id}-extract"
@@ -131,7 +136,10 @@ deploy_python() {
         find "$pkg_dir" -mindepth 1 -maxdepth 1 \
             ! -name '.env' ! -name '.venv' ! -name 'logs' ! -name 'data' \
             -exec rm -rf {} + 2>/dev/null || true
-        tar xzf "$tar" -C "$pkg_dir"
+        if ! tar xzf "$tar" -C "$pkg_dir"; then
+            err "$id 解压失败: $tar"
+            return 1
+        fi
         ok "代码已解压"
         [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
 
@@ -275,7 +283,10 @@ deploy_java() {
     find "$pkg_dir" -mindepth 1 -maxdepth 1 \
         ! -name '.env' ! -name 'logs' ! -name 'data' \
         -exec rm -rf {} + 2>/dev/null || true
-    tar xzf "$tar" -C "$pkg_dir"
+    if ! tar xzf "$tar" -C "$pkg_dir"; then
+        err "$id 解压失败: $tar"
+        return 1
+    fi
     ok "代码已解压"
     [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
 
@@ -366,7 +377,10 @@ deploy_go() {
     find "$pkg_dir" -mindepth 1 -maxdepth 1 \
         ! -name '.env' ! -name 'logs' ! -name 'data' \
         -exec rm -rf {} + 2>/dev/null || true
-    tar xzf "$tar" -C "$pkg_dir"
+    if ! tar xzf "$tar" -C "$pkg_dir"; then
+        err "$id 解压失败: $tar"
+        return 1
+    fi
     ok "代码已解压"
     [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
 
@@ -461,7 +475,10 @@ deploy_nodejs() {
     find "$pkg_dir" -mindepth 1 -maxdepth 1 \
         ! -name '.env' ! -name 'node_modules' ! -name 'logs' ! -name 'data' \
         -exec rm -rf {} + 2>/dev/null || true
-    tar xzf "$tar" -C "$pkg_dir"
+    if ! tar xzf "$tar" -C "$pkg_dir"; then
+        err "$id 解压失败: $tar"
+        return 1
+    fi
     ok "代码已解压"
     [ -f "$env_file.bak" ] && cp "$env_file.bak" "$env_file" && rm -f "$env_file.bak"
 

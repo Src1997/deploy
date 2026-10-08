@@ -419,3 +419,45 @@ PGPASSWORD=root1.0 psql -h localhost -U root -d quant_zc \
 # 服务
 systemctl is-active financial-api financial-crawler financial-worker financial-streaming
 ```
+
+
+---
+
+### 18. 双服务器故障日：A 到期停机 / B 证书过期 + VM 时钟漂移 + 部署工具箱 9 处修复（2026-10-08）
+
+**现象**：A（47.86.32.234，阿里云香港）与 B（103.100.211.12，亿速云香港）网站均无法访问；本地虚拟机（192.168.31.166）爬虫持续报 SSL 错误。
+
+**根因（三台机器、三个独立原因）**：
+1. **A**：云服务器到期停机。22/80/443/8888 全端口 Connection timed out（非 refused），从本地和 B 双向探测均不可达，traceroute 第 7 跳后丢包 —— 云主机停机断网的典型形态。**需去阿里云控制台续费，脚本无需改动**（恢复后直接用同一套 dist 部署）。
+2. **B**：SSL 证书过期（TrustAsia LiteSSL，notAfter=2026-10-06，过期 2 天）。nginx/后端服务全部正常。**根因是设计有 acme-challenge 验证路径（generate-nginx.py 模板里有）但线上从未配置，也没有任何自动续签任务** —— 证书靠手工申请，必然过期。
+3. **VM**：系统时钟慢 22 天（停在 9-16）。chrony 声称"已同步、偏差 0.0016s"但 Ref time 也是 9-16 —— canonical NTS 源在开机早期的同步被 makestep 1 3 窗口限制吞掉后一直未再步进。连锁反应：爬虫 SSL 报 `certificate is not yet valid`（时钟在过去，远端证书"尚未生效"）。
+
+**修复（B 服务器）**：
+- 新增 `scripts/ops/06-fix-ssl-cert.sh`（A/B 通用，幂等）：备份旧证书 → 建 webroot `/www/wwwroot/project/acme` → nginx 80 块插入 `/.well-known/acme-challenge/` → 装 acme.sh → Let's Encrypt 签发（SAN: 主域+www+mail）→ 安装到宝塔证书目录（多目录同步）→ `--reloadcmd` 挂自动 reload → acme.sh 自带 cron（每日 0/6/12/18 点检查，到期前自动续）。
+- B 上已执行完毕：新证书有效期至 2027-01-06，线上握手验证通过，www/主域/mail 三个证书目录全部更新。
+
+**修复（VM）**：
+- 时钟：停 chrony → `timedatectl set-time` 手动校准 → 重启 chrony（重开 makestep 窗口）。`rtcsync` 已把正确时间写回 RTC（下次开机不再漂移）。
+- pip：`/root/.pip/pip.conf` 的阿里镜像对家宽出口 IP 返回 403 风控（清华同样 403），换腾讯源 `https://mirrors.cloud.tencent.com/pypi/simple`（0.28s，9.1MB/s）。**新服务器初始化时注意：国内家宽/小厂出口 IP 可能被阿里、清华镜像风控，腾讯/中科大可用**。
+
+**部署工具箱修复（审查发现 9 处高危，全部实测验证）**：
+| # | 文件 | 问题 | 修法 |
+|---|---|---|---|
+| 1 | lib/load-deploy-env.sh | ops/ 子目录脚本找不到 dist 根的 deploy.env | 搜索链补 `../../` 两档 |
+| 2 | ops/04-setup-server.sh | lib 路径错（`$SCRIPT_DIR/lib`，实际在 `../../lib`）→ require_deploy_secrets 未定义 → 必然 exit 1 | 三档路径搜索 + 找不到 fail fast |
+| 3 | ops/03-check-components.sh | deploy.env 路径错 → Redis 有密码时误判缺失 → 卡死 04 | 搜索链修正（../../deploy.env） |
+| 4 | ops/03-check-components.sh | Supervisor 当必需组件，但 B/VM 均为 systemd 形态 → 03 退出 1 | 降级为可选（warn），部署链路本就自动回落 systemd |
+| 5 | ops/04-setup-server.sh | 宝塔 LSB 服务（/etc/init.d/nginx → generator.late unit）被误判为"系统 nginx 抢端口" | generator unit 回查 init.d 是否含 /www/server |
+| 6 | lib/service-ops.sh | `supervisorctl status <svc>` 退出码判归属 → FATAL/STOPPED 误判为不在 Supervisor → 回退已被删除的 systemd unit → 服务全挂却报成功 | 引入 `_svc_in_supervisor`（全量列表匹配，与 deploy-python.sh 一致），替换 8 处 |
+| 7 | lib/deploy-kinds.sh | 钩子失败被 `\|\| warn` 吞掉仍报"代码已同步"；4 处 `tar xzf` 无判错（if 条件上下文 set -e 失效） | 钩子失败 return 1；解压全部判错 |
+| 8 | lib/backup-rollback.sh | 回滚 `rm -rf` 整目录再解压：删掉 .venv/data（备份包里没有）→ Python 服务起不来；解压失败=代码全损 | 只清代码部分（排除 .env/.venv/logs/data，与部署路径一致），case 补 python/java/go/nodejs |
+| 9 | lib/common.sh + build.ps1 | 新鲜度校验 `tr -d '[:space:]'` 挤掉日期中间空格 → date 解析失败 → 告警永久失效；构建全失败仍刷新 dist 并上传旧包 | 保留日期空格（只去 CR/BOM/首尾）；`$built.Count -eq 0` 时中止不上传 |
+
+**VM 实测记录（2026-10-08）**：03 退出 0（Redis 密码认证通过）；04 退出 0（配置加载、双库幂等、目录创建）；`--status` systemd 判定正确；official-site 前端部署+回滚 OK；错误密码注入 → 退出码 1（不再假成功）；financial-api 端到端部署全链路 OK（309M 备份 / .env 保护 / 腾讯源装依赖 / DB 迁移 / 4 服务重启 / 健康检查通过）。
+
+**遗留（下轮处理）**：
+- dist/packages 里的包是 2026-08~09 的旧包，新服务器部署前必须重新 `build.ps1`；
+- dist 根目录"只覆盖不清理"（残留 deploy-financial-api.sh 已手工清，根治需白名单重建）；
+- 前端包不写 VERSION、无 sha256 清单 → "上传即新鲜"无法自证（中危 M2/M8）；
+- `db_backup` 的 pg_dump 硬编码 127.0.0.1 未用 PG_HOST/PG_PORT（中危 M9）；
+- tests/verify-baota-services.sh 等测试脚本硬编码生产密码且已入库（中危，建议轮换）。

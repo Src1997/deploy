@@ -515,14 +515,19 @@ if ($Project -ne "") {
     if ($Project -eq 'all') {
         $built = @()
         foreach ($r in $ProjectList) { if (Build-One $r.Folder) { $built += $r.Folder } }
+        # 一个都没成功时必须拦住：Show-Summary 会刷新 dist/ 脚本并在 -Upload 时
+        # 把 dist/packages/ 里【上一次】的旧包一起传上去，看起来像刚构建完，
+        # 实际部署的是旧代码。
+        if ($built.Count -eq 0) { W-Err "没有任何组件打包成功，已中止（不刷新 dist/、不上传）"; exit 1 }
         Show-Summary $built
     } elseif ($Project -match ',') {
         $names = $Project -split ',' | ForEach-Object { $_.Trim() }
         $built = @()
         foreach ($n in $names) { if (Build-One $n) { $built += $n } }
+        if ($built.Count -eq 0) { W-Err "没有任何组件打包成功，已中止（不刷新 dist/、不上传）"; exit 1 }
         Show-Summary $built
     } else {
-        if (Build-One $Project) { Show-Summary @($Project) }
+        if (Build-One $Project) { Show-Summary @($Project) } else { exit 1 }
     }
     exit 0
 }

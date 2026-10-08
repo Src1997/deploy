@@ -49,17 +49,25 @@ fi
 
 echo ""
 
-if [ -f "$SCRIPT_DIR/lib/load-deploy-env.sh" ]; then
-    # shellcheck source=lib/load-deploy-env.sh
-    source "$SCRIPT_DIR/lib/load-deploy-env.sh"
-    if load_deploy_env "$SCRIPT_DIR"; then
-        log "已加载配置: ${DEPLOY_ENV_LOADED}"
-    else
-        warn "未找到 deploy.env（将用环境变量；密码占位则稍后失败）"
-        warn "请: cp deploy.env.example deploy.env 并填写 PG_PASSWORD / REDIS_PASSWORD"
-    fi
+# lib/ 的位置分两种布局：仓库源码（scripts/lib/，= 本脚本上一级）和
+# dist 包（dist/lib/，= 本脚本上两级）。两档都要找。
+# 找不到必须 fail fast：下面的 require_deploy_secrets 就来自这个文件，
+# 只 warn 会导致它未定义（bash 127）而被误判成「密码没配」直接 exit 1。
+_ENV_LOADER=""
+for _cand in "$SCRIPT_DIR/../lib/load-deploy-env.sh" "$SCRIPT_DIR/../../lib/load-deploy-env.sh" "$SCRIPT_DIR/lib/load-deploy-env.sh"; do
+    [ -f "$_cand" ] && _ENV_LOADER="$_cand" && break
+done
+if [ -z "$_ENV_LOADER" ]; then
+    err "缺少 lib/load-deploy-env.sh（预期在 dist/scripts/lib/ 下），无法加载配置"
+    exit 1
+fi
+# shellcheck source=lib/load-deploy-env.sh
+source "$_ENV_LOADER"
+if load_deploy_env "$SCRIPT_DIR"; then
+    log "已加载配置: ${DEPLOY_ENV_LOADED}"
 else
-    warn "缺少 scripts/lib/load-deploy-env.sh"
+    warn "未找到 deploy.env（将用环境变量；密码占位则稍后失败）"
+    warn "请: cp deploy.env.example deploy.env 并填写 PG_PASSWORD / REDIS_PASSWORD"
 fi
 
 # detect-status.sh now lives in scripts/tools/
@@ -140,6 +148,15 @@ fi
 for svc in nginx apache2 httpd redis-server mysql mariadb; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
         unit_path=$(systemctl show -p FragmentPath "$svc" 2>/dev/null | cut -d= -f2-)
+        # 宝塔组件用 LSB（/etc/init.d/<svc>）注册，systemd-sysv-generator 会把它
+        # 转成 /run/systemd/generator.late/<svc>.service —— FragmentPath 不在 /www/ 下。
+        # 这种 unit 要回看 init.d 脚本内容：引用 /www/server 即宝塔自己的服务，
+        # 不是系统残留（nginx 的 NGINX_BIN=/www/server/nginx/sbin/nginx 就是这种）。
+        if [[ "$unit_path" == /run/systemd/generator* ]] \
+            && [ -f "/etc/init.d/$svc" ] \
+            && grep -q '/www/server' "/etc/init.d/$svc" 2>/dev/null; then
+            continue
+        fi
         if [[ "$unit_path" != /www/* ]]; then
             err "系统服务 $svc 仍在运行 ($unit_path)，会与宝塔抢端口"
             echo "  请执行: bash $(dirname "$0")/lib-clear-conflicts.sh"

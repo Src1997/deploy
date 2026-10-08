@@ -136,18 +136,30 @@ apply_rollback_one() {
 
     log "回滚 $name → $ts ..."
 
+    # kind 的实际取值是 frontend|python|java|go|nodejs（见 project-configs/*/project.toml），
+    # 原来这里只写了 backend（历史遗留，已无项目使用）→ python 组件会落到 *) 走
+    # backup_frontend，把整个 .venv（数百 MB）也打进备份，又慢又占盘。
     case "${PROJECT_KIND[$name]}" in
-        frontend) backup_frontend "$name" "$target_dir" ;;
-        backend)  backup_backend "$name" "$target_dir" ;;
-        *)        backup_frontend "$name" "$target_dir" ;;
+        frontend)                      backup_frontend "$name" "$target_dir" ;;
+        python|java|go|nodejs|backend) backup_backend "$name" "$target_dir" ;;
+        *)                             backup_backend "$name" "$target_dir" ;;
     esac
 
     local parent_dir
     parent_dir=$(dirname "$target_dir")
-    rm -rf "$target_dir"
     mkdir -p "$parent_dir"
+    # 只清「代码」部分，保留 .venv / .env / logs / data —— 与部署路径
+    # （deploy-kinds.sh 的 find 排除）保持一致。
+    # 原来的 rm -rf "$target_dir" 会连 .venv 一起删，而备份包（backup_backend）
+    # 里并不含 .venv，回滚后 Python 服务必然起不来，data/ 里的运行时数据也不可恢复；
+    # 且 rm -rf 发生在解压之前，一旦解压失败就是「代码全损」。
+    if [ -d "$target_dir" ]; then
+        find "$target_dir" -mindepth 1 -maxdepth 1 \
+            ! -name '.env' ! -name '.venv' ! -name 'logs' ! -name 'data' \
+            -exec rm -rf {} + 2>/dev/null || true
+    fi
     if ! tar xzf "$archive" -C "$parent_dir"; then
-        err "$name 解压备份失败: $archive"
+        err "$name 解压备份失败: $archive（原目录已尽量保留）"
         return 1
     fi
     ok "$name 已回滚到 $ts"

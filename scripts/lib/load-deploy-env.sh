@@ -37,15 +37,22 @@ load_deploy_env() {
     local env_name="deploy.env${suffix}"
 
     # Build search list: DEPLOY_ENV_FILE first, then target-specific, then default
+    # 搜索链按「离调用点由近到远」排列。
+    # ../../ 两档是给 scripts/ops/ 下的脚本用的：本文件在 dist/scripts/lib/，
+    # 而 03/04/05 在 dist/scripts/ops/，deploy.env 在 dist/ 根（= ops/../..）。
     for f in "${DEPLOY_ENV_FILE:-}" \
              ${script_dir:+"$script_dir/../${env_name}"} \
+             ${script_dir:+"$script_dir/../../${env_name}"} \
              ${deploy_root:+"$deploy_root/${env_name}"} \
+             ${deploy_root:+"$deploy_root/../${env_name}"} \
              ${script_dir:+"$script_dir/${env_name}"} \
              "$(pwd)/${env_name}" \
              "${HOME}/deploy-sandbox/${env_name}" \
              "/www/wwwroot/project/${env_name}" \
              ${script_dir:+"$script_dir/../deploy.env"} \
+             ${script_dir:+"$script_dir/../../deploy.env"} \
              ${deploy_root:+"$deploy_root/deploy.env"} \
+             ${deploy_root:+"$deploy_root/../deploy.env"} \
              ${script_dir:+"$script_dir/deploy.env"} \
              "$(pwd)/deploy.env" \
              "${HOME}/deploy-sandbox/deploy.env" \
