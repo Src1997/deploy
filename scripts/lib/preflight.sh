@@ -181,6 +181,51 @@ preflight() {
         warn "无法检测 Python 版本"
     fi
 
+    # 5. 系统时钟偏差（★ 历史事故源：VM 挂起/恢复后时钟冻结，chrony makestep
+    #    窗口已过只会慢速追赶，2026-10-09 VM 慢 61 分钟——上传时间戳错乱、
+    #    TLS 证书校验失败、签名 token 全部受影响。这里用 HTTP Date 头做
+    #    独立于 chrony 的硬校验，偏差超阈值直接拦下部署。）
+    local now_epoch http_date="" http_epoch drift turl
+    now_epoch=$(date +%s)
+    for turl in "https://www.baidu.com" "https://mirrors.cloud.tencent.com" "https://www.aliyun.com"; do
+        http_date=$(timeout 6 curl -sI --max-time 5 "$turl" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ate: //p' | head -1)
+        [ -n "$http_date" ] && break
+    done
+    if [ -z "$http_date" ]; then
+        warn "时钟检查：无法获取网络时间（服务器离线或出口受限），跳过"
+    else
+        http_epoch=$(date -d "$http_date" +%s 2>/dev/null)
+        if [ -z "$http_epoch" ]; then
+            warn "时钟检查：网络时间解析失败（Date: $http_date），跳过"
+        else
+            drift=$(( now_epoch - http_epoch ))
+            local abs_drift=${drift#-}
+            if [ "$abs_drift" -gt 120 ]; then
+                err "系统时钟偏差 ${drift}s（>120s）：TLS/签名/定时任务全会受影响。先校准：sudo systemctl stop chrony; sudo timedatectl set-ntp false; sudo timedatectl set-time '<正确时间>'; sudo hwclock -w"
+                ((errors++))
+            elif [ "$abs_drift" -gt 10 ]; then
+                warn "系统时钟偏差 ${drift}s（10-120s）：建议部署后执行 sudo chronyc makestep 强制对时"
+            else
+                ok "系统时钟：偏差 ${drift}s（正常）"
+            fi
+        fi
+    fi
+
+    # 6. NTP 同步服务状态（仅提示，不拦截——离线服务器可以没有 NTP）
+    if command -v chronyc >/dev/null 2>&1 && timeout 3 chronyc tracking >/dev/null 2>&1; then
+        local ntp_offset
+        ntp_offset=$(chronyc tracking 2>/dev/null | sed -n 's/^System time *: *\([0-9.e+-]*\) seconds.*/\1/p' | head -1)
+        if [ -n "$ntp_offset" ]; then
+            ok "NTP（chrony）：运行中，System time 偏差 ${ntp_offset}s"
+        else
+            ok "NTP（chrony）：运行中"
+        fi
+    elif systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
+        ok "NTP（systemd-timesyncd）：运行中"
+    else
+        warn "NTP 同步服务未运行（chrony/timesyncd 均未激活）——挂起恢复后时钟会漂移"
+    fi
+
     if [ "$errors" -gt 0 ]; then
         err "Pre-flight 检查失败（$errors 个错误），请修复后重试"
         return 1
