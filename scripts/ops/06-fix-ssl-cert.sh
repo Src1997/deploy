@@ -14,9 +14,17 @@
 #   2. 建 webroot 目录 /www/wwwroot/project/acme
 #   3. nginx 80 端口块插入 /.well-known/acme-challenge/ 验证路径（幂等）
 #   4. 安装 acme.sh（幂等），用 Let's Encrypt 签发证书
-#   5. 安装证书到宝塔证书目录（多个目录同步同一张证书）
-#   6. reload nginx
-#   7. acme.sh 自带每日续签 cron（到期前自动续 + 自动 reload）
+#   5. 生成通用续签同步脚本 /root/scripts/bt-cert-sync.sh（幂等重写）
+#   6. 安装证书到宝塔证书目录（多个目录同步同一张证书）
+#   7. reload nginx + 同步面板/邮局副本
+#   8. acme.sh 自带每日续签 cron（到期前自动续，续签后经 reloadcmd
+#      自动同步三处副本：nginx 网站 / 宝塔面板 / 宝塔邮局）
+#
+# ★背景（2026-10-09 事故）：acme.sh 只续证书本身；宝塔面板与邮局各持有
+#   一份独立证书副本，此前 reloadcmd 只 reload nginx，导致面板证书过期
+#   "进不去"、邮局证书报红。本版起 reloadcmd 指向 bt-cert-sync.sh 一次同步三处。
+#   服务器 B 上 2026-10-09 手工部署的 /root/scripts/sync-deepquant-cert.sh
+#   已被本逻辑取代（重跑本脚本会改写 reloadcmd 指向 bt-cert-sync.sh，旧脚本可删）。
 #
 # 幂等：重复执行安全。已配置则跳过配置，仅续签/重装证书。
 # ═══════════════════════════════════════════════════════════════
@@ -135,7 +143,50 @@ log "签发证书：${DOMAIN} ${EXTRA_DOMAINS}"
   --server letsencrypt --accountemail "${EMAIL}" --force 2>&1 | tail -15 \
   || die "证书签发失败（检查域名解析是否指向本机、80 端口是否放行）"
 
-# ── 6. 安装证书到宝塔目录 ──────────────────────────────────
+# ── 6a. 生成续签同步脚本（网站/面板/邮局三处副本，幂等重写）──
+SYNC_SCRIPT="/root/scripts/bt-cert-sync.sh"
+mkdir -p /root/scripts
+cat > "${SYNC_SCRIPT}" <<'SYNC_EOF'
+#!/bin/bash
+# 由 deploy/scripts/ops/06-fix-ssl-cert.sh 生成（每次运行该脚本时幂等重写）
+# acme.sh 续签成功后经 --reloadcmd 调用：同步证书到三处副本并重启对应服务
+# 用法: bt-cert-sync.sh <主域名>
+DOMAIN="$1"
+LOG=/var/log/cert-sync.log
+SRC="/root/.acme.sh/${DOMAIN}_ecc"
+[ -d "$SRC" ] || SRC="/root/.acme.sh/${DOMAIN}"
+echo "[$(date '+%F %T')] cert sync start (${DOMAIN})" >> "$LOG"
+
+# 1) nginx 网站（acme.sh 已直接安装到 vhost/cert，此处 reload）
+nginx -t >> "$LOG" 2>&1 && systemctl reload nginx \
+  && echo "[$(date '+%F %T')] nginx reloaded" >> "$LOG"
+
+# 2) 宝塔面板（装了宝塔才同步；面板证书在启动时加载，需 restart）
+if [ -d /www/server/panel/ssl ]; then
+  cp -f "$SRC/fullchain.cer" /www/server/panel/ssl/certificate.pem
+  cp -f "$SRC/${DOMAIN}.key" /www/server/panel/ssl/privateKey.pem
+  chmod 600 /www/server/panel/ssl/certificate.pem /www/server/panel/ssl/privateKey.pem
+  /etc/init.d/bt restart > /dev/null 2>&1 \
+    && echo "[$(date '+%F %T')] panel restarted" >> "$LOG"
+fi
+
+# 3) 宝塔邮局（装了邮局插件才同步；dovecot/postfix TLS 用）
+MAIL_CERT_DIR="/www/server/panel/plugin/mail_sys/cert/${DOMAIN}"
+if [ -d "$MAIL_CERT_DIR" ]; then
+  cp -f "$SRC/fullchain.cer" "$MAIL_CERT_DIR/fullchain.pem"
+  cp -f "$SRC/${DOMAIN}.key" "$MAIL_CERT_DIR/privkey.pem"
+  chmod 600 "$MAIL_CERT_DIR"/fullchain.pem "$MAIL_CERT_DIR"/privkey.pem
+  systemctl restart dovecot postfix \
+    && echo "[$(date '+%F %T')] dovecot+postfix restarted" >> "$LOG"
+fi
+
+echo "[$(date '+%F %T')] cert sync done" >> "$LOG"
+SYNC_EOF
+chmod +x "${SYNC_SCRIPT}"
+bash -n "${SYNC_SCRIPT}" || die "同步脚本语法错误"
+log "续签同步脚本就绪：${SYNC_SCRIPT}（覆盖 网站/面板/邮局 三处）"
+
+# ── 6b. 安装证书到宝塔目录 ──────────────────────────────────
 PRIMARY_NAME=$(echo "${CERT_NAMES}" | awk '{print $1}')
 PRIMARY_DIR="${CERT_BASE}/${PRIMARY_NAME}"
 mkdir -p "${PRIMARY_DIR}"
@@ -145,7 +196,7 @@ log "安装证书到 ${PRIMARY_DIR}"
   --cert-file      "${PRIMARY_DIR}/cert.pem" \
   --key-file       "${PRIMARY_DIR}/privkey.pem" \
   --fullchain-file "${PRIMARY_DIR}/fullchain.pem" \
-  --reloadcmd      "nginx -t && systemctl reload nginx" 2>&1 | tail -8
+  --reloadcmd      "bash ${SYNC_SCRIPT} ${DOMAIN}" 2>&1 | tail -8
 
 # 同步副本目录（如 mail.deepquant.club）
 for name in ${CERT_NAMES}; do
@@ -169,6 +220,11 @@ for name in ${CERT_NAMES}; do
   F="${CERT_BASE}/${name}/fullchain.pem"
   [ -f "${F}" ] && printf '  %-24s %s\n' "${name}" "$(openssl x509 -in "${F}" -noout -enddate 2>/dev/null)"
 done
+[ -f /www/server/panel/ssl/certificate.pem ] \
+  && printf '  %-24s %s\n' "宝塔面板" "$(openssl x509 -in /www/server/panel/ssl/certificate.pem -noout -enddate 2>/dev/null)"
+MAIL_CERT="/www/server/panel/plugin/mail_sys/cert/${DOMAIN}/fullchain.pem"
+[ -f "${MAIL_CERT}" ] \
+  && printf '  %-24s %s\n' "宝塔邮局" "$(openssl x509 -in "${MAIL_CERT}" -noout -enddate 2>/dev/null)"
 echo
 echo "远程校验（${DOMAIN}:443）："
 echo | timeout 15 openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/null \
@@ -182,4 +238,4 @@ else
   log "未检测到续签任务，acme.sh 安装时通常已自动写入，请手动确认"
 fi
 
-log "完成。证书有效期 90 天，acme.sh 每日检查、到期前自动续签并 reload nginx。"
+log "完成。证书有效期 90 天，acme.sh 每日检查、到期前自动续签；续签后经 reloadcmd 自动同步 网站/面板/邮局 三处副本（日志 /var/log/cert-sync.log）。"
