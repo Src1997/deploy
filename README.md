@@ -284,7 +284,7 @@ PROJECT_BASE env    >  TOML projectBase    >  /www/wwwroot/project
 | 配置文件 | 用途 | Nginx 模式 | 域名 |
 |----------|------|-----------|------|
 | `deploy.env.example` | 本地/虚拟机（模板） | http（IP 部署） | 无 |
-| `deploy.env.server-a` | 服务器 A (47.86.32.234) | ssl-redirect（裸域→www） | `DOMAIN` + `WWW_DOMAIN` |
+| `deploy.env.server-a` | 服务器 A (121.41.44.216) | ssl-redirect（裸域→www） | `zhuochou.xyz` |
 | `deploy.env.server-b` | 服务器 B (103.100.211.12) | ssl-combined（域名合并） | `DOMAIN` + `WWW_DOMAIN` |
 
 使用方法：
@@ -301,7 +301,7 @@ cp deploy.env.example deploy.env
 
 ```bash
 # 方式一：--target 参数
-bash deploy.sh all --yes --target=server-a --ip=47.86.32.234
+bash deploy.sh all --yes --target=server-a --ip=121.41.44.216
 bash deploy.sh all --yes --target=server-b
 
 # 方式二：环境变量

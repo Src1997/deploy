@@ -9,7 +9,7 @@
 已配置 `~/.ssh/config`，可直接用别名连接：
 
 ```bash
-ssh serverA    # → root@47.86.32.234:22
+ssh serverA    # → root@121.41.44.216:22
 ssh serverB    # → root@103.100.211.12:3142
 ```
 
@@ -18,14 +18,17 @@ ssh serverB    # → root@103.100.211.12:3142
 | | 服务器 A | 服务器 B |
 |---|---------|---------|
 | **别名** | `serverA` | `serverB` |
-| **IP** | 47.86.32.234 | 103.100.211.12 |
+| **IP** | 121.41.44.216 | 103.100.211.12 |
 | **SSH 端口** | 22 | 3142 |
-| **域名** | `www.zhuochouacedemy.com` | `www.deepquant.club` |
+| **域名** | `www.zhuochou.xyz` | `www.deepquant.club` |
 | **Nginx 模式** | `ssl-redirect` | `ssl-combined` |
 | **PostgreSQL** | 见 `deploy.env` 的 `PG_*` | 同左 |
 | **数据库** | quant_zc, quantdinger | quant_zc, quantdinger |
-| **Redis 密码** | 见 `REDIS_PASSWORD` | 无密码（`REDIS_PASSWORD=` 留空） |
-| **SMTP** | 宝塔邮局 `noreply@zhuochouacedemy.com` | — |
+| **Redis** | 远程指向服务器 B（103.100.211.12:6379） | 本机实例 |
+| **SMTP** | 宝塔邮局 `noreply@zhuochou.xyz` | — |
+
+> ★2026-10-10 服务器 A 换机：旧机 47.86.32.234（阿里云 HK）已停用，换为 121.41.44.216；
+> 域名同步由 `zhuochouacedemy.com` 改为 `zhuochou.xyz`。跨机 Redis 架构保持不变。
 
 ## 远程开发启动命令
 
@@ -59,11 +62,11 @@ pnpm dev:remoteB    # 连接服务器 B 的 QuantDinger 后端
 
 | 项目 | 文件 | 连接目标 |
 |------|------|----------|
-| financial-api | `.env.remoteA` | 47.86.32.234 PostgreSQL + Redis |
+| financial-api | `.env.remoteA` | 121.41.44.216 PostgreSQL + Redis |
 | financial-api | `.env.remoteB` | 103.100.211.12 PostgreSQL + Redis |
-| financial-web | `.env.remoteA` | 47.86.32.234 /api + WebSocket |
+| financial-web | `.env.remoteA` | 121.41.44.216 /api + WebSocket |
 | financial-web | `.env.remoteB` | 103.100.211.12 /api + WebSocket |
-| deepquant_vue | `.env.remoteA` | 47.86.32.234 /quant/api |
+| deepquant_vue | `.env.remoteA` | 121.41.44.216 /quant/api |
 | deepquant_vue | `.env.remoteB` | 103.100.211.12 /quant/api |
 
 ## 服务器端 PostgreSQL 远程访问

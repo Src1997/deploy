@@ -23,3 +23,6 @@ tmp/
 
 # 脚本临时产物（openapi 导出等）
 scripts/openapi_tmp.json
+
+# deploy.env 的本地备份（含明文密码，永不提交）
+deploy.env.*.bak_*

@@ -93,15 +93,15 @@ cd /www/wwwroot/project/uploads/dist
 
 # 指定目标环境（加载对应的 deploy.env.server-a / server-b）
 bash deploy.sh financial-web --target=server-a
-bash deploy.sh all --yes --target=server-a --ip=47.86.32.234
+bash deploy.sh all --yes --target=server-a --ip=121.41.44.216
 bash deploy.sh all --yes --target=server-b
 
 # 不指定 target 时默认加载 deploy.env（本地/虚拟机）
 bash deploy.sh financial-web
-bash deploy.sh financial-api --ip=47.86.32.234
+bash deploy.sh financial-api --ip=121.41.44.216
 
 # 全量部署
-bash deploy.sh all --ip=47.86.32.234
+bash deploy.sh all --ip=121.41.44.216
 
 # 不重启服务（只更新代码）
 bash deploy.sh financial-api --no-restart

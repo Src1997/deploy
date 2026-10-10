@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════
 # 06-fix-ssl-cert.sh — SSL 证书签发 / 自动续签（acme.sh + webroot 验证）
 #
-# 适用：服务器 A（zhuochouacedemy.com）/ 服务器 B（deepquant.club）
+# 适用：服务器 A（zhuochou.xyz）/ 服务器 B（deepquant.club）
 # 用法（在目标服务器上执行，按需覆盖变量）：
 #   DOMAIN=deepquant.club \
 #   EXTRA_DOMAINS="www.deepquant.club mail.deepquant.club" \

@@ -15,9 +15,9 @@ project_base = "/www/wwwroot/project"     # 服务器项目根；可被 deploy.e
 # nginx_mode 对应 generate-nginx.py --mode：http | ssl-redirect | ssl-combined
 [servers.server-a]
 nginx_mode = "ssl-redirect"        # 裸域 → www 301 + HTTPS（服务器 A）
-domain = "zhuochouacedemy.com"
-www_domain = "www.zhuochouacedemy.com"
-frontend_url = "https://www.zhuochouacedemy.com"
+domain = "zhuochou.xyz"
+www_domain = "www.zhuochou.xyz"
+frontend_url = "https://www.zhuochou.xyz"
 
 [servers.server-b]
 nginx_mode = "ssl-combined"        # 域名 + HTTPS 合并配置（服务器 B）

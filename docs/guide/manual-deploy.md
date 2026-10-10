@@ -467,7 +467,7 @@ SMTP_PASSWORD="你的SMTP密码"
 DOMAIN="example.com"
 WWW_DOMAIN="www.example.com"
 APP_NAME="MyApp"
-SERVER_IP="47.86.32.234"
+SERVER_IP="121.41.44.216"
 
 sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
     -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
