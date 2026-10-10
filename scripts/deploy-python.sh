@@ -777,8 +777,26 @@ db_backup() {
     local db_backup_dir="${BACKUP_BASE:-$PROJECT_BASE/backup}/db-backups/$db_name"
     mkdir -p "$db_backup_dir"
     local db_file="${db_backup_dir}/${TIMESTAMP}.sql.gz"
-    log "Backing up database ($db_name) before migration..."
-    if PGPASSWORD="${PG_PASSWORD}" pg_dump -U "${PG_USER:-root}" -h 127.0.0.1 "$db_name" 2>/dev/null | gzip > "$db_file"; then
+    local db_err="${db_backup_dir}/${TIMESTAMP}.dump.err"
+    # ★ 备份账号缺省用超级用户 root：应用账号常缺表/序列权限，pg_dump 会在
+    #   LOCK TABLE / 读序列阶段报 permission denied 而失败。可用 PG_BACKUP_USER 覆盖。
+    local dump_user="${PG_BACKUP_USER:-${PG_USER:-root}}"
+    local dump_pass="${PG_BACKUP_PASSWORD:-${PG_PASSWORD}}"
+    log "Backing up database ($db_name) as $dump_user before migration..."
+
+    # ★ 不能只判管道退出码：管道的 rc 是最后一个命令(gzip)的，pg_dump 失败也会被判
+    #   "成功"，只留下一个 20 字节的空 .sql.gz —— 看着有备份，实际是空的。
+    #   故用 PIPESTATUS 取 pg_dump 自身的 rc，并校验产物大小 > 1KB。
+    #   PIPESTATUS 会被后续任何命令重置，必须一次性存进数组。
+    local _ps pg_rc gz_rc out_size
+    PGPASSWORD="$dump_pass" pg_dump -U "$dump_user" -h "${PG_HOST:-127.0.0.1}" -p "${PG_PORT:-5432}" "$db_name" 2>"$db_err" | gzip > "$db_file"
+    _ps=("${PIPESTATUS[@]}")
+    pg_rc=${_ps[0]}
+    gz_rc=${_ps[1]}
+    out_size=$(stat -c%s "$db_file" 2>/dev/null || echo 0)
+
+    if (( pg_rc == 0 && gz_rc == 0 && out_size > 1024 )); then
+        rm -f "$db_err" 2>/dev/null
         local db_size
         db_size=$(du -h "$db_file" | cut -f1)
         ok "Database backup: $db_file ($db_size)"
@@ -790,7 +808,11 @@ db_backup() {
             log "Rotated old DB backups (kept ${MAX_BACKUPS})"
         fi
     else
-        warn "Database backup failed — continuing anyway (migration will proceed)"
+        warn "Database backup failed (pg_dump rc=$pg_rc, gzip rc=$gz_rc, size=${out_size}B) — continuing anyway (migration will proceed)"
+        # 保留 pg_dump 的原始报错，别再 2>/dev/null 吞掉，否则下次仍无从排查
+        if [[ -s "$db_err" ]]; then
+            head -3 "$db_err" | while IFS= read -r _l; do warn "  pg_dump: $_l"; done
+        fi
         rm -f "$db_file" 2>/dev/null
     fi
 }
