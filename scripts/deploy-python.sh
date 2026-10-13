@@ -623,6 +623,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
     if [ -n "$template" ]; then
         sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
             -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
+            -e "s|__REDIS_HOST__|${REDIS_HOST:-127.0.0.1}|g" \
             -e "s|__AUTH_SECRET_KEY__|${AUTH_KEY}|g" \
             -e "s|__WEB_PATH__|${WEB_PATH}|g" \
             -e "s|__SERVER_IP__|${SERVER_IP_VAL}|g" \
