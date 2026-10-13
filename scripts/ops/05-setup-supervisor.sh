@@ -29,6 +29,7 @@ for arg in "$@"; do
         --check)    MODE="check" ;;
         --infra)    MODE="infra" ;;
         --projects) MODE="projects" ;;
+        --target=*) TARGET="${arg#--target=}" ;;
         --help|-h)  sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "Unknown: $arg (try --help)"; exit 1 ;;
     esac
@@ -48,6 +49,24 @@ fi
 for bp in /www/server/nginx/sbin /www/server/pgsql/bin /www/server/redis/src; do
     [ -d "$bp" ] && ! echo "$PATH" | grep -q "$bp" && export PATH="$bp:$PATH"
 done
+
+# -- Load deploy.env（MCP_AGENT_TOKEN 等渲染变量从这里来）--
+# 用法: bash 05-setup-supervisor.sh --target=server-a 或环境变量 DEPLOY_TARGET
+TARGET="${DEPLOY_TARGET:-server-a}"
+for arg in "$@"; do
+    case "$arg" in
+        --target=*) TARGET="${arg#--target=}" ;;
+    esac
+done
+_ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/deploy.env.${TARGET}"
+if [ -f "$_ENV_FILE" ]; then
+    # Windows 工作区来的文件常带 CRLF，\r 会粘到变量值上 —— source 前剥离
+    tr -d '\r' < "$_ENV_FILE" > /tmp/_deploy_env.$$
+    set -a; . /tmp/_deploy_env.$$; set +a; rm -f /tmp/_deploy_env.$$
+    ok "已加载环境配置: deploy.env.${TARGET}"
+else
+    warn "未找到 $_ENV_FILE（MCP_AGENT_TOKEN 将为空，quantdinger-mcp 可能起不来）"
+fi
 
 echo ""
 echo "═══════════════════════════════════════════════════════════"
@@ -73,6 +92,13 @@ if [ -x "${SV_DIR}/bin/supervisord" ]; then
     SV_BIN="${SV_DIR}/bin/supervisord"
     SV_CTL="${SV_DIR}/bin/supervisorctl"
     SV_CONF_DIR="${SV_DIR}/conf"
+elif [ -d "${SV_DIR}/profile" ]; then
+    # ★ 宝塔新版插件：二进制在 panel/pyenv，supervisord.conf 的 [include] 只加载
+    #   ${SV_DIR}/profile/*.ini（面板 GUI 管理的也是这个目录）。写到 /etc/supervisor/conf.d
+    #   会被静默忽略（no such process）。
+    SV_BIN="/www/server/panel/pyenv/bin/supervisord"
+    SV_CTL="/www/server/panel/pyenv/bin/supervisorctl"
+    SV_CONF_DIR="${SV_DIR}/profile"
 elif command -v supervisord &>/dev/null; then
     SV_BIN=$(command -v supervisord)
     SV_CTL=$(command -v supervisorctl 2>/dev/null || echo "")
@@ -106,7 +132,8 @@ PROJECTS=(
     "financial-streaming|${FA_DIR}|${FA_VENV}/python -m worker.streaming|APP_ROLE=crawler,CRAWLER_ENABLED=true"
     "financial-worker|${FA_DIR}|${FA_VENV}/arq worker.settings.WorkerSettings|APP_ROLE=crawler,CRAWLER_ENABLED=true"
     "quantdinger-backend|${DQ_DIR}|${DQ_VENV}/gunicorn -c gunicorn_config.py run:app|"
-    "quantdinger-mcp|${DQ_DIR}|${DQ_VENV}/python -m quantdinger_mcp.server|"
+    # ★ mcp 需要 5 个环境变量（对齐 B 的 systemd unit）；缺 QUANTDINGER_BASE_URL 会直接退出
+    "quantdinger-mcp|${DQ_DIR}|${DQ_VENV}/python -m quantdinger_mcp.server|QUANTDINGER_MCP_TRANSPORT=sse,QUANTDINGER_MCP_HOST=127.0.0.1,QUANTDINGER_MCP_PORT=7800,QUANTDINGER_BASE_URL=http://127.0.0.1:5000,QUANTDINGER_AGENT_TOKEN=${MCP_AGENT_TOKEN:-},PYTHONUNBUFFERED=1"
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -182,13 +209,12 @@ write_supervisor_conf() {
     fi
     mkdir -p "$log_dir" 2>/dev/null || true
 
-    # Build Environment lines
-    local env_lines=""
+    # Build environment line
+    # ★ supervisor 的 ini 由 ConfigParser 解析：多行同名键 Environment= 会互相覆盖
+    #   （APP_ROLE 被后面行吃掉），必须写成**单行逗号分隔**的 environment=KEY=v,KEY2=v2
+    local env_line=""
     if [ -n "$env_vars" ]; then
-        IFS=',' read -ra envs <<< "$env_vars"
-        for e in "${envs[@]}"; do
-            env_lines="${env_lines}Environment=${e}\n"
-        done
+        env_line="environment=${env_vars}"
     fi
 
     # Write INI config (printf to preserve \n)
@@ -202,7 +228,7 @@ autorestart=true\n\
 startsecs=5\n\
 startretries=3\n\
 stopwaitsecs=15\n\
-${env_lines}\
+${env_line}\
 stdout_logfile=${log_dir}/stdout.log\n\
 stdout_logfile_maxbytes=20MB\n\
 stdout_logfile_backups=5\n\
