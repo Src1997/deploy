@@ -200,7 +200,7 @@ setup_infra_autostart() {
 # ═══════════════════════════════════════════════════════════════
 write_supervisor_conf() {
     local name="$1" workdir="$2" command="$3" env_vars="$4"
-    local conf_file="${SV_CONF_DIR}/${name}.conf"
+    local conf_file="${SV_CONF_DIR}/${name}.ini"
     local log_dir="/www/server/panel/plugin/supervisor/log/${name}"
 
     # Use /var/log/supervisor as fallback for non-BaoTa installs
@@ -228,7 +228,7 @@ autorestart=true\n\
 startsecs=5\n\
 startretries=3\n\
 stopwaitsecs=15\n\
-${env_line}\
+${env_line}\n\
 stdout_logfile=${log_dir}/stdout.log\n\
 stdout_logfile_maxbytes=20MB\n\
 stdout_logfile_backups=5\n\
