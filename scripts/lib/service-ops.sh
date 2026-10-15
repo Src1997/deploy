@@ -7,10 +7,22 @@
 #             PROJECT_DISPLAY_NAME, NO_RESTART, LOG_LINES, LOG_LEVEL
 
 # Detect Supervisor (BaoTa plugin or system)
+# ★ 2026-10-15 修复坑②：新版宝塔把 supervisor 插件的 python 环境放在
+#   /www/server/panel/pyenv/bin/（旧路径 plugin/supervisor/bin/ 不存在），
+#   原探测链全部落空 → _SUPERVISORCTL 为空 → 误判「不在 Supervisor」→
+#   回退 systemctl 重启（无效）→ 旧进程带着旧代码继续跑。
+#   现按「新路径 → 旧路径 → PATH」顺序探测，取第一个可执行的。
 _SUPERVISORCTL=""
-if [ -x /www/server/panel/plugin/supervisor/bin/supervisorctl ]; then
-    _SUPERVISORCTL="/www/server/panel/plugin/supervisor/bin/supervisorctl"
-elif command -v supervisorctl &>/dev/null; then
+for _sup_cand in \
+    /www/server/panel/pyenv/bin/supervisorctl \
+    /www/server/panel/plugin/supervisor/bin/supervisorctl
+do
+    if [ -x "$_sup_cand" ]; then
+        _SUPERVISORCTL="$_sup_cand"
+        break
+    fi
+done
+if [ -z "$_SUPERVISORCTL" ] && command -v supervisorctl &>/dev/null; then
     _SUPERVISORCTL=$(command -v supervisorctl)
 fi
 
@@ -32,7 +44,7 @@ restart_service() {
     log "重启 $svc..."
     # Try Supervisor first, fall back to systemctl
     if _svc_in_supervisor "$svc"; then
-        $_SUPERVISORCTL restart "$svc" 2>/dev/null || warn "$svc Supervisor restart failed"
+        _restart_err="$($_SUPERVISORCTL restart "$svc" 2>&1)" || warn "$svc Supervisor restart failed: $_restart_err"
         sleep 2
         $_SUPERVISORCTL status "$svc" 2>/dev/null | grep -q RUNNING && ok "$svc 运行中 (Supervisor)" || warn "$svc 未运行"
     else
