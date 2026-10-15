@@ -43,6 +43,7 @@ deploy/
     tools/                 # 工具脚本
       detect-status.sh     # 部署进度检测
       generate-nginx.py    # Nginx 配置生成器
+      setup-wireguard.sh   # 跨机 WireGuard 隧道单机侧配置（幂等，见 docs/guide/multi-server-interconnect.md）
   configs/                 # 配置模板（.env.example、systemd service）
   project-configs/         # 项目配置 SSOT（TOML 格式）
     _shared.toml           # 跨项目共享默认值
@@ -89,6 +90,7 @@ bash deploy.sh → lib/*.sh → 部署/回滚/状态/日志
 | 改部署逻辑 | `scripts/lib/deploy-kinds.sh`（按 kind 分发） |
 | 改备份/回滚 | `scripts/lib/backup-rollback.sh` |
 | 改 Nginx 生成 | `scripts/tools/generate-nginx.py` |
+| 跨机互联（Redis/PG/新服务） | `scripts/tools/setup-wireguard.sh` + `docs/guide/multi-server-interconnect.md` |
 | 改 preflight 检查 | `scripts/lib/preflight.sh` |
 | 改打包逻辑 | `scripts/pack.ps1` |
 | 查部署文档 | `docs/guide/` 下按场景选择 |

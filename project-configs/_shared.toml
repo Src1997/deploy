@@ -14,7 +14,7 @@ project_base = "/www/wwwroot/project"     # 服务器项目根；可被 deploy.e
 # ── 多服务器定义（所有项目共享；如需项目级覆盖，在 project.toml 中重写）──
 # nginx_mode 对应 generate-nginx.py --mode：http | ssl-redirect | ssl-combined
 [servers.server-a]
-nginx_mode = "ssl-redirect"        # 裸域 → www 301 + HTTPS（服务器 A）
+nginx_mode = "ssl-combined"        # 域名+HTTPS 合并块，无裸域→www 跳转（域名未解析期间 IP 可直访）
 domain = "zhuochou.xyz"
 www_domain = "www.zhuochou.xyz"
 frontend_url = "https://www.zhuochou.xyz"

@@ -176,11 +176,15 @@ function Copy-DeployAssets {
     }
 
     # Core scripts (server-side only: deploy.sh, detect-status.sh, generate-nginx.py,
-    # deploy-python.sh). pack.ps1 is Windows-only, NOT copied to dist/.
+    # deploy-python.sh, setup-wireguard.sh, log-audit.sh, log-hygiene.sh).
+    # pack.ps1 is Windows-only, NOT copied to dist/.
     $copy = @(
         (Join-Path $ScriptsDir 'deploy.sh'),
         (Join-Path $ScriptsDir 'tools\detect-status.sh'),
         (Join-Path $ScriptsDir 'tools\generate-nginx.py'),
+        (Join-Path $ScriptsDir 'tools\setup-wireguard.sh'),
+        (Join-Path $ScriptsDir 'tools\log-audit.sh'),
+        (Join-Path $ScriptsDir 'tools\log-hygiene.sh'),
         (Join-Path $ScriptsDir 'deploy-python.sh')
     )
     foreach ($f in $copy) {
