@@ -50,7 +50,7 @@
 2. **`.env` 默认全排除**，唯一放行通道是 `include_env` 白名单；真实密码只活在 `deploy.env*`，部署时占位符渲染。
 3. **python 清空保留名单**：`.env` `.venv` `logs` `data`——回滚侧（backup-rollback.sh）的 find 排除必须与此一致，否则回滚后服务起不来。
 4. **备份内容按 kind 区分**：frontend 只备 dist；python/java/go/nodejs 备 pkg_dir 但**不含 .venv**（backup_frontend / backup_backend 分工）。
-5. **健康检查**（`health_check`，3 次尝试）失败返回 1：部署路径裸调用（结果只影响日志语义），**回滚路径显式捕获**——回滚后健康检查失败 = 整次回滚计为失败。
+5. **健康检查**（`health_check`，3 次尝试）失败返回 1，**双端均闭环**：部署路径（deploy-kinds.sh 4 处）捕获后该组件部署计为失败（批次汇总计入 failed、退出码非零、提示可回滚）；回滚路径（backup-rollback.sh）同理。
 
 ## 双端同步核对清单（改 kind 行为后逐项勾）
 

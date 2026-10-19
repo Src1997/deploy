@@ -254,7 +254,13 @@ deploy_python() {
         done
         if [ -n "${HEALTH_URL[$id]:-}" ]; then
             sleep 3
-            health_check "$id" "${HEALTH_URL[$id]}"
+            local health_rc=0
+            health_check "$id" "${HEALTH_URL[$id]}" || health_rc=1
+            if [ "$health_rc" -eq 1 ]; then
+                err "$id 部署后健康检查未通过，本次部署计为失败: ${HEALTH_URL[$id]}"
+                warn "  代码已更新但服务未就绪——部署前备份已保留，可回滚: bash deploy.sh $id --rollback"
+                return 1
+            fi
         fi
     fi
 }
@@ -348,7 +354,13 @@ deploy_java() {
         done
         if [ -n "${HEALTH_URL[$id]:-}" ]; then
             sleep 3
-            health_check "$id" "${HEALTH_URL[$id]}"
+            local health_rc=0
+            health_check "$id" "${HEALTH_URL[$id]}" || health_rc=1
+            if [ "$health_rc" -eq 1 ]; then
+                err "$id 部署后健康检查未通过，本次部署计为失败: ${HEALTH_URL[$id]}"
+                warn "  代码已更新但服务未就绪——部署前备份已保留，可回滚: bash deploy.sh $id --rollback"
+                return 1
+            fi
         fi
     fi
 }
@@ -446,7 +458,13 @@ deploy_go() {
         done
         if [ -n "${HEALTH_URL[$id]:-}" ]; then
             sleep 3
-            health_check "$id" "${HEALTH_URL[$id]}"
+            local health_rc=0
+            health_check "$id" "${HEALTH_URL[$id]}" || health_rc=1
+            if [ "$health_rc" -eq 1 ]; then
+                err "$id 部署后健康检查未通过，本次部署计为失败: ${HEALTH_URL[$id]}"
+                warn "  代码已更新但服务未就绪——部署前备份已保留，可回滚: bash deploy.sh $id --rollback"
+                return 1
+            fi
         fi
     fi
 }
@@ -548,7 +566,13 @@ deploy_nodejs() {
         done
         if [ -n "${HEALTH_URL[$id]:-}" ]; then
             sleep 3
-            health_check "$id" "${HEALTH_URL[$id]}"
+            local health_rc=0
+            health_check "$id" "${HEALTH_URL[$id]}" || health_rc=1
+            if [ "$health_rc" -eq 1 ]; then
+                err "$id 部署后健康检查未通过，本次部署计为失败: ${HEALTH_URL[$id]}"
+                warn "  代码已更新但服务未就绪——部署前备份已保留，可回滚: bash deploy.sh $id --rollback"
+                return 1
+            fi
         fi
     fi
 }
