@@ -461,3 +461,32 @@ systemctl is-active financial-api financial-crawler financial-worker financial-s
 - 前端包不写 VERSION、无 sha256 清单 → "上传即新鲜"无法自证（中危 M2/M8）；
 - `db_backup` 的 pg_dump 硬编码 127.0.0.1 未用 PG_HOST/PG_PORT（中危 M9）；
 - tests/verify-baota-services.sh 等测试脚本硬编码生产密码且已入库（中危，建议轮换）。
+
+### 19. B/C 行情"不变色"+ overview 500：Finnhub 空 token 缓存 / 403 永久黑名单 / IP 惩罚 / systemd-Supervisor 拉锯（2026-10-19）
+
+**现象**：B（deepquant.club）与 C（zhouchou.net）行情详情页无涨跌颜色、K 线空白；`/api/quote/overview/GBPUSD` 两台都 500。B 修好一批后又出 EURGBP/日线蜡烛空白（C 正常）。
+
+**根因一：REST 客户端空 token 进程级缓存 → 401 → overview 500**
+- `.env` 的 `FINNHUB_API_KEY` 为空（key 只在 DB `fin_data_source_configs`）；`get_finnhub_config()` 在 DB 配置缓存未加载时回落 .env → 空 key。
+- `FinnhubRestClient._config` **首次访问即永久缓存**：进程启动早期（`load_config_cache` 之前）首个 REST 请求把空 token 配置焊死到进程死亡 → 所有 `/forex/candle` 401 → candles=[] → `fetch_candles` 提前返回 `indicators=None` → `_generate_technical_summary` 里 `indicators.rsi` 抛 AttributeError → 500。
+- WS 实时价不受影响（每次重连重新取配置）——"价格在动、蜡烛挂、概览页无色"的分裂现象由此而来。
+- **修复**（financial-api `rest_client.py`）：缓存 key 为空且 `is_cache_loaded()` 后自动刷新一次。另 `service.py`：`indicators=None` 优雅降级中性摘要（overview 永不 500）；未知品种 `ValueError` → `NotFoundError`（404 信封）/ `ServiceUnavailableError`（503）。
+
+**根因二：瞬时 403 被进程内永久黑名单 → B 蜡烛全空（C 正常）**
+- Finnhub 对被惩罚的 IP 对 `/forex/candle` 返回 403；代码把端点 URL 记入 `_forbidden_endpoints`（set，无 TTL，注释假设"免费 tier 不支持"）→ 进程存活期内所有蜡烛请求静默跳过。外汇蜡烛实际可用（裸调 200），被惩罚时才会 403。
+- **修复**（`rest_client.py`）：黑名单改 `dict[url, expiry]` + `_FORBIDDEN_TTL_SEC=600`，TTL 过期自动重试。
+- 排查利器：venv 直跑探针（`load_config_cache` + `load_mapping_cache` 后 `get_rest_client().fetch_candles`）一发定位 401；`ssh host 'cat > /tmp/x.py' < local` 传脚本执行避免引号地狱。
+
+**根因三：单 Finnhub key 多 WS 客户端互踢 → IP 级 429/403 惩罚（殃及 REST）**
+- 免费 key 的 WSS 连接极有限：B financial（34 符号）与 B quantdinger（XAUUSD）两个重连循环互相踢（connect → ~15s 被 1006 杀 → 重连），叠加触发 **IP 级惩罚**：WS 握手 429、REST candle 403。同 key 的 C（不同 IP）不受影响 ⇒ 惩罚按 IP 计。
+- **止血**：C 的 DB `finnhub.feed_enabled` 改 false（DB 优先于 .env，此前 C 实际也在连）→ B 冷却期也曾临时关 WS，REST 蜡烛立即恢复。
+- **规范**：B 单 leader（唯一 WSS），C/A follower（读 B 的 Redis 分发）；quantdinger 待换独立 key（用户 2026-10-19 拍板暂缓，接受互踢）。
+
+**根因四：legacy systemd unit 与 Supervisor 抢 5001（"孤儿进程"真凶）**
+- B 残留 `financial-api.service`（disabled 但 active + Restart=always）等 4 个旧 unit，与 Supervisor 抢端口：Supervisor 的 api 反复 bind 失败崩溃循环，systemd 的子进程（PPID=1，极易误判为"孤儿"）占着 5001。
+- **修复**：`systemctl stop+disable financial-{api,crawler,streaming,worker}.service`。05-setup-supervisor.sh 的 `cleanup_systemd_units` 本就覆盖此场景——**B 从未执行过 05**；03-check-components.sh 已新增 `check_daemon_conflict` 巡检项（双重管辖即报错），防止复发。
+- ★教训：PPID=1 的同名进程先 `systemctl status` 确认再动手，别当孤儿杀。
+
+**修复落地方式**：3 个文件（`rest_client.py` ×2 处、`service.py` ×2 处）本地 repo + B/C 热修（精确字符串替换补丁 + `py_compile` 校验 + supervisor 重启），服务器留 `.bak_fix401`/`.bak_fix403` 备份；**待 financial-api test 分支提交合并 sunrc_test 后重新打包部署**（热修会被下次部署覆盖，务必先入库）。
+
+**C 机证书**：zhouchou.net LE 证书 2026-10-19 01:40 签发（SAN 裸域+www，至 2027-01-17，acme cron 已装）。用户报"不安全"为浏览器在签发前访问自签占位留下的会话例外，清站点数据即消。

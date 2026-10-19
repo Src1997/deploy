@@ -969,9 +969,13 @@ echo ""
 ok "Deploy complete!"
 echo ""
 echo "  Quick commands:"
-echo "    supervisorctl status        # Supervisor 进程总览（如已迁移 Supervisor）"
-echo "    systemctl status ${SERVICES[*]}"
-echo "    supervisorctl tail -f ${SERVICES[0]} / journalctl -u ${SERVICES[0]} -f"
+if _svc_in_supervisor "${SERVICES[0]}"; then
+    echo "    supervisorctl status                    # Supervisor 进程总览（当前托管方式）"
+    echo "    supervisorctl tail -f ${SERVICES[0]}    # 查看日志（Supervisor 托管，勿用 journalctl）"
+else
+    echo "    systemctl status ${SERVICES[*]}"
+    echo "    journalctl -u ${SERVICES[0]} -f"
+fi
 echo "    curl http://127.0.0.1:${API_PORT}${HEALTH_PATH}"
 echo "    cat $PKG_DIR/VERSION          # 查看部署版本"
 echo "    bash deploy.sh --list         # list backups"

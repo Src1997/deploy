@@ -6,10 +6,13 @@ dist/
 # deploy.env.vm       → 虚拟机
 # deploy.env.server-a → 服务器 A
 # deploy.env.server-b → 服务器 B
+# deploy.env.server-c → 服务器 C（zhouchou.net，2026-10-16 新增）
 deploy.env
 deploy.env.vm
 deploy.env.server-a
 deploy.env.server-b
+# 通配所有服务器环境文件（含明文密码，永不提交）
+deploy.env.server-*
 
 # 数据库 dump（本地导出，不提交）
 scripts/dumps/

@@ -169,6 +169,10 @@ check_supervisor() {
     if [ -x "${sv_dir}/bin/supervisord" ]; then
         sv_bin="${sv_dir}/bin/supervisord"
         sv_ctl="${sv_dir}/bin/supervisorctl"
+    elif [ -x "/www/server/panel/pyenv/bin/supervisord" ]; then
+        # 宝塔插件常见布局：supervisord 装在面板 pyenv 里（C 机 Debian10 实测）
+        sv_bin="/www/server/panel/pyenv/bin/supervisord"
+        sv_ctl="/www/server/panel/pyenv/bin/supervisorctl"
     elif command -v supervisord &>/dev/null; then
         sv_bin=$(command -v supervisord)
         sv_ctl=$(command -v supervisorctl 2>/dev/null || echo "")
@@ -191,6 +195,44 @@ check_supervisor() {
         # 都会在未安装时自动回落到 systemd（服务器 B、本地虚拟机均为 systemd 模式）。
         # 之前这里 MISSING++ + return 1，会把 systemd 形态的服务器全部卡死在 03/04。
         warn "Supervisor: 未安装（可选，将使用 systemd 托管进程）"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 检测 systemd / Supervisor 双重管辖冲突
+#
+# ★背景（2026-10-19 事故）：服务器 B 残留旧 systemd unit（financial-api.service
+#   active + Restart=always）与 Supervisor 抢 5001 端口，导致 Supervisor 的
+#   api 反复 bind 失败崩溃循环。05-setup-supervisor.sh 的 cleanup_systemd_units
+#   只在执行时清理一次；若 unit 之后又被写回/重启，巡检必须能发现。
+# ═══════════════════════════════════════════════════════════════
+check_daemon_conflict() {
+    local services=(
+        "financial-api"
+        "financial-crawler"
+        "financial-streaming"
+        "financial-worker"
+        "quantdinger-backend"
+        "quantdinger-mcp"
+    )
+    local conflict=0
+    for svc in "${services[@]}"; do
+        # 条件：systemd 存在该 unit 且 active，同时 Supervisor 也管着同名程序
+        if systemctl is-active "${svc}.service" &>/dev/null 2>&1 \
+           && systemctl list-unit-files 2>/dev/null | grep -q "^${svc}.service"; then
+            # Supervisor 侧是否也定义了同名程序（宝塔 profile 或 /etc/supervisor）
+            if grep -rq "^\[program:${svc}\]\|^\\[program:${svc}\\]" \
+                /www/server/panel/plugin/supervisor/profile/ \
+                /etc/supervisor/ 2>/dev/null; then
+                err "守护冲突: ${svc} 同时被 systemd(active) 和 Supervisor 管理 → systemctl stop+disable ${svc}.service"
+                conflict=$((conflict + 1))
+            fi
+        fi
+    done
+    if [ "$conflict" -eq 0 ]; then
+        ok "守护进程托管: 无 systemd/Supervisor 双重管辖冲突"
+    else
+        MISSING=$((MISSING + conflict))
     fi
 }
 
@@ -319,6 +361,7 @@ run_checks() {
     check_redis
     check_python
     check_supervisor
+    check_daemon_conflict
     check_firewall
     check_docker
 

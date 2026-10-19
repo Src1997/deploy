@@ -11,24 +11,31 @@
 ```bash
 ssh serverA    # → root@121.41.44.216:22
 ssh serverB    # → root@103.100.211.12:3142
+ssh serverC    # → root@177.4.41.137:22（2026-10-16 新增：云商学院）
 ```
 
 ## 服务器信息
 
-| | 服务器 A | 服务器 B |
-|---|---------|---------|
-| **别名** | `serverA` | `serverB` |
-| **IP** | 121.41.44.216 | 103.100.211.12 |
-| **SSH 端口** | 22 | 3142 |
-| **域名** | `www.zhuochou.xyz` | `www.deepquant.club` |
-| **Nginx 模式** | `ssl-redirect` | `ssl-combined` |
-| **PostgreSQL** | 见 `deploy.env` 的 `PG_*` | 同左 |
-| **数据库** | quant_zc, quantdinger | quant_zc, quantdinger |
-| **Redis** | 远程指向服务器 B（103.100.211.12:6379） | 本机实例 |
-| **SMTP** | 宝塔邮局 `noreply@zhuochou.xyz` | — |
+| | 服务器 A | 服务器 B | 服务器 C |
+|---|---------|---------|---------|
+| **别名** | `serverA` | `serverB` | `serverC` |
+| **IP** | 121.41.44.216 | 103.100.211.12 | 177.4.41.137 |
+| **SSH 端口** | 22 | 3142 | 22 |
+| **域名** | `www.zhuochou.xyz` | `www.deepquant.club` | `www.zhouchou.net` |
+| **Nginx 模式** | `ssl-redirect` | `ssl-combined` | `ssl-combined` |
+| **PostgreSQL** | 见 `deploy.env` 的 `PG_*` | 同左 | 本机宝塔实例 |
+| **数据库** | quant_zc, quantdinger | quant_zc, quantdinger | quant_zc, quantdinger |
+| **Redis** | 远程指向服务器 B（103.100.211.12:6379） | 本机实例 | 远程指向服务器 B（WireGuard 隧道 10.10.0.2:6379） |
+| **SMTP** | 宝塔邮局 `noreply@zhuochou.xyz` | — | — |
+| **行情 WS** | follower（读 B 的 Redis 分发） | leader（唯一连 Finnhub WSS） | follower（读 B 的 Redis 分发，DB feed_enabled=false） |
 
 > ★2026-10-10 服务器 A 换机：旧机 47.86.32.234（阿里云 HK）已停用，换为 121.41.44.216；
 > 域名同步由 `zhuochouacedemy.com` 改为 `zhuochou.xyz`。跨机 Redis 架构保持不变。
+>
+> ★2026-10-19 Finnhub 行情单 key 约束：免费 key 仅允许极有限 WSS 连接，**同一把 key 上
+> 多客户端互踢会触发 IP 级 429/403 惩罚（殃及 REST）**。规范：B 单 leader；C/A 的
+> `fin_data_source_configs` 里 finnhub.feed_enabled 必须为 false（DB 优先于 .env）。
+> quantdinger 的 XAUUSD 流与 financial 共用 key 会互踢，待换独立 key（用户 2026-10-19 拍板暂缓）。
 
 ## 远程开发启动命令
 

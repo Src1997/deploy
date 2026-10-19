@@ -15,6 +15,7 @@
 |------|---------------|---------|------|----------|------|
 | server-a（阿里云 HK，121.41.44.216） | 121.41.44.216:51820 | 10.10.0.1/24 | `4hVZp8G+XBF1QYIrBudpnR2gWYrvDzpdHZBt6syrIR4=` | 51820/udp | 活跃（2026-10-15 建） |
 | server-b（亿速云 HK，103.100.211.12） | 103.100.211.12:51820 | 10.10.0.2/24 | `i3T9Buyn2mLcbLHWE8WWJ/ViJ7bWKCNHlriXiC/JUUc=` | 51820/udp | 活跃（2026-10-15 建） |
+| server-c（云商学院，177.4.41.137） | 177.4.41.137:51820 | 10.10.0.3/24 | `iHW0ZTjo4rSDVJbh/BpGYOkpTcohqCup9mcIbckDWgQ=` | 51820/udp | 活跃（2026-10-19 建，buster 5.10 内核） |
 
 ## 隧道承载的业务流量
 
@@ -22,6 +23,8 @@
 |------|----------|----------|------|
 | financial Redis（db0 业务 / db1 arq 队列） | `.env` REDIS_URL / ARQ_REDIS_URL → `10.10.0.2:6379` | 6379 | B ufw 仅放行 wg0 接口 + 1.192.39.234（本地家宽） |
 | financial MT5 三表（fdw） | A 库 fdw SERVER `fin_mt5_b_srv` host → `10.10.0.2` | 5432 | B pg_hba `10.10.0.1/32` scram |
+| financial Redis（C 同 A：行情 tick / 队列取值 B） | C `.env` REDIS_HOST → `10.10.0.2`（2026-10-19） | 6379 | B pg_hba/ufw 同上 |
+| financial MT5 五表（fdw） | C 库 fdw SERVER `fin_mt5_b_srv` host → `10.10.0.2`（accounts/snapshots/deals/quotes/equity_samples） | 5432 | B pg_hba `10.10.0.3/32` scram |
 | 未来新服务 | 直接指向对端隧道 IP | — | ufw 只需 `allow in on wg0`，无需逐公网 IP 放行 |
 
 ## 防火墙三层口径（新机接入照此办理）

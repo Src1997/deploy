@@ -89,6 +89,19 @@ pack.ps1 (打包)        deploy.sh (部署)
 > - Node.js 后端发源码包，服务器端执行 `npm ci --production` 安装生产依赖。
 > - PHP (Laravel) 可用 `python` kind + 自定义 `extra_exclude_dirs` 实现（需手动处理 PHP 依赖）。
 
+### 当前已注册项目（2026-10-19）
+
+| 项目 | 组件 | 组合部署 |
+|------|------|----------|
+| financial | `financial-web` `financial-admin` `financial-api` | `bash deploy.sh financial` / 单组件 / 逗号组合 |
+| deepquant | `deepquant-web` `deepquant-backend`（MCP 由 backend 携带，勿单拆组件，见 project.toml 内事故注记） | `bash deploy.sh deepquant` |
+| official-site | `official-site` | `bash deploy.sh official-site` |
+| fullstack-demo | `demo-react-web` `demo-java-api` `demo-go-api` `demo-nodejs-api` | `bash deploy.sh fullstack-demo` |
+| **ea-lab** | ⚠️ 待接入：`ea-lab-api` 依赖 MetaTrader5（Windows 专属，Linux 装不上），打包侧需先过滤该依赖并关闭 MT5 爬虫；数据库方案（VM 本地 `ea_lab_db`）已定 | 待前置条件完成后新增 `project-configs/ea-lab/project.toml` |
+
+> 目标：工作区内任意项目任意组合一键部署。新增项目只需 `project-configs/<name>/project.toml`，无需改脚本。
+> 多服务器目标：`--target=server-a|server-b|server-c`（环境文件 `deploy.env.server-*`，含密码已 gitignore）。
+
 ### 文件结构
 
 ```
