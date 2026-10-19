@@ -16,6 +16,8 @@
 | 查日志、重启、备份 | [日常运维](docs/guide/daily-ops.md) |
 | 本机连远程库开发 | [远程开发](docs/guide/remote-dev.md) |
 | 报错对照 | [常见问题](#常见问题) · [docs 排障档案](docs/README.md) |
+| 改 kind 行为 / 加新 kind | [双端行为契约](project-configs/KINDS-CONTRACT.md)（pack.ps1 与 deploy-kinds.sh 必须同步） |
+| 发版前自检 | `./tests/run-all.sh`（语法/配置/gitignore 防线一键回归） |
 
 ---
 
@@ -109,6 +111,7 @@ deploy/
 ├── project-configs/               # SSOT: 项目打包配置（人编辑源）
 │   ├── _shared.toml                #   共享默认值（排除列表、服务器定义）
 │   ├── PROJECT-TOML-GUIDE.md       #   project.toml 配置指南（字段详解 + 完整示例）
+│   ├── KINDS-CONTRACT.md           #   五种 kind 的双端行为契约（改脚本前必读）
 │   ├── financial/project.toml      #   金融项目（web + admin + api）
 │   ├── deepquant/project.toml      #   QuantDinger（web + backend + mcp）
 │   ├── official-site/project.toml  #   卓筹介绍站（frontend only）

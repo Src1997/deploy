@@ -55,9 +55,23 @@ restart_service() {
 }
 
 health_check() {
-    local name="$1" url="$2"
-    if curl -sf --max-time 5 "$url" >/dev/null 2>&1; then ok "$name 健康检查通过"
-    else warn "$name 健康检查失败"; fi
+    # 返回值约定：0=通过，1=失败（3 次尝试）。
+    # ★ 调用方注意：在条件语境（if/||）下被调用时返回值不会中断流程；
+    #   需要闭环的地方（回滚）用 `|| rc=1` 显式捕获。
+    local name="$1" url="$2" attempt
+    for attempt in 1 2 3; do
+        if curl -sf --max-time 5 "$url" >/dev/null 2>&1; then
+            if [ "$attempt" -gt 1 ]; then
+                ok "$name 健康检查通过（第 $attempt 次尝试）"
+            else
+                ok "$name 健康检查通过"
+            fi
+            return 0
+        fi
+        [ "$attempt" -lt 3 ] && sleep 2
+    done
+    warn "$name 健康检查失败（3 次尝试: $url）"
+    return 1
 }
 
 nginx_reload() {

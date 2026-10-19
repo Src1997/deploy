@@ -175,9 +175,17 @@ apply_rollback_one() {
     for svc in ${SERVICES[$name]}; do
         [ -n "$svc" ] && restart_service "$svc"
     done
+    # ★ 回滚闭环：健康检查失败必须让整个回滚被计为失败（返回 1 →
+    #   rollback_projects 计入 failed → 退出码非零），而不是静默 warn 后算成功。
     if [ -n "${HEALTH_URL[$name]:-}" ]; then
         sleep 3
-        health_check "$name" "${HEALTH_URL[$name]}"
+        local health_rc=0
+        health_check "$name" "${HEALTH_URL[$name]}" || health_rc=1
+        if [ "$health_rc" -eq 1 ]; then
+            err "$name 回滚后健康检查未通过，请立即人工核查: ${HEALTH_URL[$name]}"
+            warn "  备份 $ts 已应用到 $target_dir；如需更早版本: bash deploy.sh $name --rollback"
+            return 1
+        fi
     fi
     return 0
 }
