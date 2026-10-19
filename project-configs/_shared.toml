@@ -11,25 +11,16 @@ version = 1
 workspace_root = ""                       # 空 = deploy 的父目录；可由 WORKSPACE_ROOT 环境变量覆盖
 project_base = "/www/wwwroot/project"     # 服务器项目根；可被 deploy.env 的 PROJECT_BASE 覆盖
 
-# ── 多服务器定义（所有项目共享；如需项目级覆盖，在 project.toml 中重写）──
-# nginx_mode 对应 generate-nginx.py --mode：http | ssl-redirect | ssl-combined
-[servers.server-a]
-nginx_mode = "ssl-combined"        # 域名+HTTPS 合并块，无裸域→www 跳转（域名未解析期间 IP 可直访）
-domain = "zhuochou.xyz"
-www_domain = "www.zhuochou.xyz"
-frontend_url = "https://www.zhuochou.xyz"
-
+# ── 多服务器定义 ──────────────────────────────────────────────────────
+# ★ 单一来源：域名/IP/nginx 模式唯一来自 deploy.env.server-* 的
+#   DOMAIN / WWW_DOMAIN / NGINX_MODE / SERVER_IP 四个键，config_loader.py
+#   运行时读取 env 文件生成 servers 清单（无 DOMAIN 的 env 如 vm 不入表）。
+#   不要在这里重复维护域名——2026-10-19 之前 server-c 曾漏登记且无人发现。
+#   本节仅保留 env 覆盖不了的字段（逐键覆盖 env 生成值），当前只有：
+#   server-b 的前端入口 ≠ www 域名（历史原因 ai.deepquant.club）。
+# 查看生成结果：python scripts/lib/config_loader.py --format check
 [servers.server-b]
-nginx_mode = "ssl-combined"        # 域名 + HTTPS 合并配置（服务器 B）
-domain = "deepquant.club"
-www_domain = "www.deepquant.club"
 frontend_url = "https://ai.deepquant.club"
-
-[servers.server-c]
-nginx_mode = "ssl-combined"        # 域名 + HTTPS 合并配置（服务器 C，2026-10-16 接入）
-domain = "zhouchou.net"
-www_domain = "www.zhouchou.net"
-frontend_url = "https://www.zhouchou.net"
 
 # ── Python 后端打包公共排除列表 ──
 # Python (kind=python) 组件默认排除这些目录和文件。

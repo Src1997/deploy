@@ -262,7 +262,7 @@ bash deploy.sh my-api --yes
 | 配置区 | 说明 |
 |--------|------|
 | `[project]` | 项目 ID、显示名、关键文件（随包上传的 systemd 等资产） |
-| `[servers.*]` | 多服务器定义（可覆盖 `_shared.toml` 中的默认值） |
+| `[servers.*]` | 多服务器覆盖项。★域名/IP/nginx 模式唯一来源是 `deploy.env.server-*`（DOMAIN/WWW_DOMAIN/NGINX_MODE/SERVER_IP），config_loader 运行时读取；TOML 仅放 env 覆盖不了的字段（如 server-b 的 frontend_url） |
 | `[deploy]` | 部署行为（备份保留数、健康检查超时） |
 | `[[components]]` | 组件列表（`frontend` / `python` / `java` / `go` / `nodejs`），每个组件含源码路径、构建配置、打包配置 |
 | `[components.build]` | 前端/Java/Go/Node.js 构建配置：包管理器、构建命令、输出目录、JAR/二进制模式等 |

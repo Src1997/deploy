@@ -29,6 +29,7 @@ fi
 #   --list              列出可用备份
 #   --status            查看服务状态
 #   --logs [component]  查看日志
+#   --history[=N]       查看部署历史（deploy.log 尾部 N 条，默认 50）
 #   --help              帮助
 #
 # 支持的组件类型：frontend | python | java | go | nodejs
@@ -173,6 +174,7 @@ show_help() {
     --list              列出可用备份
     --status            查看服务状态
     --logs [component]  查看日志（默认第一个 Python 组件）
+    --history[=N]       查看部署历史（deploy.log 尾部 N 条，默认 50）
     --lines=N           日志行数（默认 50，0=实时跟踪）
     --logs=error        只看 ERROR 级别日志
     --target=<name>     使用 deploy.env.<name> 配置（如 server-a、server-b、server-c、vm）
@@ -219,6 +221,8 @@ ROLLBACK_VERSION=""
 LIST_BACKUPS=false
 SHOW_STATUS=false
 SHOW_LOGS=false
+SHOW_HISTORY=false
+HISTORY_LINES=50
 SHOW_HELP=false
 SYNC_NGINX=false
 SYNC_SCRIPTS=false
@@ -283,6 +287,8 @@ for arg in "$@"; do
         --status)            SHOW_STATUS=true ;;
         --logs)              SHOW_LOGS=true ;;
         --logs=*)            SHOW_LOGS=true; LOG_LEVEL="${arg#--logs=}" ;;
+        --history)           SHOW_HISTORY=true ;;
+        --history=*)         SHOW_HISTORY=true; HISTORY_LINES="${arg#--history=}" ;;
         --lines=*)           LOG_LINES="${arg#--lines=}" ;;
         --yes|-y|--ci)       ASSUME_YES=true ;;
         --target=*)          DEPLOY_TARGET="${arg#--target=}"; export DEPLOY_TARGET ;;
@@ -347,7 +353,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 # ═══════════════════════════════════════════════════════════════════════
 
 needs_deploy_lock() {
-    if $SHOW_HELP || $SHOW_STATUS || $SHOW_LOGS || $LIST_BACKUPS || $SYNC_NGINX || $SYNC_SCRIPTS; then
+    if $SHOW_HELP || $SHOW_STATUS || $SHOW_LOGS || $SHOW_HISTORY || $LIST_BACKUPS || $SYNC_NGINX || $SYNC_SCRIPTS; then
         return 1
     fi
     if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
@@ -371,6 +377,16 @@ acquire_deploy_lock() {
 # 命令行只读模式（无锁）
 if $SHOW_STATUS; then show_status; exit 0; fi
 if $SHOW_LOGS; then show_logs; exit 0; fi
+if $SHOW_HISTORY; then
+    echo "  部署历史（$DEPLOY_LOG，最近 $HISTORY_LINES 条）："
+    echo "  ─────────────────────────────────────────────"
+    if [ -f "$DEPLOY_LOG" ]; then
+        tail -n "$HISTORY_LINES" "$DEPLOY_LOG"
+    else
+        warn "尚无部署历史: $DEPLOY_LOG"
+    fi
+    exit 0
+fi
 if $SYNC_NGINX; then sync_nginx; exit $?; fi
 if $LIST_BACKUPS; then
     if [ ${#PROJECT_LIST[@]} -gt 0 ]; then
@@ -444,7 +460,12 @@ if [ ${#PROJECT_LIST[@]} -gt 0 ] || [ -n "$PROJECT" ]; then
 
     # 部署 — 先跑 pre-flight
     if ! preflight; then exit 1; fi
-    audit_log "DEPLOY ${PROJECT_LIST[*]:-$PROJECT} by $(whoami)@$(hostname) IP=${SERVER_IP:-N/A}"
+    _audit_pkgs=""
+    for _p in ${PROJECT_LIST[*]:-$PROJECT}; do
+        [ "$_p" = "all" ] && continue
+        _audit_pkgs+=" ${_p}=${ARTIFACT_NAME[$_p]:-?}"
+    done
+    audit_log "DEPLOY${_audit_pkgs} by $(whoami)@$(hostname) IP=${SERVER_IP:-N/A}"
     banner "部署: ${PROJECT_LIST[*]:-$PROJECT}"
     if [ "$PROJECT" = "all" ] || [ ${#PROJECT_LIST[@]} -gt 1 ]; then
         to_deploy=("${PROJECT_LIST[@]}")

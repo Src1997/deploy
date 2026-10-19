@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import sys
 import tomllib
@@ -240,13 +241,61 @@ def _component_to_entry(
 
 # ── Server collection ──────────────────────────────────────────────
 
-def _collect_servers(shared_servers: dict, project_configs: list[dict]) -> dict:
-    servers = {}
-    for name, cfg in shared_servers.items():
-        servers[name] = _camel_dict(cfg)
-    for r in project_configs:
-        for name, cfg in (r.get("servers") or {}).items():
-            servers[name] = _camel_dict(cfg)
+_ENV_SERVER_KEYS = ("DOMAIN", "WWW_DOMAIN", "NGINX_MODE", "SERVER_IP")
+
+
+def _read_env_servers(deploy_root: Path) -> dict:
+    """Scan deploy.env.server-* / deploy.env.vm for server definitions.
+
+    ★ env 文件是域名/IP/nginx 模式的唯一来源（_shared.toml [servers] 不再
+      重复维护——2026-10-19 之前 server-c 曾漏登记且无人发现，双源漂移）。
+    无 DOMAIN 的 env（如 vm）不进入 servers 表。
+    """
+    servers: dict = {}
+    if not deploy_root or not deploy_root.is_dir():
+        return servers
+    env_files = sorted(deploy_root.glob("deploy.env.server-*"))
+    vm_env = deploy_root / "deploy.env.vm"
+    if vm_env.exists():
+        env_files.append(vm_env)
+    for env_path in env_files:
+        name = env_path.name[len("deploy.env."):]
+        if not re.fullmatch(r"server-[a-z0-9]+|vm", name):
+            continue  # 跳过 .bak_* 等备份/杂项文件
+        values: dict = {}
+        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key in _ENV_SERVER_KEYS:
+                values[key] = val
+        domain = values.get("DOMAIN", "")
+        if not domain:
+            continue
+        entry = {
+            "nginxMode": values.get("NGINX_MODE", ""),
+            "domain": domain,
+            "wwwDomain": values.get("WWW_DOMAIN", ""),
+            "serverIp": values.get("SERVER_IP", ""),
+        }
+        if entry["wwwDomain"]:
+            entry["frontendUrl"] = f"https://{entry['wwwDomain']}"
+        servers[name] = entry
+    return servers
+
+
+def _collect_servers(shared_servers: dict, project_configs: list[dict],
+                     env_servers: dict) -> dict:
+    """env 文件为基础事实，TOML [servers] 仅作逐键覆盖（如异构 frontend_url）。"""
+    servers = {name: dict(cfg) for name, cfg in env_servers.items()}
+    for source in [shared_servers] + [r.get("servers") or {} for r in project_configs]:
+        for name, cfg in source.items():
+            merged = dict(servers.get(name, {}))
+            merged.update(_camel_dict(cfg))
+            servers[name] = merged
     return servers
 
 
@@ -288,7 +337,10 @@ def load_manifest(configs_dir: Path) -> dict:
         "workspaceRoot": defaults.get("workspace_root", ""),
         "projectBase": defaults.get("project_base", "/www/wwwroot/project"),
         "projects": projects,
-        "servers": _collect_servers(shared_servers, project_configs),
+        "servers": _collect_servers(
+            shared_servers, project_configs,
+            _read_env_servers(configs_dir.parent),
+        ),
         "nginxExtras": [_camel_dict(e) for e in nginx_extras],
     }
 
