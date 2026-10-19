@@ -25,6 +25,12 @@ domain = "deepquant.club"
 www_domain = "www.deepquant.club"
 frontend_url = "https://ai.deepquant.club"
 
+[servers.server-c]
+nginx_mode = "ssl-combined"        # 域名 + HTTPS 合并配置（服务器 C，2026-10-16 接入）
+domain = "zhouchou.net"
+www_domain = "www.zhouchou.net"
+frontend_url = "https://www.zhouchou.net"
+
 # ── Python 后端打包公共排除列表 ──
 # Python (kind=python) 组件默认排除这些目录和文件。
 # 单个项目可在 [components.pack] 中用 extra_exclude_dirs / extra_exclude_files 追加。

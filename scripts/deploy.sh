@@ -175,7 +175,7 @@ show_help() {
     --logs [component]  查看日志（默认第一个 Python 组件）
     --lines=N           日志行数（默认 50，0=实时跟踪）
     --logs=error        只看 ERROR 级别日志
-    --target=<name>     使用 deploy.env.<name> 配置（如 server-a、server-b、vm）
+    --target=<name>     使用 deploy.env.<name> 配置（如 server-a、server-b、server-c、vm）
     --nginx             部署后自动配置 Nginx（拷贝配置并 reload）
     --nginx --dynamic   动态生成 Nginx 配置（从 TOML 配置生成 location 块）
     --sync-nginx        从 TOML 配置重新生成 Nginx 配置并 reload
@@ -202,7 +202,7 @@ show_help() {
     bash deploy.sh <comp1>,<comp2> --yes
     bash deploy.sh all --yes --ip=<SERVER_IP>
     bash deploy.sh <component> --rollback=latest --yes
-    bash deploy.sh all --yes --target=<server-a|server-b|vm> --ip=<SERVER_IP>
+    bash deploy.sh all --yes --target=<server-a|server-b|server-c|vm> --ip=<SERVER_IP>
 HELP
 }
 

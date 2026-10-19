@@ -2,11 +2,13 @@
 # ================================================================
 # Common: load deploy.env
 #
-# Three env file sets (selected by DEPLOY_TARGET env var):
+# Env file sets (selected by DEPLOY_TARGET env var):
 #   DEPLOY_TARGET unset     -> deploy.env           (local)
 #   DEPLOY_TARGET=vm        -> deploy.env.vm        (virtual machine)
 #   DEPLOY_TARGET=server-a  -> deploy.env.server-a  (server A)
 #   DEPLOY_TARGET=server-b  -> deploy.env.server-b  (server B)
+#   DEPLOY_TARGET=server-c  -> deploy.env.server-c  (server C, 2026-10-16 接入)
+#   其他任意值              -> deploy.env.<target>   (custom target)
 #
 # Or specify path directly via DEPLOY_ENV_FILE (highest priority):
 #   DEPLOY_ENV_FILE=/path/to/custom.env
