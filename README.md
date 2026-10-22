@@ -119,36 +119,49 @@ deploy/
 ├── scripts/
 │   ├── pack.ps1                    # 统一打包脚本（所有项目共用）
 │   ├── build.ps1                   # 构建编排入口（pack → copy assets）
-│   ├── deploy.sh                   # 服务器端部署/回滚（主入口，加载 lib/ 模块）
-│   ├── deploy-python.sh         # Python 后端通用部署钩子
-│   ├── lib/                        # 共享库（Bash + PowerShell）
+│   ├── deploy.sh                   # 服务器端部署/回滚（主入口，按层加载模块）
+│   ├── deploy-python.sh            # Python 后端通用部署钩子
+│   ├── _ps-common.ps1              # PowerShell 共享常量（build/pack 用）
+│   ├── preclean-dist.ps1           # 构建前预清理 dist/（沙箱 Remove-Item 规避）
+│   ├── core/                       # 部署主链路装载层
 │   │   ├── common.sh               #   颜色/日志/CRLF/新鲜度检查
+│   │   ├── load-deploy-env.sh      #   deploy.env 加载器
+│   │   ├── load-projects.sh        #   TOML 配置加载器（via config_loader.py）
+│   │   ├── config_loader.py        #   TOML 配置直接读取器
 │   │   ├── preflight.sh            #   部署前检查
 │   │   ├── service-ops.sh          #   服务重启/健康检查/状态/日志
 │   │   ├── backup-rollback.sh      #   备份与回滚
-│   │   ├── nginx.sh                #   Nginx 配置生成与部署
-│   │   ├── deploy-kinds.sh         #   各类型部署（frontend/python/java/go/nodejs）
-│   │   ├── load-deploy-env.sh      #   deploy.env 加载器
-│   │   ├── load-projects.{sh,ps1}  #   TOML 配置加载器（via config_loader.py）
-│   │   ├── config_loader.py        #   TOML 配置直接读取器
-│   │   └── _ps-common.ps1          #   PowerShell 共享常量
+│   │   ├── deploy-dispatch.sh      #   部署调度（排序/批量/汇总）
+│   │   └── interactive.sh          #   交互式菜单
+│   ├── kind/                       # 各类型部署实现
+│   │   └── deploy-kinds.sh         #   frontend/python/java/go/nodejs
+│   ├── channel/                    # 部署通道（二选一，由 BAOTA_MODE 切换）
+│   │   ├── baota.sh                #   宝塔原生通道（shell 侧封装）
+│   │   ├── baota_api.py            #   宝塔面板 API 客户端（含本机直调）
+│   │   └── nginx.sh                #   旧链路（generate-nginx + systemd）
 │   ├── ops/                        # 一次性运维脚本
 │   │   ├── 01-cleanup-server.sh    #   服务器清理（Docker + 系统冲突）
 │   │   ├── lib-clear-conflicts.sh  #   系统冲突清理子模块
 │   │   ├── 02-install-baota.sh     #   宝塔安装
 │   │   ├── 03-check-components.sh  #   宝塔组件检查
 │   │   ├── 04-setup-server.sh      #   服务器环境准备
+│   │   ├── 05-setup-supervisor.sh  #   supervisor 配置
+│   │   ├── 06-fix-ssl-cert.sh      #   证书修复
+│   │   ├── 07-clone-source-data.sh #   源数据克隆
+│   │   ├── sync-mt5.sh             #   MT5 五表同步（C 服务器 cron）
+│   │   ├── log-audit.sh / log-hygiene.sh  # 日志审计与清理
+│   │   ├── setup-wireguard.sh      #   WireGuard 组网
 │   │   └── wsl-*.ps1               #   WSL 网络工具
 │   └── tools/                      # 工具脚本
 │       ├── detect-status.sh        #   部署进度检测
-│       └── generate-nginx.py       #   Nginx 配置动态生成
-├── configs/                        # 静态配置资产
+│       ├── generate-nginx.py       #   Nginx 配置动态生成
+│       └── audit_seed_vs_schema.py #   数据库列 vs seed 覆盖审计
+├── assets/                         # 静态配置资产（原 configs/）
 │   ├── systemd/                    #   systemd unit 文件
 │   ├── financial-api.env.example   #   环境变量模板
 │   ├── deepquant.env.example
 │   └── official-site.env
 ├── deploy.env.example              # 部署密钥模板（本地/虚拟机）
-├── deploy.env.server-a             # 服务器 A 配置（.gitignore）
 ├── deploy.env.server-b             # 服务器 B 配置（.gitignore）
 ├── dist/                           # 构建产出（.gitignore，上传到服务器）
 ├── docs/                           # 详细指南 / 排障档案
@@ -189,9 +202,9 @@ web_path = "/myapp"                     # .env 模板中 __WEB_PATH__ 占位符�
   artifact_pattern = "my-api-*.tar.gz"
   include_files = [
       "scripts/deploy-python.sh",       # 钩子脚本随包上传
-      "configs/my-api.env.example",     # .env 模板
+      "assets/my-api.env.example",    # .env 模板
   ]
-  include_env = ["configs/my-api.env"]  # 显式白名单：允许真实 .env 进包
+  include_env = ["assets/my-api.env"]   # 显式白名单：允许真实 .env 进包
 ```
 
 **钩子自动注入的环境变量**（`deploy.sh` → `deploy-python.sh`）：
@@ -206,7 +219,7 @@ web_path = "/myapp"                     # .env 模板中 __WEB_PATH__ 占位符�
 
 #### Step 2: 创建 `.env` 模板
 
-在 `configs/` 下创建 `<id>.env.example`（如 `my-api.env.example`），使用占位符：
+在 `assets/` 下创建 `<id>.env.example`（如 `my-api.env.example`），使用占位符：
 
 ```bash
 PORT=__PORT__                           # 钩子渲染时替换为 health_url 端口
@@ -300,8 +313,9 @@ PROJECT_BASE env    >  TOML projectBase    >  /www/wwwroot/project
 | 配置文件 | 用途 | Nginx 模式 | 域名 |
 |----------|------|-----------|------|
 | `deploy.env.example` | 本地/虚拟机（模板） | http（IP 部署） | 无 |
-| `deploy.env.server-a` | 服务器 A (121.41.44.216) | ssl-redirect（裸域→www） | `zhuochou.xyz` |
 | `deploy.env.server-b` | 服务器 B (103.100.211.12) | ssl-combined（域名合并） | `DOMAIN` + `WWW_DOMAIN` |
+
+> 服务器 A（121.41.44.216，zhuochou.xyz / 卓筹商学院）已于 2026-10-22 废弃，配置已清理（备份在 `backup/server-a-cleanup-20261022/`）。
 
 使用方法：
 
@@ -365,7 +379,7 @@ MCP Server 需要有效的 `AGENT_TOKEN` 才能通过认证。配置流程：
 
 1. 部署后端：`bash deploy.sh deepquant-backend --yes`（MCP 服务自动安装，token 为占位符）
 2. 在后端 Agent Gateway 创建 token（通过 Admin 面板或 API）
-3. 在 `deploy.env.server-a` / `deploy.env.server-b` 中设置 `MCP_AGENT_TOKEN=<真实 token>`
+3. 在 `deploy.env.server-b`（及其他在用环境）中设置 `MCP_AGENT_TOKEN=<真实 token>`
 4. 重新部署 MCP：`bash deploy.sh deepquant-mcp --yes`（仅更新 systemd 环境变量 + 重启）
 
 ---
@@ -462,10 +476,10 @@ location ^~ /api/ { ... }   # 在后
 
 > 本项目已配置化，只需改对应环境的 `deploy.env` 然后重新部署即可。
 
-1. **deploy.env**：修改对应环境的配置文件（`deploy.env.server-a` / `deploy.env.server-b`）：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
+1. **deploy.env**：修改对应环境的配置文件（如 `deploy.env.server-b`）：设置 `DOMAIN` / `WWW_DOMAIN` / `FRONTEND_URL` / `APP_NAME`
 2. **DNS**：在域名商处将裸域和 www 的 A 记录指向服务器 IP
 3. **SSL 证书**：按 [Phase 7b](docs/guide/deploy-from-scratch.md#phase-7b-ssl-证书--宝塔邮局申请域名部署) 流程申请
-4. **Nginx**：执行 `bash deploy.sh --nginx --target=server-a`（或 `server-b`）
+4. **Nginx**：执行 `bash deploy.sh --nginx --target=server-b`
 5. **financial-api**：`bash deploy.sh financial-api --target=server-a`
 6. **QuantDinger**：`bash deploy.sh deepquant-backend --target=server-a`
 7. **邮局**：按 [Phase 7b 步骤 3](docs/guide/deploy-from-scratch.md#3-配置宝塔邮局) 配置
