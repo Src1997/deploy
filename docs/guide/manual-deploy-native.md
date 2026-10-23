@@ -31,6 +31,8 @@
 | deploy.env | `deploy.env.server-X`（`PG_PASSWORD` / `REDIS_PASSWORD`；deepquant 另需 `MCP_AGENT_TOKEN`） |
 | systemd 模板 | `assets/systemd/*.service`（随包上传到 `uploads/dist/assets/systemd/`） |
 
+> 完整安装包清单 → [install-packages.md](./install-packages.md)；命令速查 → [cheatsheet-commands.md](./cheatsheet-commands.md)。
+
 ---
 
 ## 手动部署前端

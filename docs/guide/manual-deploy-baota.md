@@ -33,6 +33,9 @@
 | 项目配置 | `project-configs/<项目>/project.toml`（v2 意图模型：routes / process / companions） |
 | 打包产物 | `dist/packages/*.tar.gz`（见 [build.ps1](../../README.md#构建)） |
 
+> 完整安装包清单（面板 + 插件 + 中间件 + 本地构建侧）→ [install-packages.md](./install-packages.md)；
+> 日常命令速查 → [cheatsheet-commands.md](./cheatsheet-commands.md)。
+
 ---
 
 ## 自动化部署（推荐入口）

@@ -9,6 +9,8 @@
 | [guide/deploy-from-scratch.md](./guide/deploy-from-scratch.md) | 完整部署步骤（Phase 1-8b，从零开始） |
 | [guide/incremental-release.md](./guide/incremental-release.md) | 增量发版与回滚（含 deploy_hook 钩子说明） |
 | [guide/manual-deploy.md](./guide/manual-deploy.md) | 手动部署总入口（脚本不可用 / 故障排查 / 单步操作；★开头有 2026-10-23 通道现状说明） |
+| [guide/cheatsheet-commands.md](./guide/cheatsheet-commands.md) | 常用命令速查（打包/部署/回滚/面板 API/supervisor/中间件/健康检查） |
+| [guide/install-packages.md](./guide/install-packages.md) | 所需安装包清单（本地构建侧 + 服务器按通道 + 中间件 + env 键速查） |
 | [guide/manual-deploy-baota.md](./guide/manual-deploy-baota.md) | 手动部署 · 宝塔通道（主力，B/C 现役；面板对象落位 / API 姿势 / 红线） |
 | [guide/manual-deploy-native.md](./guide/manual-deploy-native.md) | 手动部署 · native 通道（冻结维护，systemd + generate-nginx 应急） |
 | [guide/manual-deploy-docker.md](./guide/manual-deploy-docker.md) | 手动部署 · docker 通道（MVP 试点；容器 + 宿主 nginx 收口） |

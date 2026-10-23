@@ -46,6 +46,8 @@ TOML 意图 → docker 翻译（`scripts/channels/docker.sh`）：
 | PG / Redis / Kafka | 跑宿主，容器应用直连（**不在容器内**） |
 | env 键 | 无 docker 专属键 |
 
+> 完整安装包清单（含镜像加速配置）→ [install-packages.md](./install-packages.md)；命令速查 → [cheatsheet-commands.md](./cheatsheet-commands.md)。
+
 ## 自动化部署
 
 ```bash

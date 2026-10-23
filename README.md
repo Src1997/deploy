@@ -13,6 +13,8 @@
 | **第一次**装服务器 | [完整部署步骤](docs/guide/deploy-from-scratch.md) |
 | **以后**发版 / 回滚 | [增量发版与回滚](docs/guide/incremental-release.md) |
 | **脚本故障 / 手动操作** | [手动部署总入口](docs/guide/manual-deploy.md)（三通道分流见下） |
+| **常用命令速查** | [cheatsheet-commands.md](docs/guide/cheatsheet-commands.md)（打包/部署/回滚/面板 API/中间件） |
+| **要装哪些包** | [install-packages.md](docs/guide/install-packages.md)（本地 + 服务器按通道） |
 | ↳ 宝塔通道手动部署（主力） | [manual-deploy-baota.md](docs/guide/manual-deploy-baota.md) |
 | ↳ native 通道手动部署（应急） | [manual-deploy-native.md](docs/guide/manual-deploy-native.md) |
 | ↳ docker 通道手动部署（试点） | [manual-deploy-docker.md](docs/guide/manual-deploy-docker.md) |
