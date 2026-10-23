@@ -23,8 +23,22 @@
 - 服务器上手工调面板 API：`eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' /www/wwwroot/project/deploy.env.server-X)"; export BAOTA_PANEL_URL BAOTA_API_KEY; python3 /www/wwwroot/project/uploads/dist/channels/baota-api.py <cmd>`（⚠️eval 后必须 export）。
 - ⚠️**在宝塔托管的机器上执行本文 systemd 章节 = 制造双轨**，仅在 native 应急通道机器（如 VM 试点）使用。
 
+## 按通道的手动部署文档（分流入口）
+
+三通道各自有独立的手动部署文档，**优先按通道分流**；本文保留跨通道通用的
+部分（.env 生成、数据库操作、旧链路细节与常见修复场景）：
+
+| 通道 | 文档 | 状态 |
+|------|------|------|
+| **baota（主力）** | [manual-deploy-baota.md](./manual-deploy-baota.md) | ✅ B/C 现役，面板对象落位 + API 姿势 + 红线 |
+| **native（应急）** | [manual-deploy-native.md](./manual-deploy-native.md) | ⚠️ 冻结维护，systemd + generate-nginx |
+| **docker（试点）** | [manual-deploy-docker.md](./manual-deploy-docker.md) | ⚠️ MVP，容器 + 宿主 nginx 收口，先单组件试点 |
+| 整体架构 / 部署逻辑可视化 | [../deploy-architecture.html](../deploy-architecture.html) | 流程图 + kind×channel 矩阵 + 思维导图 |
+| 新项目接入（写 project.toml） | [project-configs/PROJECT-TOML-GUIDE.md](../../project-configs/PROJECT-TOML-GUIDE.md) | v2 意图模型 + 三通道字段落地 + SOP |
+
 ## 目录
 
+- [按通道的手动部署文档（分流入口）](#按通道的手动部署文档分流入口)
 - [前置条件](#前置条件)
 - [手动部署前端（静态站点）](#手动部署前端静态站点)
 - [手动部署 financial-api](#手动部署-financial-api)

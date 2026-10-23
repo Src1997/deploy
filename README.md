@@ -12,7 +12,13 @@
 | 配密码、连库 | [密钥与连接](#密钥与连接deployenv) |
 | **第一次**装服务器 | [完整部署步骤](docs/guide/deploy-from-scratch.md) |
 | **以后**发版 / 回滚 | [增量发版与回滚](docs/guide/incremental-release.md) |
-| **脚本故障 / 手动操作** | [手动部署](docs/guide/manual-deploy.md) |
+| **脚本故障 / 手动操作** | [手动部署总入口](docs/guide/manual-deploy.md)（三通道分流见下） |
+| ↳ 宝塔通道手动部署（主力） | [manual-deploy-baota.md](docs/guide/manual-deploy-baota.md) |
+| ↳ native 通道手动部署（应急） | [manual-deploy-native.md](docs/guide/manual-deploy-native.md) |
+| ↳ docker 通道手动部署（试点） | [manual-deploy-docker.md](docs/guide/manual-deploy-docker.md) |
+| **部署逻辑 / 架构可视化** | [docs/deploy-architecture.html](docs/deploy-architecture.html)（流程图 + kind×channel 矩阵 + 思维导图） |
+| **新项目接入（写 project.toml）** | [project-configs/PROJECT-TOML-GUIDE.md](project-configs/PROJECT-TOML-GUIDE.md)（v2 意图模型 + 接入 SOP） |
+| 改通道行为 / 新增通道 | [三通道动词契约](project-configs/CHANNEL-CONTRACT.md)（16 动词 + 能力断言） |
 | 查日志、重启、备份 | [日常运维](docs/guide/daily-ops.md) |
 | 本机连远程库开发 | [远程开发](docs/guide/remote-dev.md) |
 | 报错对照 | [常见问题](#常见问题) · [docs 排障档案](docs/README.md) |

@@ -1,46 +1,59 @@
-# project.toml 配置指南
+# project.toml 配置指南（v2 意图模型 · 新项目接入必读）
 
-> 通用模板：以 QuantDinger 项目为例，详解 `project.toml` 各字段含义和配置方法。
-> 新项目只需复制 `project-assets/<name>/` 并修改，**无需改任何脚本**。
+> 配置 SSOT：`project-configs/<项目>/project.toml`。
+> **新项目接入 = 新增一个 TOML +（如有后端）env/systemd 资产，零脚本改动。**
+> 意图模型只声明 **routes / process / companions**，无任何通道字眼；
+> 通道（baota / native / docker）在部署时由 `DEPLOY_CHANNEL` 决定，
+> 各通道把同一份意图翻译成自己的落地对象。
+> 通道契约见 [CHANNEL-CONTRACT.md](CHANNEL-CONTRACT.md)，
+> kind 打包契约见 [KINDS-CONTRACT.md](KINDS-CONTRACT.md)，
+> 依赖清单见 [CHANNEL-DEPENDENCIES.md](CHANNEL-DEPENDENCIES.md)。
 
 ## 架构设计
 
 ```
-project-assets/*.toml (SSOT, 人编辑)
-    ↓ config_loader.py (运行时直接读取)
-    ↓                     ↓
-pack.ps1 (打包)        deploy.sh (部署)
+project-configs/<name>/project.toml   (SSOT, 人编辑 —— 唯一配置源)
+        ↓ scripts/core/config_loader.py (运行时直接读取，无 projects.json 硬编码)
+        ↓                                 ↓
+scripts/build.ps1 (本地打包)        scripts/deploy.sh (服务器部署)
+        ↓                                 ↓
+   kind 层：做什么（找包→备份→解压→.env→依赖→健康门，公共流程）
+   channel 层：落在哪、怎么跑（baota=面板对象 / native=systemd+nginx / docker=容器+宿主nginx）
 ```
 
-- **一个配置源**：`project-assets/<name>/project.toml` 是唯一 SSOT
-- **一个打包器**：`pack.ps1` 通过 `config_loader.py` 读 TOML，所有项目共用
-- **一个部署器**：`deploy.sh` 通过 `config_loader.py` 读 TOML，所有项目共用（无项目硬编码分支）
-- **新增项目**：只需在 `project-assets/` 下新建一个 `project.toml`
+- **一个配置源**：TOML 是唯一 SSOT；`load-projects.sh` 经 `config_loader.py`
+  直读 `project-configs/*.toml`（无硬编码项目清单）
+- **一个打包器 / 一个部署器**：两端都经 `config_loader.py` 读同一份 TOML，无项目硬编码分支
+- **新增项目**：只需在 `project-configs/` 下新建 `<项目名>/project.toml`
 
-## 支持的组件类型
+## kind × channel 支持矩阵
 
-| `kind` | 技术栈 | 打包流程 |
-|--------|--------|----------|
-| `frontend` | Vue / React / Angular / Svelte | `pnpm/npm/yarn build` → `dist/` tar.gz |
-| `python` | Python (FastAPI / Flask) | 源码 + includes → tar.gz |
-| `java` | Java (Spring Boot) | `mvn/gradle build` → JAR/WAR tar.gz |
-| `go` | Go (Gin / Echo / Fiber) | `go build` → 二进制 tar.gz |
-| `nodejs` | Node.js (Express / NestJS) | 源码 + `npm ci --production` |
+部署 = **kind × channel**。kind 决定"做什么"，channel 决定"落在哪、怎么跑"。
 
-## 完整配置示例（带注释）
+| kind | 技术栈 | 打包流程 | baota | native | docker |
+|------|--------|----------|:-----:|:------:|:------:|
+| `frontend` | Vue / React / Svelte… | pnpm/npm/yarn build → dist tar.gz | ✅ HTML 站点 | ✅ | ✅（宿主目录，同 native） |
+| `python` | FastAPI / Flask | 源码 + includes → tar.gz | ✅ Python 项目 | ✅ systemd | ✅（容器，MVP） |
+| `java` | Spring Boot | mvn/gradle → JAR tar.gz | ✅ Java 项目 | ✅ systemd | ❌ |
+| `go` | Gin / Echo… | go build → 二进制 | ❌（扩展位） | ❌（扩展位） | ❌ |
+| `nodejs` | Express / NestJS | 源码 + npm ci | ❌（扩展位） | ❌（扩展位） | ❌ |
+
+> 同机单通道（baota/docker 互斥，registry 强制）；env 键 `DEPLOY_CHANNEL`
+> 选择通道，兼容旧 `BAOTA_MODE=1` → baota。
+
+## 完整配置示例（带注释，来自真实项目）
 
 ```toml
 # ═══════════════════════════════════════════════════════════════
-# project-assets/my-project/project.toml — 项目说明
+# project-configs/my-project/project.toml — 项目说明
 # ═══════════════════════════════════════════════════════════════
 
 # ── 项目元信息 ──
 [project]
-id = "my-project"                        # 项目 ID（deploy.sh 命令行参数）
+id = "my-project"                        # 项目 ID（build.ps1 / deploy.sh 参数）
 display_name = "我的项目（前端 + 后端）"
 
-# 随包上传的部署资产（相对 deploy 根路径）
-# systemd 服务模板、env 模板等
+# 随包上传的部署资产（相对 deploy 根；native 通道的 systemd 模板放这里）
 key_files = [
     "assets/systemd/my-backend.service",
 ]
@@ -55,12 +68,15 @@ health_timeout = 30                       # 健康检查超时（秒）
 # ═══════════════════════════════════════════════════════════════
 [[components]]
 id = "my-web"                             # 组件 ID（唯一）
-kind = "frontend"                         # frontend | python | java | go | nodejs
+kind = "frontend"                         # frontend | python | java
 display_name = "前端"
 source_path = "my-project/web"            # 源码路径（相对 WORKSPACE_ROOT）
-public_url = "/app/"                      # Nginx 对外 URL 前缀
-deploy_path = "my-project/web/dist"        # 服务器路径（相对 PROJECT_BASE）
-nginx_reload = true                       # 部署后是否 reload nginx
+public_url = "/"                          # 对外 URL 前缀（根站点用 /）
+deploy_path = "my-project/web/dist"       # 服务器路径（相对 PROJECT_BASE）
+routes = [
+    { path = "/", type = "root", spa = true },        # 根站点
+    # { path = "/app/", type = "static", spa = true } # 子路径站点（vite 需配 base）
+]
 
   [components.build]
   package_manager = "pnpm"                # pnpm | npm | yarn
@@ -69,11 +85,6 @@ nginx_reload = true                       # 部署后是否 reload nginx
   artifact = "my-web-dist.tar.gz"         # 打包产物文件名
   # env_file = "assets/my-web.env"      # 构建期 .env（VITE_* 等，可选）
 
-  [[components.nginx.locations]]
-  path = "/app/"                          # Nginx location 路径
-  type = "static"                         # static | proxy | websocket
-  spa_fallback = true                     # SPA 404 → index.html
-
 # ═══════════════════════════════════════════════════════════════
 # 组件 2：后端（Python）
 # ═══════════════════════════════════════════════════════════════
@@ -81,72 +92,62 @@ nginx_reload = true                       # 部署后是否 reload nginx
 id = "my-backend"
 kind = "python"
 display_name = "后端 API"
-source_path = "my-project/backend"
-deploy_path = "my-project/backend/package"
-nginx_reload = false
-health_url = "http://127.0.0.1:5000/api/health"  # 部署后健康检查
-services = [                              # 部署后重启的 systemd 服务
-    "my-backend",
+source_path = "my-project/backend"        # 源码路径（相对 WORKSPACE_ROOT）
+deploy_path = "my-project/backend/package"# 服务器路径（相对 PROJECT_BASE，★全局唯一）
+health_url = "http://127.0.0.1:5000/api/health"   # 部署后健康检查（服务器内网地址）
+post_deploy_check_path = "/api/navigation/menu"   # 业务级检查（可选）
+
+# ── 路由意图（★ v2：替代旧 nginx.locations）──
+routes = [
+    { path = "/api/ws", type = "websocket", target = "http://127.0.0.1:5000/api/ws" },
+    { path = "/api/",   type = "proxy",     target = "http://127.0.0.1:5000/api/" },
 ]
 
-  # ── Nginx 路由：API 代理 ──
-  [[components.nginx.locations]]
-  path = "/app/api/"
-  type = "proxy"
-  proxy_target = "http://127.0.0.1:5000"
-  proxy_path = "/api/"                    # 转发路径（去掉 /app 前缀）
+# ── 伴随服务（★必须写在 [components.process] 段之前 —— TOML 表序约束，
+#    进入子表后键就归属该子表了）──
+# 纯名字 = 宿主守护对象（宝塔 supervisor 程序 / systemd 同名单元）；
+# 对象形式 = 补充 docker 容器化所需意图（MVP 阶段 docker companions 预留）
+companions = [
+    "my-worker",
+    # { name = "my-mcp", cmd = "python -m my_mcp.server", port = 7800 },
+]
 
-  # ── Nginx 路由：WebSocket ──
-  # 路径必须匹配前端实际连接路径
-  [[components.nginx.locations]]
-  path = "/app/ws/"
-  type = "websocket"
-  proxy_target = "http://127.0.0.1:5000"
-  proxy_path = "/ws/"
+# ── 主进程意图（★ v2 核心：通道据此翻译成各自的运行载体）──
+[components.process]
+port = 5000                               # 监听端口（宝塔项目/docker 发布端口）
+cmd = ".venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 5000"
+                                          # 启动命令（相对 deploy_path，
+                                          # 通道负责拼绝对路径；容器内绑 0.0.0.0）
+migrate = "alembic upgrade head"          # 部署时迁移命令（可选）
 
-  # ── 打包配置 ──
+  # ── 打包配置：只打包服务器需要的 ──
   [components.pack]
-  package_mode = "app-package"            # source-tar | app-package
+  package_mode = "app-package"            # source-tar（归档根）/ app-package（进 package/）
   artifact_pattern = "my-backend-*.tar.gz"
   include_files = [                       # 额外打包的部署资产
       "assets/my-backend.env.example",
   ]
-  # 安全白名单：仅此处列出的 .env 才允许进包
-  include_env = ["assets/my-backend.env"]
-  # extra_exclude_dirs = ["custom_dir"]   # 追加排除（继承 _shared.toml）
+  include_env = ["assets/my-backend.env"] # ★安全白名单：仅列出的 .env 才允许进包
+  # extra_exclude_dirs = ["custom_dir"]  # 追加排除（继承 _shared.toml）
 
-  # 附带额外源码目录（如 MCP Server），复制到归档根下 mcp_server/
+  # 附带额外源码目录（如 MCP Server），复制到归档指定子目录
   # [[components.pack.extra_source]]
   # path = "my-project/mcp_server"
-  # dest = "mcp_server"
-
-# ═══════════════════════════════════════════════════════════════
-# 组件 3：辅助服务（如 MCP Server）—— ⚠️ 不要照抄本段！
-# ═══════════════════════════════════════════════════════════════
-# ⚠️ 反例（历史上真的这么配过，2026-08-24 造成过一次线上静默故障）：
-#
-#   [[components]]
-#   id = "my-mcp"
-#   source_path = "my-project/mcp_server"
-#   deploy_path = "my-project/backend/package"  # ← 与 backend 同目录
-#   venv_shared = true
-#
-# 为什么有害：deploy-kinds.sh 的 python 分支是
-#   「清空 pkg_dir（保留 .env/.venv/logs/data）→ tar 解压到 pkg_dir 根」。
-# 两个组件的 deploy_path 相同、源码树不同时，后部署的一方会把前一方的代码
-# 整个抹掉（前端看不出问题，直到下次重启服务才崩）。
-#
-# ✅ 正确做法：把辅助源码作为主组件的「附加源码目录」打进同一个包
-#
-#   [components.pack]
-#   [[components.pack.extra_source]]
-#   path = "my-project/mcp_server"
-#   dest = "mcp_server"          # 归档内 → package/mcp_server/
-#
-# 部署主组件时 deploy-kinds.sh 会自动检测 `$pkg_dir/mcp_server/pyproject.toml`
-# 并 `pip install` 到共享 venv；辅助服务的 systemd 单元写在主组件的 services
-# 列表里即可（示例见 deepquant/project.toml）。
+  # dest = "mcp_server"                   # 归档内 → package/mcp_server/
 ```
+
+## 意图 → 通道翻译表
+
+同一份 TOML，三个通道各自的落地对象：
+
+| TOML 意图 | baota（主力） | native（冻结） | docker（MVP） |
+|-----------|---------------|----------------|----------------|
+| `routes(type=root/static)` | 宝塔 HTML 站点（conf=`vhost/nginx/html_<站点名>.conf`，必须带前缀） | generate-nginx location → default.conf | 宿主 nginx 静态（同 native） |
+| `routes(type=proxy/websocket)` | 面板原生反代 `CreateProxy`（conf 落 `vhost/nginx/proxy/<站点>/`） | generate-nginx proxy 块 | 宿主 nginx → 容器（host 网络，端口即宿主端口） |
+| `process(port, cmd)` | 宝塔 Python/Java 项目（名=组件 id，cmd 自动拼 deploy_path 绝对路径） | systemd 单元 `<id>.service`（模板 assets/systemd/） | Dockerfile + compose（端口发布绑 127.0.0.1） |
+| `process(migrate)` | 部署时 venv 内执行 | 同左 | 预留（当前手动） |
+| `companions` | 宝塔 supervisor 程序 | systemd 单元 `<name>.service` | **预留** |
+| `deploy_hook`（legacy） | 支持 | 支持 | 跳过（走默认流程） |
 
 ## 字段速查
 
@@ -154,9 +155,9 @@ services = [                              # 部署后重启的 systemd 服务
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `id` | string | ✅ | 项目唯一标识 |
+| `id` | string | ✅ | 项目唯一标识（deploy.sh 命令行参数） |
 | `display_name` | string | ✅ | 人类可读名称 |
-| `key_files` | array | ❌ | 随包上传的部署资产路径 |
+| `key_files` | array | ❌ | 随包上传的部署资产（native systemd 模板等） |
 
 ### `[deploy]`
 
@@ -170,33 +171,41 @@ services = [                              # 部署后重启的 systemd 服务
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `id` | ✅ | 组件唯一标识 |
-| `kind` | ✅ | `frontend` / `python` / `java` / `go` / `nodejs` |
+| `kind` | ✅ | `frontend` / `python` / `java`（go/nodejs 为打包层扩展位，通道未覆盖） |
 | `display_name` | ✅ | 日志显示名 |
 | `source_path` | ✅ | 源码路径（相对 WORKSPACE_ROOT） |
-| `deploy_path` | ✅ | 服务器路径（相对 PROJECT_BASE） |
-| `public_url` | ❌ | Nginx 对外 URL 前缀（前端用） |
-| `nginx_reload` | ❌ | 部署后是否 reload nginx |
-| `health_url` | ❌ | 部署后 HTTP 健康检查 URL |
-| `services` | ❌ | 部署后重启的 systemd 服务列表 |
-| `deploy_hook` | ❌ | 自定义部署脚本路径 |
-| `venv_shared` | ❌ | 共享 venv 模式（不创建新 venv，检查存在性） |
+| `deploy_path` | ✅ | 服务器路径（相对 PROJECT_BASE；**python 部署会清空此目录，必须全局唯一**） |
+| `public_url` | ❌ | 对外 URL 前缀（前端用） |
+| `health_url` | ❌ | 部署后健康检查 URL（`http://127.0.0.1:<port>/...`） |
+| `post_deploy_check_path` | ❌ | 业务级检查路径 |
+| `web_path` | ❌ | 子路径前端标识（如 `/financial`） |
+| `deploy_hook` | ❌ | legacy 自定义部署脚本（迁移完成后退役） |
+| `routes` | ❌ | 路由意图数组，见下 |
 
-#### 宝塔通道键（BAOTA_MODE=1 时生效；未启用走旧链路）
+### `routes`（v2 路由意图）
 
-> 覆盖范围：python / java / frontend(html)。go / nodejs 暂走旧链路（扩展位）。
-> 详见 [KINDS-CONTRACT.md](KINDS-CONTRACT.md)「宝塔原生通道」章节。
+| 字段 | 说明 |
+|------|------|
+| `path` | location 路径 |
+| `type` | `root` / `static`（静态，前端）/ `proxy` / `websocket`（后端） |
+| `target` | proxy/websocket 的后端地址（`http://127.0.0.1:<port>/...`） |
+| `spa` | static/root 的 SPA 404 → index.html |
 
-| 字段 | 适用 kind | 说明 |
-|------|-----------|------|
-| `baota_site` | frontend | 宝塔 HTML 站点名；站点不存在自动原生创建（project_type=小写 html），部署目录以面板 site-path 为 SSOT |
-| `baota_project` | python / java | 宝塔项目名；缺失自动从零创建（Python：venv 注册→CreateProject→StartProject；Java：本机直调 create_project） |
-| `baota_port` | python / java | 创建项目时的端口 |
-| `baota_cmd` | python / java | 启动命令（**venv/JDK 内绝对路径**，面板进程 PATH 不含项目环境） |
-| `baota_supervisor` | python | 项目内置伴随服务 → 宝塔 supervisor 程序名（空格分隔，如 `quantdinger-mcp`） |
-| `baota_jar` | java | jar 相对 deployPath（shell 侧自动拼绝对路径） |
-| `baota_jdk` | java | JDK bin 路径（如 `/usr/bin/java`） |
+### `[components.process]`（v2 主进程意图，python/java）
 
-### `[components.build]` (frontend / java / go / nodejs)
+| 字段 | 说明 |
+|------|------|
+| `port` | 监听端口 |
+| `cmd` | 启动命令（相对 deploy_path，通道拼绝对路径；容器内需绑 0.0.0.0） |
+| `migrate` | 部署时迁移命令（可选，如 `alembic upgrade head`） |
+
+### `companions`（伴随服务意图）
+
+- 纯字符串：`"my-worker"` —— baota=supervisor 程序 / native=systemd 同名单元
+- 对象：`{ name, cmd, port }` —— 补充 docker 容器化所需意图（当前 docker companions 预留）
+- ⚠️ **必须写在 `[components.process]` 等子表段之前**（TOML 表序约束）
+
+### `[components.build]` (frontend / java)
 
 | 字段 | 适用 kind | 说明 |
 |------|-----------|------|
@@ -205,6 +214,7 @@ services = [                              # 部署后重启的 systemd 服务
 | `dist_dir` | frontend | 构建产物目录 |
 | `artifact` | frontend | 打包产物文件名 |
 | `env_file` | frontend | 构建期 .env（VITE_* 等） |
+| `build_tool` / `jar_dir` / `jar_pattern` | java | maven/gradle、JAR 目录与匹配模式 |
 
 ### `[components.pack]` (python / nodejs)
 
@@ -213,77 +223,55 @@ services = [                              # 部署后重启的 systemd 服务
 | `package_mode` | `source-tar`（源码在归档根）/ `app-package`（源码进 package/） |
 | `artifact_pattern` | 打包产物文件名模式 |
 | `include_files` | 额外打包文件列表 |
-| `include_env` | 安全白名单：允许进包的 .env 文件 |
-| `extra_exclude_dirs` | 追加排除目录（继承 `_shared.toml`） |
-| `extra_exclude_files` | 追加排除文件 |
+| `include_env` | ★安全白名单：允许进包的 .env（默认全排除） |
+| `extra_exclude_dirs` / `extra_exclude_files` | 追加排除（继承 `_shared.toml`） |
 
 ### `[[components.pack.extra_source]]`
 
 | 字段 | 说明 |
 |------|------|
-| `path` | 额外源码目录路径（相对 WORKSPACE_ROOT） |
-| `dest` | 归档内目标子目录名 |
-
-### `[[components.nginx.locations]]`
-
-| 字段 | 说明 |
-|------|------|
-| `path` | Nginx location 路径 |
-| `type` | `static` / `proxy` / `websocket` |
-| `proxy_target` | 后端监听地址（proxy/websocket） |
-| `proxy_path` | 转发路径（proxy/websocket） |
-| `spa_fallback` | SPA 404 → index.html（static） |
-
-## deploy.sh 通用部署流程（Python）
-
-`deploy.sh` 对所有 `kind = "python"` 组件统一执行：
-
-1. **deployHook**（如有）：执行自定义脚本，跳过后续步骤
-2. **解压**：备份 .env → 清理旧代码 → 解压 tar → 恢复 .env
-3. **venv**：`venv_shared = true` 时检查存在性；否则按需创建
-4. **pip install**：自动检测 `requirements.txt` 或 `pyproject.toml`
-5. **MCP 自动检测**：如存在 `mcp_server/pyproject.toml`，自动安装
-6. **.env 生成**：首次部署从 `.env.example` 模板渲染占位符
-7. **systemd 服务**：安装/更新服务模板，渲染 `__MCP_AGENT_TOKEN__` 等占位符
-8. **重启 + 健康检查**：重启服务，检查 `health_url`
+| `path` | 额外源码目录路径（相对 WORKSPACE_ROOT，如 MCP Server） |
+| `dest` | 归档内目标子目录名（部署时自动 pip install，见 KINDS-CONTRACT） |
 
 ## .env 模板占位符
 
-`deploy.sh` 在首次部署时自动替换以下占位符：
-
-| 占位符 | 替换为 | 来源 |
-|--------|--------|------|
-| `__PG_PASSWORD__` | PG 密码 | `deploy.env` → `PG_PASSWORD` |
-| `__REDIS_PASSWORD__` | Redis 密码 | `deploy.env` → `REDIS_PASSWORD` |
-| `__SERVER_IP__` | 服务器 IP | 命令行 `--ip` 或 `127.0.0.1` |
-| `__FRONTEND_URL__` | 前端 URL | `deploy.env` → `FRONTEND_URL` |
-| `__SECRET_KEY__` | 随机生成 | `python3 -c "import secrets; ..."` |
-| `__ADMIN_PASSWORD__` | 管理员密码 | `deploy.env` → `ADMIN_PASSWORD` |
-
-systemd 服务模板占位符：
+首次部署时由部署脚本从 `.env.example` 渲染（值来自 `deploy.env.*`）：
 
 | 占位符 | 替换为 |
 |--------|--------|
-| `__MCP_AGENT_TOKEN__` | `deploy.env` → `MCP_AGENT_TOKEN` |
+| `__PG_PASSWORD__` | `deploy.env` → `PG_PASSWORD` |
+| `__REDIS_PASSWORD__` | `deploy.env` → `REDIS_PASSWORD` |
+| `__SERVER_IP__` | 命令行 `--ip` 或 127.0.0.1 |
+| `__FRONTEND_URL__` | `deploy.env` → `FRONTEND_URL` |
+| `__SECRET_KEY__` | 随机生成 |
+| `__ADMIN_PASSWORD__` | `deploy.env` → `ADMIN_PASSWORD` |
+| `__MCP_AGENT_TOKEN__`（systemd 模板） | `deploy.env` → `MCP_AGENT_TOKEN` |
 
-## 新增项目步骤
+## 新项目接入 SOP（零脚本改动）
 
-1. 在工作区放好源码
-2. 在 `project-assets/` 下新建 `<项目名>/project.toml`（可复制本模板修改）
-3. 在 `assets/systemd/` 下创建 systemd 服务模板（如有后端）
-4. 在 `assets/` 下创建 `.env.example` 模板（如有后端）
-5. 运行 `.\scripts\build.ps1 <项目名>` 验证打包
-6. 上传 → 服务器 `bash deploy.sh <组件ID> --yes`
+1. **放源码**：工作区放好项目源码（`source_path` 指向它）
+2. **写 TOML**：`project-configs/<项目名>/project.toml`（复制上文模板或现成的
+   financial / deepquant / official-site 改）
+3. **部署资产**（如有后端）：
+   - `assets/<项目>.env.example` 模板（真实密码只活在 `deploy.env.*`）
+   - native 通道 systemd 单元模板 → `assets/systemd/<服务名>.service`
+4. **通道字段**：无需配置——通道在部署时由 `DEPLOY_CHANNEL` 决定；
+   只要 TOML 把 `routes` / `process` / `companions` 意图写清楚，三通道通用
+5. **验证打包**：`.\scripts\build.ps1 <项目名>`
+6. **部署**：`bash deploy.sh <项目名|组件ID> --target=server-X --yes`
+7. **自检**：宝塔机跑 `BASE_DOMAIN=<域名> bash scripts/tools/check-deploy.sh`（40 项）；
+   面板上确认站点/项目/反代原生可见可管理
 
-## 注意事项
+## ⚠️ 注意事项（历史踩坑，别再犯）
 
-- **WebSocket 路径**：必须与前端实际连接路径一致（如 `/app/ws/` 而非 `/ws/`）
-- **⚠️ deploy_path 必须唯一**：`kind = "python"` 的部署会先清空整个 deploy_path 再解压，
-  两个组件共用同一 deploy_path 会互相覆盖（2026-08-24 已发生过一次静默故障）。
-  辅助服务请用 `pack.extra_source` 打进主组件的包，不要另开组件。
-- **共享 venv**：`venv_shared = true` 时只是**检查** venv 是否存在（不会创建），
-  venv 路径仍取 `deploy_path/.venv`。所以它只在「两个组件确实共用同一个
-  deploy_path」时才有意义 —— 而这正是要避免的配置，实际部署请勿使用。
-- **.env 安全**：默认全排除，仅 `include_env` 白名单中的文件进包
-- **健康检查**：`health_url` 用 `http://127.0.0.1:<port>/<path>`（服务器内网地址）
-- **MCP 自动检测**：后端包内如有 `mcp_server/pyproject.toml`，deploy.sh 自动安装
+- **deploy_path 必须全局唯一**：python 部署先清空 deploy_path 再解压，两个组件共用会互相覆盖
+  （2026-08-24 deepquant-mcp 覆盖 backend 静默事故）。辅助服务用 `pack.extra_source`
+  打进主组件的包，**不要**另开组件（反例详见本文件 git 历史）。
+- **companions 写在 process 段之前**：TOML 一旦进入 `[components.process]` 子表，
+  之后的键都归属该子表。
+- **WebSocket 路径**：`routes` 里的 websocket path 必须与前端实际连接路径一致。
+- **.env 安全**：默认全排除，仅 `include_env` 白名单放行；真实密码只活在 `deploy.env.*`。
+- **子路径前端**：vite 需配 `base = '/<子路径>/'`（参考 official-site 的 `/qd/`）。
+- **共享 venv（`venv_shared`）**：只在两个组件确实共用同一 deploy_path 时有意义——
+  而这正是要避免的配置，请勿使用。
+- **health_url 用内网地址**：`http://127.0.0.1:<port>/<path>`。

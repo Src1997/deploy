@@ -8,7 +8,11 @@
 |------|------|
 | [guide/deploy-from-scratch.md](./guide/deploy-from-scratch.md) | 完整部署步骤（Phase 1-8b，从零开始） |
 | [guide/incremental-release.md](./guide/incremental-release.md) | 增量发版与回滚（含 deploy_hook 钩子说明） |
-| [guide/manual-deploy.md](./guide/manual-deploy.md) | 手动部署（脚本不可用 / 故障排查 / 单步操作；★开头有 2026-10-23 通道现状说明） |
+| [guide/manual-deploy.md](./guide/manual-deploy.md) | 手动部署总入口（脚本不可用 / 故障排查 / 单步操作；★开头有 2026-10-23 通道现状说明） |
+| [guide/manual-deploy-baota.md](./guide/manual-deploy-baota.md) | 手动部署 · 宝塔通道（主力，B/C 现役；面板对象落位 / API 姿势 / 红线） |
+| [guide/manual-deploy-native.md](./guide/manual-deploy-native.md) | 手动部署 · native 通道（冻结维护，systemd + generate-nginx 应急） |
+| [guide/manual-deploy-docker.md](./guide/manual-deploy-docker.md) | 手动部署 · docker 通道（MVP 试点；容器 + 宿主 nginx 收口） |
+| [deploy-architecture.html](./deploy-architecture.html) | 部署体系架构总览（HTML 可视化：端到端流程图 / kind×channel 矩阵 / 思维导图 / 宝塔对象落位） |
 | [guide/daily-ops.md](./guide/daily-ops.md) | 日常运维（服务管理、日志治理、故障排查 SOP、数据库、Redis、备份） |
 | [guide/remote-dev.md](./guide/remote-dev.md) | 远程开发（直连服务器 DB / 后端） |
 

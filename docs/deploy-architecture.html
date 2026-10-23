@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploy 部署体系 · 架构总览</title>
+<style>
+  :root{
+    --ink:#1c2333; --muted:#5b6478; --bg:#f4f6fa; --card:#ffffff;
+    --line:#d9deea; --accent:#2f6bff; --accent-soft:#e8efff;
+    --baota:#e8632c; --baota-soft:#fdeee4; --native:#6a7280; --native-soft:#eef0f3;
+    --docker:#1a8fca; --docker-soft:#e3f3fb; --ok:#178a50; --warn:#c2620a; --bad:#c0392b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65;padding:32px 20px 80px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:28px;margin-bottom:6px}
+  h1 .badge{font-size:12px;vertical-align:middle;background:var(--accent-soft);color:var(--accent);border-radius:20px;padding:3px 12px;margin-left:10px;font-weight:600}
+  .sub{color:var(--muted);margin-bottom:28px}
+  h2{font-size:20px;margin:40px 0 14px;padding-left:12px;border-left:4px solid var(--accent)}
+  h3{font-size:15px;margin:18px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:18px;box-shadow:0 1px 3px rgba(28,35,51,.05)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+  th{background:#f0f3f9;font-weight:600;white-space:nowrap}
+  code{font-family:Consolas,Menlo,monospace;font-size:12.5px;background:#eef1f7;padding:1px 6px;border-radius:4px}
+  .tag{display:inline-block;font-size:11.5px;border-radius:4px;padding:1px 8px;font-weight:600;margin-right:4px}
+  .t-baota{background:var(--baota-soft);color:var(--baota)} .t-native{background:var(--native-soft);color:var(--native)}
+  .t-docker{background:var(--docker-soft);color:var(--docker)} .t-ok{color:var(--ok);font-weight:700}
+  .t-no{color:var(--bad);font-weight:700} .t-part{color:var(--warn);font-weight:700}
+  .callout{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 16px;border-radius:0 8px 8px 0;font-size:13.5px;margin:10px 0}
+  .callout.warn{border-color:var(--warn);background:#fdf3e7}
+  figure{margin:0}
+  svg{width:100%;height:auto;display:block}
+  svg text{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:8px}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .toc{columns:2;font-size:13.5px}
+  .toc a{color:var(--accent);text-decoration:none}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}.toc{columns:1}}
+  ul{padding-left:20px} li{margin:3px 0}
+  footer{color:var(--muted);font-size:12px;margin-top:40px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Deploy 部署体系 · 架构总览<span class="badge">v2 意图模型</span></h1>
+<div class="sub">配置驱动 · kind × channel 矩阵 · 面板原生可管理 —— 2026-10-23</div>
+
+<div class="card">
+  <h3 style="margin-top:0">目录</h3>
+  <div class="toc">
+    <p>① <a href="#flow">端到端部署流程图</a></p>
+    <p>② <a href="#matrix">kind × channel 支持矩阵</a></p>
+    <p>③ <a href="#mindmap">文档与脚本体系思维导图</a></p>
+    <p>④ <a href="#intent">意图 → 通道翻译表</a></p>
+    <p>⑤ <a href="#baota">宝塔对象落位图（主力通道）</a></p>
+    <p>⑥ <a href="#safety">健康检查 / 回滚 / 红线</a></p>
+    <p>⑦ <a href="#docs">文档导航</a></p>
+  </div>
+</div>
+
+<!-- ══════════ ① 端到端流程图 ══════════ -->
+<h2 id="flow">① 端到端部署流程图</h2>
+<div class="card">
+<figure>
+<svg viewBox="0 0 1120 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L8,4.5 L0,9 z" fill="#7c86a0"/>
+    </marker>
+    <marker id="arb" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L8,4.5 L0,9 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <style>
+    .lane{fill:#f8fafd;stroke:#d9deea;stroke-dasharray:4 4;rx:10}
+    .laneT{font-size:12px;fill:#7c86a0;font-weight:600}
+    .n{rx:9}
+    .box{fill:#fff;stroke:#8a94ad;stroke-width:1.4;rx:9}
+    .boxB{fill:#e8efff;stroke:#2f6bff;stroke-width:1.4;rx:9}
+    .boxG{fill:#e5f5ec;stroke:#178a50;stroke-width:1.4;rx:9}
+    .boxR{fill:#fdecea;stroke:#c0392b;stroke-width:1.4;rx:9}
+    .bx{fill:#fff;stroke:#e8632c;stroke-width:1.5;rx:9}
+    .tt{font-size:13px;font-weight:600;fill:#1c2333}
+    .st{font-size:10.5px;fill:#5b6478}
+    .fl{stroke:#7c86a0;stroke-width:1.4;fill:none;marker-end:url(#ar)}
+    .flr{stroke:#c0392b;stroke-width:1.4;fill:none;marker-end:url(#arb);stroke-dasharray:5 4}
+  </style>
+
+  <!-- lanes -->
+  <rect class="lane" x="20" y="30" width="330" height="500"/>
+  <text class="laneT" x="40" y="52">本地（Windows 构建）</text>
+  <rect class="lane" x="390" y="30" width="300" height="500"/>
+  <text class="laneT" x="410" y="52">服务器（SSH 上传）</text>
+  <rect class="lane" x="730" y="30" width="370" height="500"/>
+  <text class="laneT" x="750" y="52">通道落地（kind × channel）</text>
+
+  <!-- local -->
+  <rect class="box" x="55" y="75" width="260" height="52"/>
+  <text class="tt" x="75" y="97">project-configs/&lt;项目&gt;/project.toml</text>
+  <text class="st" x="75" y="114">唯一 SSOT：routes / process / companions 意图</text>
+
+  <rect class="boxB" x="55" y="165" width="260" height="52"/>
+  <text class="tt" x="75" y="187">scripts/build.ps1 &lt;项目名&gt;</text>
+  <text class="st" x="75" y="204">经 config_loader 读 TOML → 按 kind 打包</text>
+
+  <rect class="box" x="55" y="255" width="260" height="52"/>
+  <text class="tt" x="75" y="277">dist/packages/*.tar.gz + lib 同步上传</text>
+  <text class="st" x="75" y="294">tar 管道（ssh "cat &gt; 目标" &lt; 本地）</text>
+
+  <rect class="box" x="55" y="345" width="260" height="52"/>
+  <text class="tt" x="75" y="367">deploy.env.server-X（本机选择）</text>
+  <text class="st" x="75" y="384">PG/Redis 密码 · BAOTA_* · DEPLOY_CHANNEL</text>
+
+  <!-- server -->
+  <rect class="boxB" x="425" y="75" width="230" height="52"/>
+  <text class="tt" x="445" y="97">scripts/deploy.sh &lt;项目&gt; --target=X</text>
+  <text class="st" x="445" y="114">--yes 非交互 · --rollback 回滚 · --status 状态</text>
+
+  <rect class="box" x="425" y="165" width="230" height="52"/>
+  <text class="tt" x="445" y="187">config_loader.py 读 TOML</text>
+  <text class="st" x="445" y="204">无硬编码项目清单（新项目=新 TOML）</text>
+
+  <rect class="boxG" x="425" y="255" width="230" height="52"/>
+  <text class="tt" x="445" y="277">registry.sh 选定通道</text>
+  <text class="st" x="445" y="294">DEPLOY_CHANNEL（兼容 BAOTA_MODE）· 16 动词能力断言</text>
+
+  <rect class="box" x="425" y="345" width="230" height="52"/>
+  <text class="tt" x="445" y="367">kind 公共流程（deploy-kinds.sh）</text>
+  <text class="st" x="445" y="384">找包 → 备份 → 清空(保留名单) → 解压 → .env → 依赖</text>
+
+  <rect class="box" x="425" y="435" width="230" height="52"/>
+  <text class="tt" x="445" y="457">健康检查 health_check（3 次尝试）</text>
+  <text class="st" x="445" y="474">失败 → 计入 failed → 提示可回滚（退出码非零）</text>
+
+  <!-- channel -->
+  <rect class="bx" x="765" y="75" width="300" height="118"/>
+  <text class="tt" x="785" y="100" fill="#e8632c">baota（主力 · B/C 现役）</text>
+  <text class="st" x="785" y="122">前端 → 面板 HTML 站点（site-path 为 SSOT）</text>
+  <text class="st" x="785" y="140">后端 → 面板 Python/Java 项目</text>
+  <text class="st" x="785" y="158">companions → 宝塔 supervisor 插件</text>
+  <text class="st" x="785" y="176">路由 → 面板原生反代 CreateProxy</text>
+
+  <rect class="box" x="765" y="215" width="300" height="100"/>
+  <text class="tt" x="785" y="240">native（冻结维护 · 应急）</text>
+  <text class="st" x="785" y="262">服务 → systemd 单元（assets/systemd/ 模板）</text>
+  <text class="st" x="785" y="280">路由 → generate-nginx → default.conf</text>
+  <text class="st" x="785" y="298">companions → systemd 同名单元</text>
+
+  <rect class="box" x="765" y="337" width="300" height="100"/>
+  <text class="tt" x="785" y="362">docker（MVP · 试点中）</text>
+  <text class="st" x="785" y="384">服务 → Dockerfile + compose（端口发布 127.0.0.1）</text>
+  <text class="st" x="785" y="402">路由 → 宿主 nginx（与 native 共用后端）</text>
+  <text class="st" x="785" y="420">基础设施 → PG/Redis 宿主化，容器直连</text>
+
+  <rect class="boxG" x="765" y="459" width="300" height="56"/>
+  <text class="tt" x="785" y="481">面板原生可管理（验收标准）</text>
+  <text class="st" x="785" y="499">站点/项目/反代/supervisor 全部面板可见可操作</text>
+
+  <!-- flows -->
+  <path class="fl" d="M185,127 L185,165"/>
+  <path class="fl" d="M185,217 L185,255"/>
+  <path class="fl" d="M315,281 L425,281"/>
+  <path class="fl" d="M315,371 L425,371"/>
+  <path class="fl" d="M540,127 L540,165"/>
+  <path class="fl" d="M540,217 L540,255"/>
+  <path class="fl" d="M540,307 L540,345"/>
+  <path class="fl" d="M540,397 L540,435"/>
+  <path class="fl" d="M655,304 L765,140"/>
+  <path class="fl" d="M655,304 L765,265"/>
+  <path class="fl" d="M655,304 L765,387"/>
+  <path class="fl" d="M915,437 L915,459"/>
+  <path class="fl" d="M540,487 L540,512 L915,512 L915,515" opacity="0"/>
+  <!-- rollback -->
+  <path class="flr" d="M425,470 L340,470 L340,555 L1000,555 L1000,470"/>
+  <text class="st" x="560" y="549" fill="#c0392b">健康检查失败 → backup-rollback.sh（--rollback=TS|latest，排除名单与保留名单一致）</text>
+</svg>
+<div class="legend">
+  <span><i style="background:#e8efff"></i>工具箱脚本</span>
+  <span><i style="background:#e5f5ec"></i>守门 / 验收</span>
+  <span><i style="background:#fdeee4;stroke:#e8632c"></i>宝塔通道</span>
+  <span><i style="background:#fff;stroke:#8a94ad"></i>资产 / 步骤</span>
+  <span style="color:#c0392b">- -▶ 回滚链路</span>
+</div>
+</figure>
+</div>
+
+<!-- ══════════ ② 矩阵 ══════════ -->
+<h2 id="matrix">② kind × channel 支持矩阵</h2>
+<div class="card">
+<table>
+  <tr><th>kind（做什么）</th><th>打包（pack.ps1）</th><th><span class="tag t-baota">baota</span> 主力</th><th><span class="tag t-native">native</span> 冻结</th><th><span class="tag t-docker">docker</span> MVP</th></tr>
+  <tr><td><b>frontend</b><br><span style="color:var(--muted)">Vue/React/Svelte</span></td><td>pnpm/npm/yarn build → dist tar.gz</td><td class="t-ok">✅ HTML 站点</td><td class="t-ok">✅</td><td class="t-ok">✅（宿主目录，同 native）</td></tr>
+  <tr><td><b>python</b><br><span style="color:var(--muted)">FastAPI/Flask</span></td><td>源码 + includes → tar.gz</td><td class="t-ok">✅ Python 项目</td><td class="t-ok">✅ systemd</td><td class="t-part">✅ 容器（MVP）</td></tr>
+  <tr><td><b>java</b><br><span style="color:var(--muted)">Spring Boot</span></td><td>mvn/gradle → JAR tar.gz</td><td class="t-ok">✅ Java 项目</td><td class="t-ok">✅ systemd</td><td class="t-no">❌</td></tr>
+  <tr><td><b>go / nodejs</b></td><td>go build / npm ci</td><td class="t-part">❌ 扩展位</td><td class="t-part">❌ 扩展位</td><td class="t-no">❌</td></tr>
+</table>
+<div class="callout warn">
+<b>同机单通道铁律</b>：一台服务器只落一种通道（registry 强制，docker 与宝塔互斥）。
+通道选择：<code>DEPLOY_CHANNEL=baota|native|docker</code>（兼容 <code>BAOTA_MODE=1</code> → baota）。
+B/C 现役 = baota；native 供 VM/应急机；docker 启用前先单组件试点。
+</div>
+</div>
+
+<!-- ══════════ ③ 思维导图 ══════════ -->
+<h2 id="mindmap">③ 文档与脚本体系思维导图</h2>
+<div class="card">
+<figure>
+<svg viewBox="0 0 1120 620" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L7,4 L0,8 z" fill="#a7b0c5"/>
+    </marker>
+  </defs>
+  <style>
+    .root{fill:#2f6bff;rx:26}
+    .rootT{fill:#fff;font-size:16px;font-weight:700}
+    .br1{fill:#fff;stroke:#2f6bff;stroke-width:1.6;rx:10}
+    .br2{fill:#f0f3f9;stroke:#a7b0c5;rx:8}
+    .t1{font-size:13.5px;font-weight:700;fill:#1c2333}
+    .t2{font-size:11.5px;fill:#3a4358}
+    .ln{stroke:#a7b0c5;stroke-width:1.2;fill:none}
+  </style>
+
+  <rect class="root" x="455" y="280" width="210" height="58"/>
+  <text class="rootT" x="560" y="305" text-anchor="middle">deploy 工具箱</text>
+  <text x="560" y="324" text-anchor="middle" fill="#dbe6ff" font-size="11">意图模型 → kind × channel</text>
+
+  <!-- branch 1: 配置 -->
+  <path class="ln" d="M560,280 C560,190 400,170 330,160" marker-end="url(#ar2)"/>
+  <rect class="br1" x="120" y="130" width="210" height="44"/>
+  <text class="t1" x="140" y="157">① 配置层 project-configs/</text>
+  <path class="ln" d="M225,174 L225,220"/>
+  <rect class="br2" x="60" y="220" width="330" height="118"/>
+  <text class="t2" x="80" y="242">&lt;项目&gt;/project.toml —— 唯一 SSOT（意图：routes/process/companions）</text>
+  <text class="t2" x="80" y="262">&lt;项目&gt;/DEPLOY-NOTES.md —— 特殊配置与 conf 调整指南</text>
+  <text class="t2" x="80" y="282">PROJECT-TOML-GUIDE.md —— 字段详解 + 新项目接入 SOP</text>
+  <text class="t2" x="80" y="302">CHANNEL-CONTRACT / KINDS-CONTRACT / CHANNEL-DEPENDENCIES</text>
+  <text class="t2" x="80" y="322">_shared.toml —— python 打包排除默认值</text>
+
+  <!-- branch 2: 脚本 -->
+  <path class="ln" d="M470,286 C400,240 340,230 320,224" opacity="0"/>
+  <path class="ln" d="M455,295 C360,285 250,300 195,368" marker-end="url(#ar2)"/>
+  <rect class="br1" x="70" y="372" width="250" height="44"/>
+  <text class="t1" x="90" y="399">② 脚本层 scripts/</text>
+  <path class="ln" d="M195,416 L195,450"/>
+  <rect class="br2" x="40" y="450" width="310" height="140"/>
+  <text class="t2" x="60" y="472">core/ —— config_loader.py（TOML→部署意图）· load-projects.sh</text>
+  <text class="t2" x="60" y="492">kind/ —— deploy-kinds.sh（kind 公共部署流程）</text>
+  <text class="t2" x="60" y="512">channels/ —— registry.sh + baota.sh / native.sh / docker.sh</text>
+  <text class="t2" x="60" y="532">　＋ baota-api.py（面板 HTTP API）· native-nginx.sh（路由后端）</text>
+  <text class="t2" x="60" y="552">tools/ —— generate-nginx.py · check-deploy.sh（40 项自检）</text>
+  <text class="t2" x="60" y="572">　＋ backup-rollback.sh（回滚）</text>
+  <text class="t2" x="60" y="592">build.ps1 / deploy.sh —— 本地打包 / 服务器部署入口</text>
+
+  <!-- branch 3: 资产 -->
+  <path class="ln" d="M455,330 C380,370 330,395 320,430" marker-end="url(#ar2)"/>
+  <rect class="br1" x="130" y="434" width="190" height="44" opacity="0"/>
+  <rect class="br1" x="410" y="430" width="300" height="44" opacity="0"/>
+
+  <!-- branch 3 right: 通道 -->
+  <path class="ln" d="M665,295 C760,285 870,300 925,368" marker-end="url(#ar2)"/>
+  <rect class="br1" x="800" y="372" width="250" height="44"/>
+  <text class="t1" x="820" y="399">③ 通道层（16 动词契约）</text>
+  <path class="ln" d="M925,416 L925,450"/>
+  <rect class="br2" x="770" y="450" width="310" height="140"/>
+  <text class="t2" x="790" y="472" fill="#e8632c" font-weight="700">baota —— 面板统一维护（B/C 现役）</text>
+  <text class="t2" x="800" y="492">站点 / 反代 / Python·Java 项目 / supervisor</text>
+  <text class="t2" x="790" y="512" font-weight="700">native —— systemd + 宿主 nginx（冻结）</text>
+  <text class="t2" x="800" y="532">应急重部署；全部迁移后退役</text>
+  <text class="t2" x="790" y="552" font-weight="700">docker —— 容器统一维护（MVP）</text>
+  <text class="t2" x="800" y="572">应用容器化 + 宿主 nginx 收口 + 基础设施宿主化</text>
+
+  <!-- branch 4: 交付 -->
+  <path class="ln" d="M560,280 C560,190 720,170 790,160" marker-end="url(#ar2)"/>
+  <rect class="br1" x="790" y="130" width="210" height="44"/>
+  <text class="t1" x="810" y="157">④ 交付与验收</text>
+  <path class="ln" d="M895,174 L895,220"/>
+  <rect class="br2" x="740" y="220" width="340" height="118"/>
+  <text class="t2" x="760" y="242">健康门：health_check ×3，失败→可回滚</text>
+  <text class="t2" x="760" y="262">回滚：deploy.sh --rollback=TS|latest</text>
+  <text class="t2" x="760" y="282">自检：check-deploy.sh 40 项（宝塔机）</text>
+  <text class="t2" x="760" y="302">验收：面板原生可见可管理（站点/项目/反代）</text>
+  <text class="t2" x="760" y="322">L1 回归：tests/run-all.sh（含动词审计）</text>
+</svg>
+</figure>
+</div>
+
+<!-- ══════════ ④ 意图翻译表 ══════════ -->
+<h2 id="intent">④ 意图 → 通道翻译表（v2 灵魂）</h2>
+<div class="card">
+<p style="margin-bottom:10px">TOML 只声明<b>意图</b>（routes / process / companions），不含任何通道字眼；
+通道在部署时把同一份意图翻译成各自的落地对象：</p>
+<table>
+  <tr><th>TOML 意图</th><th><span class="tag t-baota">baota</span></th><th><span class="tag t-native">native</span></th><th><span class="tag t-docker">docker</span></th></tr>
+  <tr><td><code>routes(root/static)</code></td><td>宝塔 HTML 站点（conf=<code>html_&lt;站点名&gt;.conf</code>，必须带前缀）</td><td>generate-nginx location → default.conf</td><td>宿主 nginx 静态（同 native）</td></tr>
+  <tr><td><code>routes(proxy/websocket)</code></td><td>面板原生反代 CreateProxy（<code>vhost/nginx/proxy/&lt;站点&gt;/</code>）</td><td>generate-nginx proxy 块</td><td>宿主 nginx → 容器（host 网络）</td></tr>
+  <tr><td><code>process(port,cmd)</code></td><td>宝塔 Python/Java 项目（cmd 自动拼绝对路径）</td><td>systemd 单元 <code>&lt;id&gt;.service</code></td><td>Dockerfile + compose（端口发布 127.0.0.1）</td></tr>
+  <tr><td><code>process(migrate)</code></td><td>部署时 venv 内执行</td><td>同左</td><td class="t-part">预留（当前手动）</td></tr>
+  <tr><td><code>companions</code></td><td>宝塔 supervisor 程序</td><td>systemd 同名单元</td><td class="t-part">预留</td></tr>
+  <tr><td><code>deploy_hook</code>（legacy）</td><td>支持</td><td>支持</td><td class="t-no">跳过</td></tr>
+</table>
+</div>
+
+<!-- ══════════ ⑤ 宝塔对象落位 ══════════ -->
+<h2 id="baota">⑤ 宝塔对象落位图（主力通道）</h2>
+<div class="card">
+<table>
+  <tr><th>TOML 意图</th><th>面板对象</th><th>服务器落点</th><th>调整入口</th></tr>
+  <tr><td>前端组件（kind=frontend）</td><td>HTML 站点（project_type=html）</td><td>面板 site-path = deploy_path（SSOT）；conf = <code>vhost/nginx/html_&lt;站点名&gt;.conf</code></td><td>面板 → 网站 → 设置（流量限制/日志/伪静态按 html_ 前缀读取）</td></tr>
+  <tr><td>proxy/websocket 路由</td><td>站点反代（CreateProxy）</td><td><code>vhost/nginx/proxy/&lt;站点&gt;/*.conf</code></td><td>面板 → 站点设置 → 反向代理（勿手编业务路由）</td></tr>
+  <tr><td>python 组件（process）</td><td>Python 项目（名=组件 id）</td><td>deploy_path + deploy_path/.venv；面板管进程启停</td><td>面板 → Python 项目（重启/日志）；cmd 必须绝对路径</td></tr>
+  <tr><td>companions</td><td>supervisor 程序</td><td><code>/www/server/panel/pyenv/…/supervisorctl</code> 托管</td><td>面板 → supervisor 插件；改 ini 后 <code>reread+update</code> 再 restart</td></tr>
+</table>
+<div class="callout">
+「面板原生可管理」是宝塔通道的验收标准：部署完成后，上述对象必须全部在面板可见、可启停、可编辑；
+<code>check-deploy.sh</code>（40 项）+ 面板功能抽查是部署后固定动作。
+</div>
+</div>
+
+<!-- ══════════ ⑥ 安全 ══════════ -->
+<h2 id="safety">⑥ 健康检查 / 回滚 / 红线</h2>
+<div class="cols">
+<div class="card">
+  <h3 style="margin-top:0">部署安全网</h3>
+  <ul>
+    <li><b>备份</b>：部署前自动备份（frontend 备 dist；python/java 备 pkg_dir 不含 .venv），保留 <code>backup_retention</code> 份</li>
+    <li><b>清空保留名单</b>：python 清空 deploy_path 时保留 <code>.env / .venv / logs / data</code>（回滚侧排除名单必须一致）</li>
+    <li><b>健康门</b>：<code>health_check</code> 3 次尝试，失败计入 failed、退出码非零、提示可回滚（部署/回滚双路径闭环）</li>
+    <li><b>回滚</b>：<code>deploy.sh &lt;组件&gt; --rollback=TS|latest</code>（单/多/全量）</li>
+    <li><b>自检</b>：<code>BASE_DOMAIN=&lt;域名&gt; bash scripts/tools/check-deploy.sh</code>（宝塔机 40 项）</li>
+    <li><b>.env 安全</b>：默认全排除，仅 <code>include_env</code> 白名单进包；真实密码只活在 deploy.env.*</li>
+  </ul>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">红线清单</h3>
+  <ul>
+    <li>宝塔机<b>禁 systemd</b>（双轨抢端口实证，Restart=always 反抢崩溃 2284 次）</li>
+    <li>宝塔机<b>禁手搓站点 conf</b> —— 路由归面板；<code>html_</code> 前缀 conf 只在自愈/排障时碰</li>
+    <li><b>不直写面板 DB</b> —— 一切经面板 API / UI</li>
+    <li><b>同机单通道</b> —— docker 与宝塔互斥，切换先跑 ops 清场</li>
+    <li><b>deploy_path 全局唯一</b> —— python 部署清空目录，共用即覆盖（2026-08-24 事故）</li>
+    <li><b>mcp pin &lt;2.0.0</b>（deepquant）—— 升级即断</li>
+  </ul>
+</div>
+</div>
+
+<!-- ══════════ ⑦ 文档导航 ══════════ -->
+<h2 id="docs">⑦ 文档导航</h2>
+<div class="card">
+<table>
+  <tr><th>想做什么</th><th>看哪份</th></tr>
+  <tr><td>新项目接入（写 TOML）</td><td><code>project-configs/PROJECT-TOML-GUIDE.md</code>（本页 ④ 是其速览）</td></tr>
+  <tr><td>宝塔机手动部署 / 排障</td><td><code>docs/guide/manual-deploy-baota.md</code></td></tr>
+  <tr><td>native 应急机手动部署</td><td><code>docs/guide/manual-deploy-native.md</code></td></tr>
+  <tr><td>docker 试点部署</td><td><code>docs/guide/manual-deploy-docker.md</code></td></tr>
+  <tr><td>从零完整部署 / 增量发版 / 日常运维</td><td><code>docs/guide/deploy-from-scratch.md</code> / <code>incremental-release.md</code> / <code>daily-ops.md</code></td></tr>
+  <tr><td>某项目的特殊配置与 conf 调整</td><td><code>project-configs/&lt;项目&gt;/DEPLOY-NOTES.md</code></td></tr>
+  <tr><td>改通道行为 / 改 kind 行为前</td><td><code>CHANNEL-CONTRACT.md</code> / <code>KINDS-CONTRACT.md</code> / <code>CHANNEL-DEPENDENCIES.md</code></td></tr>
+  <tr><td>历史踩坑</td><td><code>docs/deploy-troubleshooting-history.md</code> · <code>docs/deploy-audit-20261023.md</code></td></tr>
+</table>
+</div>
+
+<footer>deploy · 架构总览（纯静态 HTML，无外部依赖，可直接打开）· 2026-10-23</footer>
+</div>
+</body>
+</html>
