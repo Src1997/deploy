@@ -1,6 +1,6 @@
 # 多项目宝塔部署指南
 
-> 从零：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/`）→ systemd + Nginx。  
+> 从零：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/`）→ **宝塔全托管**（HTML 站点 + Python 项目 + 宝塔 supervisor，2026-10-23 起 B/C 已全量收编，**禁 systemd 双轨**）。  
 > 本地 Windows 构建，服务器 Ubuntu/宝塔运行。**密码只放 `deploy.env`，禁止写进脚本或本文。**
 
 ## 文档导航
@@ -17,6 +17,8 @@
 | 本机连远程库开发 | [远程开发](docs/guide/remote-dev.md) |
 | 报错对照 | [常见问题](#常见问题) · [docs 排障档案](docs/README.md) |
 | 改 kind 行为 / 加新 kind | [双端行为契约](project-configs/KINDS-CONTRACT.md)（pack.ps1 与 deploy-kinds.sh 必须同步） |
+| **查项目特殊配置 / conf 位置 / 调参** | [project-configs/<项目>/DEPLOY-NOTES.md](project-configs/financial/DEPLOY-NOTES.md)（financial / deepquant / official-site） |
+| 部署后符合性自检 | `BASE_DOMAIN=<生产域名> bash scripts/tools/check-deploy.sh`（40 项，B/C 通用） |
 | 发版前自检 | `./tests/run-all.sh`（语法/配置/gitignore 防线一键回归） |
 
 ---
@@ -26,11 +28,11 @@
 | 项目 ID | 本地路径 (`sourcePath`) | 服务器路径 (`deployPath`) | 端口 | 类型 |
 |---------|-------------------------|---------------------------|------|------|
 | `financial-web` | `financial/financial-web` | `financial/financial-web/dist` | — | Vue 3 静态 |
-| `financial-api` | `financial/financial-api` | `financial/financial-api/package` | 5001 | FastAPI / Python (systemd) |
+| `financial-api` | `financial/financial-api` | `financial/financial-api/package` | 5001 | FastAPI / Python（宝塔项目+supervisor） |
 | `financial-admin` | `financial/financial-admin` | `financial/financial-admin/dist` | — | Vue 3 静态 |
 | `official-site` | `official-site` | `official-site/dist` | — | Vue 3 静态 |
 | `deepquant-web` | `deepquant/deepquant_vue` | `deepquant/web/dist` | — | Vue 2 静态 |
-| `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask / Python (systemd) |
+| `deepquant-backend` | `deepquant/deepquant/backend_api_python` | `deepquant/backend/package` | 5000 | Flask / Python（宝塔项目+supervisor） |
 
 > 服务器绝对路径 = `PROJECT_BASE`（默认 `/www/wwwroot/project`）+ `deployPath`。  
 > 清单 SSOT：`project-configs/*.toml`（由 `config_loader.py` 运行时直接读取，无需中间文件）。
@@ -233,7 +235,7 @@ AUTH_SECRET_KEY=__AUTH_SECRET_KEY__     # 首次部署自动生成
 
 #### Step 3: systemd 模板（可选，Supervisor 回退用）
 
-在 `configs/systemd/` 下创建 `<service-name>.service`：
+在 `assets/systemd/` 下创建（v2 起 configs/ 迁至 assets/） `<service-name>.service`：
 
 ```ini
 [Unit]
@@ -256,7 +258,7 @@ WantedBy=multi-user.target
 
 #### Step 4: Supervisor 注册
 
-在服务器上运行 `05-setup-supervisor.sh` 注册进程守护，或在 `configs/systemd/` 放好模板让钩子自动安装 systemd unit。
+在服务器上运行 `05-setup-supervisor.sh` 注册进程守护，或在 `assets/systemd/` 放好模板让钩子自动安装 systemd unit。
 
 #### 验证
 

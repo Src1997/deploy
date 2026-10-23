@@ -1,21 +1,21 @@
 # project.toml 配置指南
 
 > 通用模板：以 QuantDinger 项目为例，详解 `project.toml` 各字段含义和配置方法。
-> 新项目只需复制 `project-configs/<name>/` 并修改，**无需改任何脚本**。
+> 新项目只需复制 `project-assets/<name>/` 并修改，**无需改任何脚本**。
 
 ## 架构设计
 
 ```
-project-configs/*.toml (SSOT, 人编辑)
+project-assets/*.toml (SSOT, 人编辑)
     ↓ config_loader.py (运行时直接读取)
     ↓                     ↓
 pack.ps1 (打包)        deploy.sh (部署)
 ```
 
-- **一个配置源**：`project-configs/<name>/project.toml` 是唯一 SSOT
+- **一个配置源**：`project-assets/<name>/project.toml` 是唯一 SSOT
 - **一个打包器**：`pack.ps1` 通过 `config_loader.py` 读 TOML，所有项目共用
 - **一个部署器**：`deploy.sh` 通过 `config_loader.py` 读 TOML，所有项目共用（无项目硬编码分支）
-- **新增项目**：只需在 `project-configs/` 下新建一个 `project.toml`
+- **新增项目**：只需在 `project-assets/` 下新建一个 `project.toml`
 
 ## 支持的组件类型
 
@@ -31,7 +31,7 @@ pack.ps1 (打包)        deploy.sh (部署)
 
 ```toml
 # ═══════════════════════════════════════════════════════════════
-# project-configs/my-project/project.toml — 项目说明
+# project-assets/my-project/project.toml — 项目说明
 # ═══════════════════════════════════════════════════════════════
 
 # ── 项目元信息 ──
@@ -42,7 +42,7 @@ display_name = "我的项目（前端 + 后端）"
 # 随包上传的部署资产（相对 deploy 根路径）
 # systemd 服务模板、env 模板等
 key_files = [
-    "configs/systemd/my-backend.service",
+    "assets/systemd/my-backend.service",
 ]
 
 # ── 部署行为 ──
@@ -67,7 +67,7 @@ nginx_reload = true                       # 部署后是否 reload nginx
   build_script = "build"                  # package.json scripts 命令名
   dist_dir = "dist"                       # 构建产物目录
   artifact = "my-web-dist.tar.gz"         # 打包产物文件名
-  # env_file = "configs/my-web.env"      # 构建期 .env（VITE_* 等，可选）
+  # env_file = "assets/my-web.env"      # 构建期 .env（VITE_* 等，可选）
 
   [[components.nginx.locations]]
   path = "/app/"                          # Nginx location 路径
@@ -109,10 +109,10 @@ services = [                              # 部署后重启的 systemd 服务
   package_mode = "app-package"            # source-tar | app-package
   artifact_pattern = "my-backend-*.tar.gz"
   include_files = [                       # 额外打包的部署资产
-      "configs/my-backend.env.example",
+      "assets/my-backend.env.example",
   ]
   # 安全白名单：仅此处列出的 .env 才允许进包
-  include_env = ["configs/my-backend.env"]
+  include_env = ["assets/my-backend.env"]
   # extra_exclude_dirs = ["custom_dir"]   # 追加排除（继承 _shared.toml）
 
   # 附带额外源码目录（如 MCP Server），复制到归档根下 mcp_server/
@@ -180,6 +180,21 @@ services = [                              # 部署后重启的 systemd 服务
 | `services` | ❌ | 部署后重启的 systemd 服务列表 |
 | `deploy_hook` | ❌ | 自定义部署脚本路径 |
 | `venv_shared` | ❌ | 共享 venv 模式（不创建新 venv，检查存在性） |
+
+#### 宝塔通道键（BAOTA_MODE=1 时生效；未启用走旧链路）
+
+> 覆盖范围：python / java / frontend(html)。go / nodejs 暂走旧链路（扩展位）。
+> 详见 [KINDS-CONTRACT.md](KINDS-CONTRACT.md)「宝塔原生通道」章节。
+
+| 字段 | 适用 kind | 说明 |
+|------|-----------|------|
+| `baota_site` | frontend | 宝塔 HTML 站点名；站点不存在自动原生创建（project_type=小写 html），部署目录以面板 site-path 为 SSOT |
+| `baota_project` | python / java | 宝塔项目名；缺失自动从零创建（Python：venv 注册→CreateProject→StartProject；Java：本机直调 create_project） |
+| `baota_port` | python / java | 创建项目时的端口 |
+| `baota_cmd` | python / java | 启动命令（**venv/JDK 内绝对路径**，面板进程 PATH 不含项目环境） |
+| `baota_supervisor` | python | 项目内置伴随服务 → 宝塔 supervisor 程序名（空格分隔，如 `quantdinger-mcp`） |
+| `baota_jar` | java | jar 相对 deployPath（shell 侧自动拼绝对路径） |
+| `baota_jdk` | java | JDK bin 路径（如 `/usr/bin/java`） |
 
 ### `[components.build]` (frontend / java / go / nodejs)
 
@@ -254,9 +269,9 @@ systemd 服务模板占位符：
 ## 新增项目步骤
 
 1. 在工作区放好源码
-2. 在 `project-configs/` 下新建 `<项目名>/project.toml`（可复制本模板修改）
-3. 在 `configs/systemd/` 下创建 systemd 服务模板（如有后端）
-4. 在 `configs/` 下创建 `.env.example` 模板（如有后端）
+2. 在 `project-assets/` 下新建 `<项目名>/project.toml`（可复制本模板修改）
+3. 在 `assets/systemd/` 下创建 systemd 服务模板（如有后端）
+4. 在 `assets/` 下创建 `.env.example` 模板（如有后端）
 5. 运行 `.\scripts\build.ps1 <项目名>` 验证打包
 6. 上传 → 服务器 `bash deploy.sh <组件ID> --yes`
 

@@ -17,8 +17,10 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# -- Import config_loader (shared TOML reader) --
-for _lib in [os.path.join(SCRIPT_DIR, 'lib'),
+# -- Import config_loader (shared TOML reader; 分层布局在 core/，兼容旧 lib/) --
+for _lib in [os.path.join(SCRIPT_DIR, 'core'),
+              os.path.join(SCRIPT_DIR, '..', 'core'),
+              os.path.join(SCRIPT_DIR, 'lib'),
               os.path.join(SCRIPT_DIR, '..', 'lib')]:
     if os.path.isfile(os.path.join(_lib, 'config_loader.py')):
         sys.path.insert(0, _lib)
@@ -401,6 +403,11 @@ def main():
 
     for proj in projects:
         if not proj.get('enabled', True):
+            continue
+        # 宝塔通道托管组件（baotaSite/baotaProject）的路由由面板站点 +
+        # 原生反向代理全权管理，default.conf 不再生成对应 location，
+        # 避免「工具箱生成的 conf」与「面板管理的站点」双头打架。
+        if proj.get('baotaSite') or proj.get('baotaProject'):
             continue
         nginx = proj.get('nginx')
         if not nginx:

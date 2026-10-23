@@ -2,12 +2,27 @@
 # ═══════════════════════════════════════════════════════════════
 # 06-fix-ssl-cert.sh — SSL 证书签发 / 自动续签（acme.sh + webroot 验证）
 #
-# 适用：服务器 A（zhuochou.xyz）/ 服务器 B（deepquant.club）
+# 适用：服务器 A（zhuochou.xyz）/ 服务器 B（deepquant.club）/ 服务器 C（zhouchou.net，见下方★注）
 # 用法（在目标服务器上执行，按需覆盖变量）：
 #   DOMAIN=deepquant.club \
 #   EXTRA_DOMAINS="www.deepquant.club mail.deepquant.club" \
 #   CERT_NAMES="www.deepquant.club mail.deepquant.club" \
 #   bash 06-fix-ssl-cert.sh
+#
+# ★服务器C注（2026-10-20）：C 已有 acme.sh ECC 证书（zhouchou.net_ecc），
+#   2026-10-20 已扩为三域合一（SAN: zhouchou.net + www + mail，至 2027-01-18），
+#   同步机制按本脚本对齐：/root/scripts/bt-cert-sync.sh + reloadcmd
+#   （网站 vhost / 面板 / 邮局三处，日志 /var/log/cert-sync.log）。
+#   邮件侧接管记录（照 B 抄）：
+#   - dovecot 10-ssl.conf → /www/server/panel/plugin/mail_sys/cert/zhouchou.net/{fullchain.pem,privkey.pem}
+#   - postfix main.cf → smtpd_tls_chain_files = privkey.pem,fullchain.pem（同目录），
+#     smtpd_tls_cert_file/key_file 已清空（原 snakeoil 自签）
+#   - master.cf smtps(465) 段已启用 -o smtpd_tls_wrappermode=yes（插件模板默认注释，465 明文坑）
+#   - SNI 接管：/etc/postfix/vmail_ssl.map + tls_server_sni_maps=texthash:（勿用 hash:，
+#     postfix 读 hash .db 的路径 value 报 malformed BASE64；面板SSL列判断=证书文件存在+map含域名；
+#     ⚠️勿在宝塔邮局面板点"添加证书"，会重写 map 并改回 hash 类型）
+#   本脚本不支持 ECC，直接在 C 重跑会 --force 签发一张新 RSA 证书（生成
+#   zhouchou.net/ 目录，与 _ecc 并存），造成双证书谱系——勿在 C 重跑本脚本。
 #
 # 做了什么：
 #   1. 备份现有证书到 /www/backup/cert-<日期>
@@ -15,6 +30,8 @@
 #   3. nginx 80 端口块插入 /.well-known/acme-challenge/ 验证路径（幂等）
 #   4. 安装 acme.sh（幂等），用 Let's Encrypt 签发证书
 #   5. 生成通用续签同步脚本 /root/scripts/bt-cert-sync.sh（幂等重写）
+#   5b. 幂等登记宝塔邮局 SNI map（vmail_ssl.map 路径格式 + texthash，
+#       首签同步邮局 pem 副本并重启 dovecot/postfix）——2026-10-20 新增
 #   6. 安装证书到宝塔证书目录（多个目录同步同一张证书）
 #   7. reload nginx + 同步面板/邮局副本
 #   8. acme.sh 自带每日续签 cron（到期前自动续，续签后经 reloadcmd
@@ -144,6 +161,7 @@ log "签发证书：${DOMAIN} ${EXTRA_DOMAINS}"
   || die "证书签发失败（检查域名解析是否指向本机、80 端口是否放行）"
 
 # ── 6a. 生成续签同步脚本（网站/面板/邮局三处副本，幂等重写）──
+PRIMARY_NAME=$(echo "${CERT_NAMES}" | awk '{print $1}')
 SYNC_SCRIPT="/root/scripts/bt-cert-sync.sh"
 mkdir -p /root/scripts
 cat > "${SYNC_SCRIPT}" <<'SYNC_EOF'
@@ -183,11 +201,55 @@ fi
 echo "[$(date '+%F %T')] cert sync done" >> "$LOG"
 SYNC_EOF
 chmod +x "${SYNC_SCRIPT}"
+
+# 追加：其余站点证书副本目录的续期刷新（主目录由 --install-cert 直更；
+# CERT_NAMES 中非主目录首次签发时复制，续期时由此段刷新，防止多站点副本过期）
+cat >> "${SYNC_SCRIPT}" <<APPEND_EOF
+
+# 4) 其余站点证书副本目录（CERT_NAMES 中非主目录）
+for name in ${CERT_NAMES}; do
+  [ "\$name" = "${PRIMARY_NAME}" ] && continue
+  D="${CERT_BASE}/\$name"
+  [ -d "\$D" ] || continue
+  cp -f "\$SRC/fullchain.cer" "\$D/fullchain.pem"
+  cp -f "\$SRC/${DOMAIN}.key" "\$D/privkey.pem"
+  cp -f "\$SRC/${DOMAIN}.cer" "\$D/cert.pem" 2>/dev/null || true
+  chmod 600 "\$D"/*.pem
+  echo "[\$(date '+%F %T')] synced extra cert dir \$D" >> "\$LOG"
+done
+APPEND_EOF
 bash -n "${SYNC_SCRIPT}" || die "同步脚本语法错误"
 log "续签同步脚本就绪：${SYNC_SCRIPT}（覆盖 网站/面板/邮局 三处）"
 
+# ── 6a-2. 宝塔邮局 SNI map（幂等，2026-10-20 新增）──────────
+# 背景：面板 SSL 状态与 postfix SNI 匹配都依赖 /etc/postfix/vmail_ssl.map，
+# 旧版邮局插件会内嵌 PEM 进 hash .db（续签后 25 口永远吐旧证书），
+# 新装邮局则 map 缺失（面板显示"添加证书"）。此处幂等登记为路径格式 +
+# texthash（直读文本、免 postmap、pem 更新即生效）。
+# ⚠️ 不要在宝塔邮局面板点"添加证书"——会重写 map 并改回 hash 类型。
+if [ -d /www/server/panel/plugin/mail_sys ]; then
+  MAIL_CERT_DIR_6A2="/www/server/panel/plugin/mail_sys/cert/${DOMAIN}"
+  mkdir -p "${MAIL_CERT_DIR_6A2}"
+  VMAP="/etc/postfix/vmail_ssl.map"
+  VMAP_CHANGED=0
+  touch "${VMAP}"
+  for md in "${DOMAIN}" "mail.${DOMAIN}"; do
+    if ! grep -q "^${md} " "${VMAP}"; then
+      echo "${md} ${MAIL_CERT_DIR_6A2}/privkey.pem ${MAIL_CERT_DIR_6A2}/fullchain.pem" >> "${VMAP}"
+      VMAP_CHANGED=1
+    fi
+  done
+  chmod 600 "${VMAP}"
+  postconf -e "tls_server_sni_maps = texthash:${VMAP}"
+  if [ "${VMAP_CHANGED}" = "1" ]; then
+    postfix reload 2>/dev/null || systemctl reload postfix || true
+    log "邮局 SNI map 已登记（${DOMAIN} + mail.${DOMAIN}，texthash）"
+  else
+    log "邮局 SNI map 已存在且含所需域名，跳过"
+  fi
+fi
+
 # ── 6b. 安装证书到宝塔目录 ──────────────────────────────────
-PRIMARY_NAME=$(echo "${CERT_NAMES}" | awk '{print $1}')
 PRIMARY_DIR="${CERT_BASE}/${PRIMARY_NAME}"
 mkdir -p "${PRIMARY_DIR}"
 
@@ -210,6 +272,20 @@ for name in ${CERT_NAMES}; do
   log "已同步证书副本到 ${D}"
 done
 chmod 600 "${PRIMARY_DIR}"/*.pem
+
+# ── 6b-2. 首签同步邮局证书目录（幂等，2026-10-20 新增）──────
+# mail_sys 证书目录的 pem 由本脚本补齐（旧版依赖插件生成，首签会落空）；
+# 续签时由 bt-cert-sync.sh 第3段刷新并重启 dovecot/postfix。
+if [ -d /www/server/panel/plugin/mail_sys ]; then
+  MD_CERT="/www/server/panel/plugin/mail_sys/cert/${DOMAIN}"
+  if [ ! -f "${MD_CERT}/fullchain.pem" ]; then
+    cp -f "${PRIMARY_DIR}/fullchain.pem" "${MD_CERT}/fullchain.pem"
+    cp -f "${PRIMARY_DIR}/privkey.pem"   "${MD_CERT}/privkey.pem"
+    chmod 600 "${MD_CERT}"/fullchain.pem "${MD_CERT}"/privkey.pem
+    systemctl restart dovecot postfix 2>/dev/null || true
+    log "已首签同步邮局证书到 ${MD_CERT} 并重启 dovecot/postfix"
+  fi
+fi
 
 # ── 7. reload 并验证 ───────────────────────────────────────
 systemctl reload nginx || nginx -s reload || true

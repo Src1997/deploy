@@ -6,7 +6,7 @@
 #           confirm_rollback_plan, rollback_projects
 #
 # Depends on: BACKUP_BASE, MAX_BACKUPS, TIMESTAMP, DEPLOY_PATH, PROJECT_KIND,
-#             SERVICES, HEALTH_URL, NGINX_RELOAD, ROLLBACK_VERSION,
+#             SERVICES, HEALTH_URL, PROJECT_KIND, ROLLBACK_VERSION,
 #             ROLLBACK_PICK_LATEST, ASSUME_YES, DEPLOY_DRY_RUN, NO_RESTART
 
 has_backups() {
@@ -149,7 +149,7 @@ apply_rollback_one() {
     parent_dir=$(dirname "$target_dir")
     mkdir -p "$parent_dir"
     # 只清「代码」部分，保留 .venv / .env / logs / data —— 与部署路径
-    # （deploy-kinds.sh 的 find 排除）保持一致。
+    # （kind 层 python 清空保留名单的 find 排除）保持一致。
     # 原来的 rm -rf "$target_dir" 会连 .venv 一起删，而备份包（backup_backend）
     # 里并不含 .venv，回滚后 Python 服务必然起不来，data/ 里的运行时数据也不可恢复；
     # 且 rm -rf 发生在解压之前，一旦解压失败就是「代码全损」。
@@ -168,12 +168,13 @@ apply_rollback_one() {
         warn "DEPLOY_DRY_RUN=1：跳过服务重启"
         return 0
     fi
-    if [ "${NGINX_RELOAD[$name]}" = "true" ]; then
-        nginx_reload
+    # 路由收口 + 服务重启全部走通道动词（v2 所有权：操作归通道）
+    if [ "${PROJECT_KIND[$name]:-}" = "frontend" ]; then
+        channel_routing_sync || warn "路由收口未完成（宝塔通道请到面板检查反代）"
     fi
     local svc
     for svc in ${SERVICES[$name]}; do
-        [ -n "$svc" ] && restart_service "$svc"
+        [ -n "$svc" ] && { channel_service_restart "$svc" || warn "$svc 重启失败"; }
     done
     # ★ 回滚闭环：健康检查失败必须让整个回滚被计为失败（返回 1 →
     #   rollback_projects 计入 failed → 退出码非零），而不是静默 warn 后算成功。

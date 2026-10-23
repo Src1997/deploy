@@ -13,7 +13,7 @@
 
 | 机器 | 公网 endpoint | 隧道 IP | 公钥 | 监听端口 | 状态 |
 |------|---------------|---------|------|----------|------|
-| server-a（阿里云 HK，121.41.44.216） | 121.41.44.216:51820 | 10.10.0.1/24 | `4hVZp8G+XBF1QYIrBudpnR2gWYrvDzpdHZBt6syrIR4=` | 51820/udp | 活跃（2026-10-15 建） |
+| server-a（阿里云 HK，121.41.44.216） | 121.41.44.216:51820 | 10.10.0.1/24 | `4hVZp8G+XBF1QYIrBudpnR2gWYrvDzpdHZBt6syrIR4=` | 51820/udp | **废弃**（2026-10-22，服务器已弃用） |
 | server-b（亿速云 HK，103.100.211.12） | 103.100.211.12:51820 | 10.10.0.2/24 | `i3T9Buyn2mLcbLHWE8WWJ/ViJ7bWKCNHlriXiC/JUUc=` | 51820/udp | 活跃（2026-10-15 建） |
 | server-c（云商学院，177.4.41.137） | 177.4.41.137:51820 | 10.10.0.3/24 | `iHW0ZTjo4rSDVJbh/BpGYOkpTcohqCup9mcIbckDWgQ=` | 51820/udp | 活跃（2026-10-19 建，buster 5.10 内核） |
 

@@ -30,6 +30,7 @@ for arg in "$@"; do
         --infra)    MODE="infra" ;;
         --projects) MODE="projects" ;;
         --target=*) TARGET="${arg#--target=}" ;;
+        --only=*)   ONLY="${arg#--only=}" ;;
         --help|-h)  sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "Unknown: $arg (try --help)"; exit 1 ;;
     esac
@@ -135,6 +136,39 @@ PROJECTS=(
     # ★ mcp 需要 5 个环境变量（对齐 B 的 systemd unit）；缺 QUANTDINGER_BASE_URL 会直接退出
     "quantdinger-mcp|${DQ_DIR}|${DQ_VENV}/python -m quantdinger_mcp.server|QUANTDINGER_MCP_TRANSPORT=sse,QUANTDINGER_MCP_HOST=127.0.0.1,QUANTDINGER_MCP_PORT=7800,QUANTDINGER_BASE_URL=http://127.0.0.1:5000,QUANTDINGER_AGENT_TOKEN=${MCP_AGENT_TOKEN:-},PYTHONUNBUFFERED=1"
 )
+
+# ★ BAOTA_MODE=1：主服务由宝塔 Python 项目原生托管，禁止重复注册进
+#   supervisor —— 双轨事故实证（2026-10-20）：两套进程抢同一端口，
+#   宝塔 stop 释放端口的瞬间 supervisor 反抢成功，健康检查被蒙混。
+if [ "${BAOTA_MODE:-0}" = "1" ]; then
+    _KEEP=()
+    for entry in "${PROJECTS[@]}"; do
+        IFS='|' read -r _name _rest <<< "$entry"
+        if [ "$_name" = "quantdinger-backend" ]; then
+            warn "BAOTA_MODE=1 → 跳过 supervisor 注册: $_name（宝塔 Python 项目托管）"
+            continue
+        fi
+        _KEEP+=("$entry")
+    done
+    PROJECTS=("${_KEEP[@]}")
+fi
+
+# --only=<n1,n2>：只处理指定程序（deploy-kinds 从零部署自动调用时按组件过滤）
+if [ -n "${ONLY:-}" ]; then
+    _KEEP=()
+    for entry in "${PROJECTS[@]}"; do
+        IFS='|' read -r _name _rest <<< "$entry"
+        # 逗号分隔白名单；容错空格
+        for want in ${ONLY//,/ }; do
+            if [ "$_name" = "$want" ]; then
+                _KEEP+=("$entry")
+                break
+            fi
+        done
+    done
+    log "--only 过滤: ${ONLY} → ${#_KEEP[@]} 个程序"
+    PROJECTS=("${_KEEP[@]}")
+fi
 
 # ═══════════════════════════════════════════════════════════════
 # 1. Configure infrastructure autostart (Nginx / Redis / PostgreSQL)

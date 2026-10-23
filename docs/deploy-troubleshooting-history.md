@@ -490,3 +490,29 @@ systemctl is-active financial-api financial-crawler financial-worker financial-s
 **修复落地方式**：3 个文件（`rest_client.py` ×2 处、`service.py` ×2 处）本地 repo + B/C 热修（精确字符串替换补丁 + `py_compile` 校验 + supervisor 重启），服务器留 `.bak_fix401`/`.bak_fix403` 备份；**待 financial-api test 分支提交合并 sunrc_test 后重新打包部署**（热修会被下次部署覆盖，务必先入库）。
 
 **C 机证书**：zhouchou.net LE 证书 2026-10-19 01:40 签发（SAN 裸域+www，至 2027-01-17，acme cron 已装）。用户报"不安全"为浏览器在签发前访问自签占位留下的会话例外，清站点数据即消。
+
+### 20. B/C 宝塔全面收编 + html_ conf 命名 + MCP streamable-http + 全面审计（2026-10-22~23）
+
+详细报告：[deploy-audit-20261023.md](./deploy-audit-20261023.md)。此处只记"下次会踩"的点。
+
+**收编期（10-22）**
+- **C 迁移假成功**：tar 上传中断→旧扁平布局解压成功→"部署完成"假象。上传务必 `ssh host "cat > 目标" < 本地`，部署后校验关键文件存在（如 channels/baota-api.py）。
+- **WireGuard 断**：B 的 wg0.conf 缺 C peer（只留了已废弃 A 的 peer）→ 补 peer + `wg syncconf`。收编新机先查两端 peer 对称。
+- **面板建 Python 项目报"端口被占用"**：legacy systemd unit（enabled+Restart=always）抢端口。★接管新机先 `systemctl stop+disable+rm` 旧单元（03-check-components 已有 check_daemon_conflict 巡检）。
+- **面板项目卡"环境安装制作中"**：新建项目异步备环境 >60s，工具箱重试窗口已扩到 30×10s。
+- **C 双 supervisor 实例**：系统级 supervisord 与宝塔插件实例并存，C 的真实守护在系统实例——已归档系统实例 conf.d，统一宝塔实例。
+- **AddDomain/SetSSL API 404**：面板 11.8 API 模式禁部分写操作 → 证书落 `vhost/cert/<站点>/` + 手写 443 块 + acme.sh `--install-cert`（reloadcmd 同步）。
+- **MCP 三连坑**：/mcp 404（SSE 真实端点是 /sse）→ 421（FastMCP 拒非回环 Host，nginx 需 `proxy_set_header Host 127.0.0.1:7800`）→ SSE session POST 挂起（mcp 1.30.0 SSE bug，stdio 对照实验证实）→ **换 streamable-http**；客户端必须带 `Accept: application/json, text/event-stream`（缺则 406）。
+- **supervisor restart 不重读 ini**：改 environment（如 MCP transport）后必须 `reread` + `update` 再 restart。工具箱 `baota_restart_supervisor` 已固化。
+- **pack.ps1 tar 静默失败**：输出"Packed"但文件未刷新 → tar 后新鲜度守卫（mtime+size），失败即中止。
+- **品牌/收藏夹**：zhouchou.net 显示"深量"为浏览器 localStorage 缓存，服务器端 DB `fin_app_configs` 一直正确 → Ctrl+F5。
+
+**审计期（10-23）**
+- **★html_ conf 前缀**：面板对 project_type='html' 的站点，流量限制/网站日志/伪静态/SSL 一律按 `vhost/nginx/html_<名>.conf` 读取（无兜底）——AddSite 旧链路生成无前缀 conf 会导致「配置文件读取错误/站点配置文件丢失/SSL 为空」。B/C 已全量改名对齐；工具箱 `fix_html_conf_naming` 建站自愈。
+- **面板 11.x 站点数据在 `data/db/site.db`**（旧 `data/default.db` 的 sites 表是空的，排查别看错库）。
+- **systemd/cron 残留双轨清除**：B 的 financial 四件套 unit（enabled）+ quantdinger-backend.service.d + crontab @reboot 旧 gunicorn；C 的 financial-api.service。全部备份后清除（/root/systemd-backup-20261023 等）。
+- **暴露面收紧**：B Redis `bind 127.0.0.1 10.10.0.2`（生效配置是宝塔的 `/www/server/redis/redis.conf`，/etc/redis 是系统包残留）；deepquant-backend 改绑 127.0.0.1（源码 gunicorn_config.py 已写回默认值，**源码改动待用户推送**）；deploy.env→600；777 目录→755。
+- **防火墙真相**：B/C 底层均为 ufw active（C 的"裸 iptables"是邮局插件直插的冗余副本）；面板「安全→防火墙」（class/firewallModel）原生管理 ufw，两台统一入口。旧模块 class/firewall_new.py 的 GetList 在 ufw 上有 bug，UI 不用它，直调别踩。
+- **手工调面板 API 姿势**：`eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' deploy.env.server-X)"; export BAOTA_PANEL_URL BAOTA_API_KEY; python3 uploads/dist/channels/baota-api.py <cmd>`——eval 后必须 export（子进程才继承）；ssh 远端命令用单引号包裹（双引号会被本地先展开）。
+- **B deepquant-web conf 曾错指 financial-admin**（rewrite include + 日志路径复制粘贴错误）——deepquant-web 的访问日志一直写进 admin 的文件，已纠正。
+- 符合性自检：`BASE_DOMAIN=<生产域名> bash scripts/tools/check-deploy.sh`（12 组 40 项，终验两台 40/40）。

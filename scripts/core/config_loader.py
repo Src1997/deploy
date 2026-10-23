@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""config_loader.py — Direct TOML config reader (replaces sync-manifest.py + projects.json).
+"""config_loader.py — Direct TOML config reader (v2: intent-based).
 
 Reads project-configs/*.toml on the fly and provides merged manifest data.
 No intermediate file generation — all consumers call this module directly.
@@ -8,11 +8,18 @@ Usage:
     python3 config_loader.py --format json       # Full manifest as JSON (for pack.ps1)
     python3 config_loader.py --format bash-eval  # Bash eval-able assignments (for load-projects.sh)
     python3 config_loader.py --format check      # Validate only, print summary
-    python3 config_loader.py --format nginx      # Nginx-relevant data as JSON
+    python3 config_loader.py --format nginx      # Routing-relevant data as JSON (native/docker)
 
     # Import from Python:
     from config_loader import load_manifest, validate
     manifest = load_manifest(configs_dir)
+
+v2 配置哲学（2026-10-22 重写）：
+    TOML 只声明「意图」（routes / process / companions），不含任何通道字眼；
+    通道（baota/native/docker）各自把意图翻译成自己的实现：
+      routes     → baota: 面板站点反代     native/docker: generate-nginx
+      process    → baota: 宝塔 Python 项目  docker: 容器          native: systemd 单元
+      companions → baota: supervisor 程序   native: systemd 单元  docker: 预留
 
 Dependencies: Python 3.11+ (tomllib in stdlib).
 """
@@ -38,13 +45,12 @@ def load_toml(path: Path) -> dict:
 def find_configs_dir(start: Path) -> Path:
     """Locate project-configs/ by walking up from *start*.
 
-    Works in both source tree (scripts/lib/) and dist/ (dist/lib/).
+    Works in both source tree (scripts/core/) and dist/ (dist/core/).
     """
     for d in [start, start.parent, start.parent.parent, start.parent.parent.parent]:
         candidate = d / "project-configs"
         if candidate.is_dir():
             return candidate
-    # Fallback: assume deploy root is 2 levels up from scripts/lib/
     return start.parent.parent / "project-configs"
 
 
@@ -57,7 +63,6 @@ _KEY_MAP = {
     "root_project": "rootProject",
     "special_headers": "specialHeaders",
     "nginx_mode": "nginxMode",
-    "nginx_reload": "nginxReload",
     "frontend_url": "frontendUrl",
     "www_domain": "wwwDomain",
     "display_name": "displayName",
@@ -102,17 +107,123 @@ def _camel_dict(d: dict) -> dict:
     return {_camel(k): _camel_dict(v) if isinstance(v, dict) else v for k, v in d.items()}
 
 
-# ── Component → manifest entry ─────────────────────────────────────
+# ── routes → 各通道消费格式 ─────────────────────────────────────────
 
-def _build_nginx(component: dict) -> dict | None:
-    nginx_cfg = component.get("nginx", {})
-    if nginx_cfg.get("root_project"):
-        return {"rootProject": True}
-    locs = nginx_cfg.get("locations", [])
-    if not locs:
+_ROUTE_TYPES = ("root", "static", "proxy", "websocket")
+
+
+def _normalize_companions(component: dict, comp_id: str) -> list[dict]:
+    """归一化伴随服务声明。
+
+    两种写法（可混用）：
+      companions = ["quantdinger-mcp"]                          # 纯名字（宝塔/原生语义）
+      companions = [{ name = "quantdinger-mcp",                 # 对象（docker 容器化需要）
+                      cmd  = "python -m quantdinger_mcp.server",
+                      port  = 7800 }]
+    统一输出：[{name, cmd(""), port("")}]；宝塔/原生通道只读 name。
+    """
+    out = []
+    for c in component.get("companions", []) or process_companions_fallback(component):
+        if isinstance(c, str):
+            out.append({"name": c, "cmd": "", "port": ""})
+        elif isinstance(c, dict) and c.get("name"):
+            out.append({
+                "name": c["name"],
+                "cmd": str(c.get("cmd", "")),
+                "port": str(c.get("port", "")),
+            })
+        else:
+            raise ValueError(f"[{comp_id}] 非法 companion 声明: {c!r}（需名字字符串或 {name,cmd,port} 表）")
+    return out
+
+
+def process_companions_fallback(component: dict) -> list:
+    """★TOML 陷阱兜底：companions 误写在 [components.process] 段内会被吞进 process。"""
+    proc = component.get("process", {}) or {}
+    return proc.get("companions", []) or []
+
+
+def _normalize_routes(component: dict, comp_id: str) -> list[dict]:
+    """归一化组件路由声明为统一 route 列表。
+
+    route: {path, type, target?, spa?}
+      type=root     根站点（native: root location；baota: 主站点）
+      type=static   静态资源（spa=SPA 回退）
+      type=proxy    HTTP 反代（target=完整上游 URL，含上游路径）
+      type=websocket WS 反代（同 proxy + WS 头）
+    """
+    routes = []
+    for r in component.get("routes", []):
+        rtype = r.get("type", "static")
+        if rtype not in _ROUTE_TYPES:
+            raise ValueError(f"[{comp_id}] 非法 route type: {rtype}（可选: {'/'.join(_ROUTE_TYPES)}）")
+        route = {"path": r.get("path", ""), "type": rtype}
+        if rtype in ("proxy", "websocket"):
+            if not r.get("target"):
+                raise ValueError(f"[{comp_id}] route {r.get('path')} 缺少 target")
+            route["target"] = r["target"]
+        if rtype in ("root", "static"):
+            route["spa"] = bool(r.get("spa", False))
+        routes.append(route)
+    return routes
+
+
+def _split_target(target: str) -> tuple[str, str]:
+    """http://127.0.0.1:5000/api/ → ('http://127.0.0.1:5000', '/api/')"""
+    m = re.match(r"^(https?://[^/]+)(/.*)?$", target)
+    if not m:
+        return target, ""
+    return m.group(1), m.group(2) or ""
+
+
+def _companion_services_yaml(companions: list[dict]) -> str:
+    """docker compose services 段：有 cmd 意图的 companion → 独立容器（host 网络）。
+    纯名字形式（无 cmd）的 companion 无容器化意图 → 跳过（宝塔/原生通道语义）。"""
+    blocks = []
+    for c in companions:
+        if not c.get("cmd"):
+            continue
+        cmd = c["cmd"].replace(".venv/bin/", "")
+        lines = [
+            f"  {c['name']}:",
+            "    build: .",
+            f"    container_name: {c['name']}",
+            "    restart: unless-stopped",
+            "    network_mode: host",
+            f'    command: ["bash", "-c", "{cmd}"]',
+            "    env_file:",
+            "      - path: .env",
+            "        required: false",
+        ]
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
+
+
+def _routes_to_nginx(routes: list[dict]) -> dict | None:
+    """routes → generate-nginx.py 消费的 nginx JSON（native/docker 路由后端）。"""
+    if not routes:
         return None
-    return {"locations": [_camel_dict(loc) for loc in locs]}
+    if any(r["type"] == "root" for r in routes):
+        return {"rootProject": True}
+    locations = []
+    for r in routes:
+        if r["type"] in ("proxy", "websocket"):
+            t_host, t_path = _split_target(r["target"])
+            locations.append({
+                "path": r["path"],
+                "type": r["type"],
+                "proxyTarget": t_host,
+                "proxyPath": t_path or r["path"],
+            })
+        else:  # static
+            loc = {"path": r["path"], "type": "static"}
+            if r.get("spa"):
+                loc["spaFallback"] = True
+            locations.append(loc)
+    return {"locations": locations}
 
+
+# ── Component → manifest entry ─────────────────────────────────────
 
 def _component_to_entry(
     component: dict,
@@ -124,6 +235,9 @@ def _component_to_entry(
     kind = component.get("kind", "frontend")
     comp_id = component["id"]
 
+    process = component.get("process", {}) or {}
+    routes = _normalize_routes(component, comp_id)
+
     entry = {
         "id": comp_id,
         "project": project_id,
@@ -133,18 +247,28 @@ def _component_to_entry(
         "sourcePath": component.get("source_path", ""),
         "publicUrl": component.get("public_url", ""),
         "deployPath": component.get("deploy_path", ""),
-        "services": component.get("services", []),
         "healthUrl": component.get("health_url", ""),
-        "nginxReload": component.get("nginx_reload", False),
-        "deployHook": component.get("deploy_hook", ""),
         "venvShared": component.get("venv_shared", False),
         "postDeployCheckPath": component.get("post_deploy_check_path", ""),
         "webPath": component.get("web_path", ""),
+        "deployHook": component.get("deploy_hook", ""),
+        # 前端站点名（宝塔通道消费；面板要求域名格式，默认 <id>.local）
+        "siteName": component.get("site_name", f"{comp_id}.local"),
+        # ── 意图模型（v2）：通道无关 ──
+        "routes": routes,
+        "process": {
+            "port": process.get("port", ""),
+            "cmd": process.get("cmd", ""),
+            "migrate": process.get("migrate", ""),
+            # java 专用：jar 相对 deployPath / JDK bin 绝对路径
+            "jar": process.get("jar", ""),
+            "jdk": process.get("jdk", ""),
+        },
+        # companions 归一化（str/对象混用 → {name,cmd,port}；含 process 段误写兜底）
+        "companions": _normalize_companions(component, comp_id),
+        # 反代清单（"目录|目标URL"）——由聚合 pass 填充（见 load_manifest）
+        "proxySpecs": [],
     }
-
-    nginx = _build_nginx(component)
-    if nginx is not None:
-        entry["nginx"] = nginx
 
     if kind == "frontend":
         b = component.get("build", {})
@@ -172,46 +296,6 @@ def _component_to_entry(
             build["jarPattern"] = b["jar_pattern"]
         entry["build"] = build
 
-    elif kind == "go":
-        b = component.get("build", {})
-        build = {
-            "buildCommand": b.get("build_command", "go build"),
-            "artifactPattern": b.get("artifact_pattern", f"{comp_id}-*.tar.gz"),
-            "includeFiles": list(b.get("include_files", [])),
-            "includeEnv": list(b.get("include_env", [])),
-            "keyFiles": list(key_files),
-        }
-        if b.get("binary_name"):
-            build["binaryName"] = b["binary_name"]
-        if b.get("binary_dir"):
-            build["binaryDir"] = b["binary_dir"]
-        entry["build"] = build
-
-    elif kind == "nodejs":
-        pack = component.get("pack", {})
-        b = component.get("build", {})
-        nodejs_defaults = shared_defaults.get("nodejs_defaults", {})
-        mode = pack.get("package_mode", "app-package")
-        artifact_pattern = pack.get("artifact_pattern", f"{comp_id}-*.tar.gz")
-        exclude_dirs = list(nodejs_defaults.get("exclude_dirs", []))
-        exclude_dirs.extend(pack.get("extra_exclude_dirs", []))
-        exclude_files = list(nodejs_defaults.get("exclude_files", []))
-        exclude_files.extend(pack.get("extra_exclude_files", []))
-        include_files = list(key_files) + list(pack.get("include_files", []))
-        include_env = list(pack.get("include_env", []))
-        build = {
-            "mode": mode,
-            "packageManager": b.get("package_manager", "npm"),
-            "buildScript": b.get("build_script", ""),
-            "artifactPattern": artifact_pattern,
-            "excludeDirs": exclude_dirs,
-            "excludeFiles": exclude_files,
-            "keyFiles": list(key_files),
-            "includeFiles": list(pack.get("include_files", [])),
-            "includeEnv": include_env,
-        }
-        entry["build"] = build
-
     else:  # python
         pack = component.get("pack", {})
         python_defaults = shared_defaults.get("python_defaults", {})
@@ -230,7 +314,7 @@ def _component_to_entry(
             "excludeDirs": exclude_dirs,
             "excludeFiles": exclude_files,
             "keyFiles": list(key_files),
-            "includeFiles": list(pack.get("include_files", [])),
+            "includeFiles": include_files,
             "includeEnv": include_env,
             "extraSources": extra_sources,
         }
@@ -310,7 +394,6 @@ def load_manifest(configs_dir: Path) -> dict:
     shared_defaults = {
         "python_defaults": shared.get("python_defaults", {}),
         "java_defaults": shared.get("java_defaults", {}),
-        "go_defaults": shared.get("go_defaults", {}),
         "nodejs_defaults": shared.get("nodejs_defaults", {}),
     }
     shared_servers = shared.get("servers", {})
@@ -331,6 +414,29 @@ def load_manifest(configs_dir: Path) -> dict:
                 comp, project_id, project_display_name,
                 key_files, shared_defaults,
             ))
+
+    # ── 反代聚合 pass（v2 语义修正）──
+    # proxy/websocket 路由声明在上游（backend）组件，但反代实体属于前端站点。
+    # 规则：项目内全部 proxy 路由 → 挂到项目主前端站点
+    #      （有 type=root 路由的前端优先，否则第一个前端）。
+    by_project: dict[str, list[dict]] = {}
+    for p in projects:
+        by_project.setdefault(p["project"], []).append(p)
+    for projs in by_project.values():
+        specs = [
+            f"{r['path']}|{r['target']}"
+            for comp in projs for r in comp.get("routes", [])
+            if r["type"] in ("proxy", "websocket")
+        ]
+        if not specs:
+            continue
+        frontends = [c for c in projs if c["kind"] == "frontend"]
+        if not frontends:
+            continue
+        main_fe = next((c for c in frontends
+                        if any(r["type"] == "root" for r in c.get("routes", []))),
+                       frontends[0])
+        main_fe["proxySpecs"] = specs
 
     return {
         "version": defaults.get("version", 1),
@@ -359,7 +465,7 @@ def validate(manifest: dict) -> list[str]:
             errors.append(f"Duplicate project id: {pid}")
         seen_ids.add(pid)
         kind = p.get("kind", "")
-        if kind not in ("frontend", "python", "java", "go", "nodejs"):
+        if kind not in ("frontend", "python", "java"):
             errors.append(f"[{pid}] Invalid kind: {kind}")
         if not p.get("sourcePath"):
             errors.append(f"[{pid}] Missing sourcePath")
@@ -374,6 +480,12 @@ def validate(manifest: dict) -> list[str]:
                 errors.append(f"[{pid}] {kind} missing build.artifactPattern")
             if kind == "python" and not build.get("mode"):
                 errors.append(f"[{pid}] Python missing build.mode")
+        # process 校验：cmd 与 port 必须成对出现
+        proc = p.get("process", {})
+        if bool(proc.get("cmd")) != bool(proc.get("port")):
+            errors.append(f"[{pid}] process.port 与 process.cmd 必须同时配置（或都不配）")
+        if process_companions_fallback({"process": proc}) and not p.get("companions"):
+            errors.append(f"[{pid}] companions 误写在 [components.process] 段内，请移到组件根级（process 段之前）")
     return errors
 
 
@@ -385,20 +497,19 @@ def to_bash_eval(manifest: dict, project_base: str = "") -> str:
     ws = manifest.get("workspaceRoot", "")
     lines = []
 
-    # Declare associative arrays (idempotent with -gA)
     lines.append("declare -gA DEPLOY_PATH ARTIFACT_NAME SERVICES HEALTH_URL "
-                 "NGINX_RELOAD DEPLOY_HOOK PROJECT_KIND PROJECT_DISPLAY_NAME "
+                 "PROJECT_KIND PROJECT_DISPLAY_NAME "
                  "PUBLIC_URL PROJECT_ROOT VENV_SHARED PROJECT_ID "
-                 "POST_DEPLOY_CHECK_PATH WEB_PATH")
+                 "POST_DEPLOY_CHECK_PATH WEB_PATH DEPLOY_HOOK "
+                 "PROC_PORT PROC_CMD PROC_MIGRATE PROC_JAR PROC_JDK COMPANIONS ROUTES_JSON "
+                 "SITE_NAME PROXY_SPECS COMPANION_JSON COMPANION_SERVICES")
 
-    # Collect enabled project IDs
     enabled = [p for p in manifest["projects"] if p.get("enabled", True)]
     ids = " ".join(p["id"] for p in enabled)
     lines.append(f"PROJECT_IDS={shlex.quote(ids)}")
     lines.append(f"WORKSPACE_ROOT={shlex.quote(ws)}")
     lines.append(f"PROJECT_BASE={shlex.quote(pb)}")
 
-    # Per-project associative arrays
     for p in enabled:
         pid = p["id"]
         dp = p.get("deployPath", "")
@@ -408,32 +519,56 @@ def to_bash_eval(manifest: dict, project_base: str = "") -> str:
         pat = p.get("build", {}).get("artifactPattern", "")
         lines.append(f"ARTIFACT_NAME[{pid}]={shlex.quote(art or pat)}")
 
-        svcs = " ".join(p.get("services", []))
-        lines.append(f"SERVICES[{pid}]={shlex.quote(svcs)}")
+        # SERVICES（兼容派生数组）= 主组件（有 process 时）+ companions
+        proc = p.get("process", {})
+        svc_list = ([pid] if proc.get("cmd") else []) + [c["name"] for c in p.get("companions", [])]
+        lines.append(f"SERVICES[{pid}]={shlex.quote(' '.join(svc_list))}")
+
         lines.append(f"HEALTH_URL[{pid}]={shlex.quote(p.get('healthUrl', ''))}")
-        lines.append(f"NGINX_RELOAD[{pid}]={'true' if p.get('nginxReload') else 'false'}")
-        lines.append(f"DEPLOY_HOOK[{pid}]={shlex.quote(p.get('deployHook', ''))}")
         lines.append(f"PROJECT_KIND[{pid}]={shlex.quote(p.get('kind', ''))}")
         lines.append(f"PROJECT_DISPLAY_NAME[{pid}]={shlex.quote(p.get('displayName', ''))}")
         lines.append(f"PUBLIC_URL[{pid}]={shlex.quote(p.get('publicUrl', ''))}")
-        lines.append(f"PROJECT_ROOT[{pid}]={'true' if p.get('nginx', {}).get('rootProject') else 'false'}")
+        routes = p.get("routes", [])
+        lines.append(f"PROJECT_ROOT[{pid}]={'true' if any(r['type'] == 'root' for r in routes) else 'false'}")
         lines.append(f"VENV_SHARED[{pid}]={'true' if p.get('venvShared') else 'false'}")
         lines.append(f"PROJECT_ID[{pid}]={shlex.quote(p.get('project', ''))}")
         lines.append(f"POST_DEPLOY_CHECK_PATH[{pid}]={shlex.quote(p.get('postDeployCheckPath', ''))}")
         lines.append(f"WEB_PATH[{pid}]={shlex.quote(p.get('webPath', ''))}")
+        lines.append(f"DEPLOY_HOOK[{pid}]={shlex.quote(p.get('deployHook', ''))}")
+        lines.append(f"SITE_NAME[{pid}]={shlex.quote(p.get('siteName', ''))}")
+        # 反代清单（"目录|目标URL" 空格分隔）——聚合自项目内全部组件的 proxy 路由
+        # （owner=主前端站点，见 load_manifest 聚合 pass；宝塔 CreateProxy 直接消费）
+        lines.append(f"PROXY_SPECS[{pid}]={shlex.quote(' '.join(p.get('proxySpecs', [])))}")
+
+        # 意图模型（v2）
+        proc_port = proc.get("port", "")
+        proc_cmd = proc.get("cmd", "")
+        proc_migrate = proc.get("migrate", "")
+        lines.append(f"PROC_PORT[{pid}]={shlex.quote(str(proc_port))}")
+        lines.append(f"PROC_CMD[{pid}]={shlex.quote(proc_cmd)}")
+        lines.append(f"PROC_MIGRATE[{pid}]={shlex.quote(proc_migrate)}")
+        lines.append(f"PROC_JAR[{pid}]={shlex.quote(proc.get('jar', ''))}")
+        lines.append(f"PROC_JDK[{pid}]={shlex.quote(proc.get('jdk', ''))}")
+        comps = p.get("companions", [])
+        lines.append(f"COMPANIONS[{pid}]={shlex.quote(' '.join(c['name'] for c in comps))}")
+        # 对象形式（docker 容器化消费）：[{name,cmd,port},...]
+        lines.append(f"COMPANION_JSON[{pid}]={shlex.quote(json.dumps(comps, ensure_ascii=True, separators=(',', ':')))}")
+        # 渲染好的 compose services 段（docker 通道直接内插进 docker-compose.yml）
+        lines.append(f"COMPANION_SERVICES[{pid}]={shlex.quote(_companion_services_yaml(comps))}")
+        lines.append(f"ROUTES_JSON[{pid}]={shlex.quote(json.dumps(routes, ensure_ascii=True, separators=(',', ':')))}")
 
     return "\n".join(lines)
 
 
-# ── Nginx-only JSON ────────────────────────────────────────────────
+# ── Nginx-only JSON（native/docker 路由后端消费，形状兼容 v1）────────
 
 def to_nginx_json(manifest: dict) -> str:
-    """Output only nginx-relevant data (projects with nginx + nginxExtras)."""
+    """Output only routing-relevant data (projects with routes + nginxExtras)."""
     nginx_projects = []
     for p in manifest["projects"]:
         if not p.get("enabled", True):
             continue
-        nginx = p.get("nginx")
+        nginx = _routes_to_nginx(p.get("routes", []))
         if nginx:
             nginx_projects.append({
                 "id": p["id"],
@@ -457,7 +592,6 @@ def main():
     parser.add_argument("--configs-dir", default="", help="Path to project-configs/ directory")
     args = parser.parse_args()
 
-    # Locate configs dir
     if args.configs_dir:
         configs_dir = Path(args.configs_dir)
     else:
@@ -472,7 +606,11 @@ def main():
         print(f"[ERR] No project-configs/*/project.toml found", file=sys.stderr)
         sys.exit(1)
 
-    manifest = load_manifest(configs_dir)
+    try:
+        manifest = load_manifest(configs_dir)
+    except ValueError as e:
+        print(f"[ERR] {e}", file=sys.stderr)
+        sys.exit(1)
 
     errors = validate(manifest)
     if errors:
@@ -501,7 +639,6 @@ def main():
         print(to_nginx_json(manifest))
         return
 
-    # json (default)
     print(json.dumps(manifest, ensure_ascii=True, indent=2))
 
 

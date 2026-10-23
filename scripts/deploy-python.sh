@@ -52,14 +52,14 @@ fi
 # Reusing this hook for a new Python/FastAPI project:
 #   1. project-configs/<proj>/project.toml: deploy_hook = "scripts/deploy-python.sh",
 #      设 health_url + services + post_deploy_check_path + web_path（按需）
-#   2. configs/<id>.env.example 模板（占位符 __PG_PASSWORD__ / __PORT__ 等）
-#   3. configs/systemd/<svc>.service 模板（systemd 兜底路径用）
+#   2. assets/<id>.env.example 模板（占位符 __PG_PASSWORD__ / __PORT__ 等）
+#   3. assets/systemd/<svc>.service 模板（systemd 兜底路径用）
 #   4. Supervisor 环境按 05-setup-supervisor.sh 方式注册程序
 #   5. deploy.env 按需覆盖：PKG_DIR / API_PORT / SEED_MODULE / SERVICES 等
 #
 # Process daemon: Supervisor first (repo standard, managed by
 # 05-setup-supervisor.sh), fall back to systemd units rendered from
-# configs/systemd/*.service templates.
+# assets/systemd/*.service templates.
 #
 # This script is idempotent:
 #   - .env is only generated on first deploy (never overwritten)
@@ -158,7 +158,7 @@ POSTGRES_DB="${POSTGRES_DB:-quant_zc}"
 # API 端口（uvicorn 监听 + 健康检查）不写死：按指定来源逐级解析，见 resolve_api_port
 
 # ── 项目参数（按组件约定从 COMPONENT_ID 推导，可经 deploy.env / 环境变量覆盖）──
-# .env 模板文件名（查找顺序：$CONFIGS_SRC → 脚本相对 configs/ → $PKG_DIR/.env.example）
+# .env 模板文件名（查找顺序：$CONFIGS_SRC → 脚本相对 assets/ → $PKG_DIR/.env.example）
 ENV_TEMPLATE="${ENV_TEMPLATE:-${COMPONENT_ID}.env.example}"
 # seed 入口模块（python -m $SEED_MODULE）；未显式设置时在代码同步后自动探测
 # 包内惯例路径 app/db/seed.py / app/db/seed/__main__.py（探测不到 = 跳过 seed）
@@ -182,8 +182,8 @@ resolve_api_port() {
     if [[ ! "$port" =~ ^[0-9]+$ ]]; then
         local t
         for t in "$CONFIGS_SRC/$ENV_TEMPLATE" \
-                 "$PROJECT_BASE/uploads/dist/configs/$ENV_TEMPLATE" \
-                 "$(dirname "${BASH_SOURCE[0]}")/../configs/$ENV_TEMPLATE" \
+                 "$PROJECT_BASE/uploads/dist/assets/$ENV_TEMPLATE" \
+                 "$(dirname "${BASH_SOURCE[0]}")/../assets/$ENV_TEMPLATE" \
                  "$PKG_DIR/.env.example"; do
             [[ -f "$t" ]] || continue
             port=$(grep '^PORT=' "$t" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')
@@ -614,8 +614,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
 
     template=""
     for t in "$CONFIGS_SRC/$ENV_TEMPLATE" \
-             "$PROJECT_BASE/uploads/dist/configs/$ENV_TEMPLATE" \
-             "$(dirname "${BASH_SOURCE[0]}")/../configs/$ENV_TEMPLATE" \
+             "$PROJECT_BASE/uploads/dist/assets/$ENV_TEMPLATE" \
+             "$(dirname "${BASH_SOURCE[0]}")/../assets/$ENV_TEMPLATE" \
              "$PKG_DIR/.env.example"; do
         [ -f "$t" ] && template="$t" && break
     done
@@ -637,8 +637,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
             "$template" > "$ENV_FILE"
         ok ".env generated from template: $template"
     else
-        err "未找到 .env 模板 ${ENV_TEMPLATE}（查找路径：configs/ → PKG_DIR/.env.example）"
-        err "请创建 configs/${ENV_TEMPLATE} 或在 deploy.env 中设置 ENV_TEMPLATE 指向有效模板"
+        err "未找到 .env 模板 ${ENV_TEMPLATE}（查找路径：assets/ → PKG_DIR/.env.example）"
+        err "请创建 assets/${ENV_TEMPLATE} 或在 deploy.env 中设置 ENV_TEMPLATE 指向有效模板"
         exit 1
     fi
 
@@ -867,7 +867,7 @@ fi
 # ── 8. Install/update process daemon config ────────────────────────────────
 # Supervisor 环境下进程配置由 05-setup-supervisor.sh 统一管理（SSOT），此处跳过
 # systemd unit，避免重新制造 05 脚本刚清理掉的守护冲突；无 Supervisor 时回退
-# systemd：从 configs/systemd/*.service 模板渲染（占位符：__PKG_DIR__ /
+# systemd：从 assets/systemd/*.service 模板渲染（占位符：__PKG_DIR__ /
 # __VENV_DIR__ / __APP_NAME__ / __API_PORT__）。
 # Render to temp file, then compare with existing.
 # Only overwrite + daemon-reload when content actually changed.
@@ -882,8 +882,8 @@ install_service() {
     local template=""
     local t
     for t in "${CONFIGS_SRC}/systemd/${name}.service" \
-             "$PKG_DIR/configs/systemd/${name}.service" \
-             "$(dirname "${BASH_SOURCE[0]}")/../configs/systemd/${name}.service"; do
+             "$PKG_DIR/assets/systemd/${name}.service" \
+             "$(dirname "${BASH_SOURCE[0]}")/../assets/systemd/${name}.service"; do
         [ -f "$t" ] && template="$t" && break
     done
     if [ -z "$template" ]; then

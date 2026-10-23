@@ -1,6 +1,6 @@
 # KINDS-CONTRACT — 五种 kind 的双端行为契约
 
-> **用途**：工具箱存在两套 kind 实现——本地打包（`scripts/pack.ps1`，PowerShell）与服务器部署（`scripts/lib/deploy-kinds.sh`，Bash）。
+> **用途**：工具箱存在两套 kind 实现——本地打包（`scripts/pack.ps1`，PowerShell）与服务器部署（`scripts/kind/deploy-kinds.sh`，Bash）。
 > **改任何一端的 kind 行为前，先读本文；改完后必须双端同步，并在本文勾掉核对清单。**
 > 配置 SSOT 是 `project-configs/<项目>/project.toml`，本文只描述"脚本对每个 kind 做什么"。
 
@@ -44,6 +44,37 @@
 | 部署（deploy-kinds.sh） | 解压到 `deploy_path` → 服务器端 `npm ci --production` → 重启服务 |
 | 双端共用字段 | `build_script` / `extra_exclude_dirs` / `include_env` / `services` |
 
+## 宝塔通道（DEPLOY_CHANNEL=baota，2026-10-20 起）
+
+> **方向**（用户定）：所有部署成果必须在宝塔面板原生出现、原生可管理。
+> **2026-10-22 起**：通道体系升级为 native/baota/docker 三通道矩阵，
+> 宝塔为其中之一（主力）；选择器 `DEPLOY_CHANNEL`（兼容 BAOTA_MODE=1），
+> 通道实现统一动词契约，见 **CHANNEL-CONTRACT.md**。
+> **docker 通道定位（用户拍板）**：容器统一维护应用，宿主 nginx 收口路由、
+> PG/Redis 基础设施宿主化——允许配套组件协作，属正式设计。
+> **覆盖范围（用户 2026-10-20 定）：python / java / frontend(html) 三类。**
+> ★docker 与宝塔不共存，不做混合模式。
+> 未启用 BAOTA_MODE 的服务器走旧链路（systemd + generate-nginx），平滑过渡。
+> Shell 侧唯一通道 = `scripts/channel/baota.sh` → `scripts/channel/baota_api.py`（面板 HTTP API，签名 md5(request_time + api.json 的 **token** 字段，单重 md5)；★不是 `key` 字段）。**不直写面板 DB、不手搓站点 nginx conf。**
+
+| TOML 键（components 下） | 生效条件 | 行为 |
+|----|----|----|
+| `baota_site = "<站点名>"`（frontend） | BAOTA_MODE=1 | 站点不存在 → 原生 `AddSite`（project_type=**小写 html**，落点=deployPath）；部署目录以面板 `site-path` 为 SSOT；`.user.ini`（chattr +i 防跨站）先挪开、部署后还原加锁；**不生成/不覆盖站点 nginx conf** |
+| `baota_project = "<项目名>"`（python） | BAOTA_MODE=1 | **缺失 → 从零创建**：venv 注册（本机直调 EnvironmentManager）→ `CreateProject`（pjname/port/stype/path/python_bin/project_cmd）→ `StartProject`；存在 → 原生 `RestartProject`（参数是 `name`）；跳过 systemd service 安装 |
+| `baota_project = "<项目名>"`（java） | BAOTA_MODE=1 | **缺失 → 本机直调 create_project（springboot，建完即启动）**；存在 → restart_project；跳过 systemd service 安装 |
+| `baota_supervisor = "<程序名 空格分隔>"`（python） | BAOTA_MODE=1 | 项目内置伴随服务（如 quantdinger-mcp）由宝塔 supervisor 插件托管，部署后 `supervisorctl restart` |
+| `baota_port` / `baota_cmd`（python、java） | 创建时 | 项目端口 / 启动命令（**venv 内绝对路径**，面板进程 PATH 不含项目 venv） |
+| `baota_jar` / `baota_jdk`（java） | 创建时 | jar 相对 deployPath / JDK bin 路径 |
+
+env 键：`BAOTA_MODE` / `BAOTA_PANEL_URL`（服务器本机 → https://127.0.0.1:<端口>）/
+`BAOTA_API_KEY`（api.json 的 token） / `BAOTA_PYTHON` / `BAOTA_SUPERVISORCTL`。
+面板 api.json 的 `limit_addr` 必须含 127.0.0.1（部署脚本在服务器本机调用）。
+
+**本机直调**：venv 注册与 Java 创建走 subprocess 调面板自带 Python 执行面板源码
+（HTTP 表单传不了真 list / 需要面板内部类），仅在部署机上可用（deploy.sh 恰在服务器执行）。
+
+**nginx 收口**：`generate-nginx.py` 跳过带 `baota_site`/`baota_project` 的组件——它们的路由由面板站点 + 原生反代（`CreateProxy`，conf 落 `vhost/nginx/proxy/<site>/`）管理，default.conf 不再生成对应 location，避免双头打架。
+
 ## 跨 kind 的铁律（双端都要遵守）
 
 1. **同一 `deploy_path` 禁止给两个组件共用**——python 部署先清空 pkg_dir，后部署者会抹掉先部署者（2026-08-24 deepquant-mcp 覆盖 backend 事故，见 deepquant/project.toml 头注记）。
@@ -55,7 +86,7 @@
 ## 双端同步核对清单（改 kind 行为后逐项勾）
 
 - [ ] pack.ps1（PowerShell 端）已改并实测打包
-- [ ] deploy-kinds.sh / deploy-python.sh（Bash 端）已改
-- [ ] 两端读取的字段名一致（`config_loader.py` 的 `_KEY_MAP` snake→camel 映射是否需要新增）
+- [ ] scripts/kind/deploy-kinds.sh + scripts/deploy-python.sh（Bash 端）已改
+- [ ] 两端读取的字段名一致（`scripts/core/config_loader.py` 的 `_KEY_MAP` snake→camel 映射是否需要新增）
 - [ ] `tests/run-all.sh` 全绿
 - [ ] 真实部署一次验证（dist/lib 会随包同步到服务器，无需手动 scp lib）

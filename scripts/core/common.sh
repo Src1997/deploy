@@ -24,15 +24,24 @@ banner() { echo -e "\n${CYAN}═════════════════
 _check_script_freshness() {
     local script_dir candidate_dir version_file script_mtime version_ts
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null || return 0
-    # Navigate up to the deploy.sh directory (this file is in lib/)
+    # Navigate up to the deploy.sh directory (this file is in core/)
     script_dir="$(dirname "$script_dir")"
+
+    # ★比较基准 = 正在运行的入口 deploy.sh（不是本文件）；
+    #   入口脚本所在目录若恰好就是 dist 根，说明"跑的就是最新 dist"，跳过该候选
+    #   （否则 dist 内文件 mtime vs dist 自己的 stamp 永远误报 STALE）。
+    local entry_script="${0:-}"
+    local entry_dir=""
+    [ -n "$entry_script" ] && entry_dir="$(cd "$(dirname "$entry_script")" 2>/dev/null && pwd)"
+    script_mtime=$(stat -c %Y "$entry_script" 2>/dev/null || echo 0)
 
     for candidate_dir in "$script_dir" \
                          "$script_dir/.." \
                          "${PROJECT_BASE:-/www/wwwroot/project}/uploads/dist"; do
+        candidate_dir="$(cd "$candidate_dir" 2>/dev/null && pwd)" || continue
+        [ -n "$entry_dir" ] && [ "$candidate_dir" = "$entry_dir" ] && continue
         version_file="$candidate_dir/.scripts-version"
         [ -f "$version_file" ] || continue
-        script_mtime=$(stat -c %Y "${BASH_SOURCE[0]}" 2>/dev/null || stat -f %m "${BASH_SOURCE[0]}" 2>/dev/null || echo 0)
         # 只去掉 CR / BOM / 首尾空白，保留日期中间的空格。
         # 原写法 tr -d '[:space:]' 会把 "2026-09-15 14:22:20" 挤成 "2026-09-1514:22:20"，
         # date -d 解析失败 → version_epoch=0 → 直接 return 0，新鲜度告警永久失效。
@@ -51,7 +60,7 @@ _check_script_freshness() {
             echo -e "\033[33m[!] This deploy.sh last modified: $(date -d "@$script_mtime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'unknown')\033[0m" >&2
             echo -e "\033[33m[!] The dist/ directory contains newer scripts.\033[0m" >&2
             echo -e "\033[33m[!] Quick fix (Windows PowerShell):\033[0m" >&2
-            echo -e "\033[33m[!]   .\scripts\build.ps1 --scripts-only -Upload -Target <target>\033[0m" >&2
+            echo -e "\033[33m[!]   ./scripts/build.ps1 --scripts-only -Upload -Target <target>\033[0m" >&2
             echo -e "\033[33m[!] Or manual: rm -rf dist/ on server, then scp -r dist/ from Windows.\033[0m" >&2
             echo "" >&2
             return 1

@@ -20,7 +20,7 @@
     Layout conventions (preserve directory hierarchy, never flatten includes):
       package/                 # App source + VERSION (when mode = app-package)
       scripts/...              # include_files with scripts/ prefix (kept as-is)
-      configs/...              # include_files with configs/ prefix (kept as-is)
+      configs/...              # include_files with assets/ prefix (kept as-is)
 
       When mode = source-tar: source files are at archive root (no package/ prefix).
       When kind = java/go: artifact + includes at archive root (no package/ prefix).
@@ -49,7 +49,7 @@ $ScriptsDir = $PSScriptRoot
 $DeployDir = Split-Path $ScriptsDir -Parent
 
 # ── Shared constants & helpers (encoding, logging, Get-Python) ──
-. (Join-Path $ScriptsDir 'lib\_ps-common.ps1')
+. (Join-Path $ScriptsDir '_ps-common.ps1')
 
 # ── Workspace root resolution ──
 if ($env:WORKSPACE_ROOT) { $global:WorkspaceRoot = $env:WORKSPACE_ROOT }
@@ -60,7 +60,7 @@ $OutDir = Join-Path $DeployDir 'dist\packages'
 
 # ── Load manifest from TOML configs (via config_loader.py) ──
 function Load-Manifest {
-    $configLoader = Join-Path $ScriptsDir 'lib\config_loader.py'
+    $configLoader = Join-Path $ScriptsDir 'core\config_loader.py'
     if (-not (Test-Path $configLoader)) {
         W-Err "config_loader.py not found: $configLoader"
         exit 1
@@ -123,6 +123,14 @@ function Pack-Frontend {
         }
     }
 
+    # 构建产物预清理（.NET 硬删除）：vite emptyOutDir 清空旧 dist（>50 文件）
+    # 会触发批量删除保护导致构建失败 —— 由工具箱代为清空（2026-10-08 实证坑）
+    $outDir = Join-Path $src $build.distDir
+    if (Test-Path $outDir) {
+        Remove-BuildDir $outDir
+        W-Info "Pre-cleaned build output: $outDir"
+    }
+
     Push-Location $src
     try {
         $pm = if ($build.packageManager) { $build.packageManager } else { "pnpm" }
@@ -171,7 +179,13 @@ function Pack-Frontend {
             W-Err "tar failed for: $id"
             return $false
         }
-        $size = "{0:N1} MB" -f ((Get-Item $tar).Length / 1MB)
+        # ★tar 静默失败防御（2026-10-22 B/C 事故：Packed 假象、文件未写入）
+        $tarItem = Get-Item $tar -ErrorAction SilentlyContinue
+        if (-not $tarItem -or $tarItem.Length -eq 0 -or $tarItem.LastWriteTime -lt (Get-Date).AddMinutes(-2)) {
+            W-Err "tar output NOT refreshed: $tar (mtime: $(if ($tarItem) { $tarItem.LastWriteTime } else { 'missing' })) -- deploy aborted"
+            return $false
+        }
+        $size = "{0:N1} MB" -f ($tarItem.Length / 1MB)
         W-OK "Packed: $($build.artifact) ($size)"
         return $true
     } catch {
@@ -221,7 +235,7 @@ function Pack-Backend {
 
     # ── Create staging directory ──
     $staging = Join-Path $env:TEMP "pack-$id-$timestamp"
-    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+    Remove-BuildDir $staging
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
     $codeRoot = if ($usePackagePrefix) {
@@ -250,7 +264,7 @@ function Pack-Backend {
     # robocopy exit codes: 0-7 = success, 8+ = errors, 16 = serious error
     if ($rc -ge 16) {
         W-Err "robocopy serious error (exit $rc)"
-        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-BuildDir $staging
         return $false
     }
     if ($rc -ge 8) {
@@ -296,7 +310,7 @@ host=$env:COMPUTERNAME
             $rc2 = $LASTEXITCODE
             if ($rc2 -ge 16) {
                 W-Err "robocopy serious error for extraSource $esPath (exit $rc2)"
-                Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-BuildDir $staging
                 return $false
             }
             W-OK "extraSource: $esDest <- $esPath"
@@ -348,7 +362,7 @@ host=$env:COMPUTERNAME
         $items = @(Get-ChildItem -Force | ForEach-Object { $_.Name })
         if ($items.Count -eq 0) {
             W-Err "Staging directory is empty"
-            Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-BuildDir $staging
             return $false
         }
         & tar -czf $tarPath @items
@@ -356,14 +370,20 @@ host=$env:COMPUTERNAME
             W-Err "tar failed for: $id"
             return $false
         }
-        $size = "{0:N1} MB" -f ((Get-Item $tarPath).Length / 1MB)
+        # ★tar 静默失败防御（2026-10-22 B/C 事故：Packed 假象、文件未写入）
+        $tarItem = Get-Item $tarPath -ErrorAction SilentlyContinue
+        if (-not $tarItem -or $tarItem.Length -eq 0 -or $tarItem.LastWriteTime -lt (Get-Date).AddMinutes(-2)) {
+            W-Err "tar output NOT refreshed: $tarPath (mtime: $(if ($tarItem) { $tarItem.LastWriteTime } else { 'missing' })) -- deploy aborted"
+            return $false
+        }
+        $size = "{0:N1} MB" -f ($tarItem.Length / 1MB)
         W-OK "Packed: $tarName ($size)"
     } catch {
         W-Err "tar error: $_"
         return $false
     } finally {
         Pop-Location
-        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-BuildDir $staging
     }
     return $true
 }
@@ -464,7 +484,7 @@ function Pack-Java {
 
     # ── Create staging directory ──
     $staging = Join-Path $env:TEMP "pack-$id-$timestamp"
-    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+    Remove-BuildDir $staging
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
     # ── Copy JAR/WAR to staging root ──
@@ -522,7 +542,7 @@ host=$env:COMPUTERNAME
         $items = @(Get-ChildItem -Force | ForEach-Object { $_.Name })
         if ($items.Count -eq 0) {
             W-Err "Staging directory is empty"
-            Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-BuildDir $staging
             return $false
         }
         & tar -czf $tarPath @items
@@ -530,375 +550,24 @@ host=$env:COMPUTERNAME
             W-Err "tar failed for: $id"
             return $false
         }
-        $size = "{0:N1} MB" -f ((Get-Item $tarPath).Length / 1MB)
+        # ★tar 静默失败防御（2026-10-22 B/C 事故：Packed 假象、文件未写入）
+        $tarItem = Get-Item $tarPath -ErrorAction SilentlyContinue
+        if (-not $tarItem -or $tarItem.Length -eq 0 -or $tarItem.LastWriteTime -lt (Get-Date).AddMinutes(-2)) {
+            W-Err "tar output NOT refreshed: $tarPath (mtime: $(if ($tarItem) { $tarItem.LastWriteTime } else { 'missing' })) -- deploy aborted"
+            return $false
+        }
+        $size = "{0:N1} MB" -f ($tarItem.Length / 1MB)
         W-OK "Packed: $tarName ($size)"
     } catch {
         W-Err "tar error: $_"
         return $false
     } finally {
         Pop-Location
-        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-BuildDir $staging
     }
     return $true
 }
 
-# ── Go packing ──
-# Build with `go build`, then pack the binary + include files.
-# Similar to Java but produces a single binary instead of JAR/WAR.
-# Cross-compilation for Linux server: set GOOS=linux GOARCH=amd64 in build_command.
-function Pack-Go {
-    param($comp)
-
-    $id = $comp.id
-    $build = $comp.build
-    W-Step "Go: $id ($($comp.displayName))"
-
-    $src = Join-Path $global:WorkspaceRoot $comp.sourcePath
-    if (-not (Test-Path $src)) {
-        W-Err "Source not found: $src"
-        return $false
-    }
-
-    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $artifactPattern = if ($build.artifactPattern) { $build.artifactPattern } else { "$id-*.tar.gz" }
-    $tarName = $artifactPattern -replace '\*', $timestamp
-    $tarPath = Join-Path $OutDir $tarName
-
-    # Build command: default "go build", or custom (e.g. cross-compile for Linux)
-    $buildCmd = if ($build.buildCommand) { [string]$build.buildCommand } else { "go build" }
-
-    W-Info "Source:  $src"
-    W-Info "Build:   $buildCmd"
-    W-Info "Output:  $tarName"
-
-    if ($DryRun) {
-        W-Warn "[DryRun] Would run: $buildCmd"
-        $binaryDir = if ($build.binaryDir) { $build.binaryDir } else { "" }
-        W-Warn "[DryRun] Would search binary in: $src/$binaryDir"
-        if ($build.includeEnv) {
-            W-Warn "[DryRun] includeEnv: $($build.includeEnv -join ', ')"
-        }
-        return $true
-    }
-
-    # ── Build ──
-    Push-Location $src
-    try {
-        W-Step "Running: $buildCmd"
-        $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-        Invoke-Expression $buildCmd 2>&1 | ForEach-Object { Write-Host $_ }
-        $ErrorActionPreference = $prev
-        if ($LASTEXITCODE -ne 0) {
-            W-Err "Build failed: $id"
-            return $false
-        }
-    } finally {
-        Pop-Location
-    }
-
-    # ── Find binary ──
-    $binaryDir = if ($build.binaryDir) { Join-Path $src $build.binaryDir } else { $src }
-    if (-not (Test-Path $binaryDir)) {
-        W-Err "Binary directory not found: $binaryDir"
-        return $false
-    }
-
-    $binFile = $null
-    if ($build.binaryName) {
-        # Explicit binary name — look for exact match
-        $binPath = Join-Path $binaryDir $build.binaryName
-        if (Test-Path $binPath) {
-            $binFile = Get-Item $binPath
-        } else {
-            W-Err "Binary not found: $binPath"
-            return $false
-        }
-    } else {
-        # Auto-detect: find newest file with no extension or .exe (Go binary output)
-        $candidates = Get-ChildItem -Path $binaryDir -File |
-            Where-Object {
-                ($_.Extension -eq '' -or $_.Extension -eq '.exe') -and
-                -not $_.Name.StartsWith('.')
-            } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-        if ($candidates) { $binFile = $candidates }
-    }
-
-    if (-not $binFile) {
-        W-Err "No binary found in $binaryDir"
-        return $false
-    }
-    W-OK "Found binary: $($binFile.Name)"
-
-    # ── Create staging directory ──
-    $staging = Join-Path $env:TEMP "pack-$id-$timestamp"
-    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-    New-Item -ItemType Directory -Path $staging -Force | Out-Null
-
-    # ── Copy binary to staging root ──
-    Copy-Item $binFile.FullName (Join-Path $staging $binFile.Name) -Force
-    W-OK "Copied: $($binFile.Name)"
-
-    # ── Write VERSION file ──
-    $versionContent = @"
-project=$id
-built=$timestamp
-host=$env:COMPUTERNAME
-"@
-    [System.IO.File]::WriteAllText((Join-Path $staging 'VERSION'), $versionContent, $global:PS_UTF8_NO_BOM)
-    W-Info "[ok] VERSION"
-
-    # ── Include files (relative to deploy root, preserve paths) ──
-    $allIncludes = @()
-    if ($build.keyFiles) { $allIncludes += @($build.keyFiles) }
-    if ($build.includeFiles) { $allIncludes += @($build.includeFiles) }
-
-    foreach ($f in $allIncludes) {
-        $rel = ($f -replace '\\', '/').TrimStart('/')
-        $fSrc = Join-Path $DeployDir $rel
-        if (-not (Test-Path $fSrc)) {
-            W-Warn "include not found, skipping: $rel"
-            continue
-        }
-        $fDest = Join-Path $staging ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
-        $fDestParent = Split-Path $fDest -Parent
-        if (-not (Test-Path $fDestParent)) {
-            New-Item -ItemType Directory -Path $fDestParent -Force | Out-Null
-        }
-        Copy-Item $fSrc $fDest -Force
-        W-OK "include: $rel"
-    }
-
-    # ── Include env (SECURITY-CRITICAL) ──
-    if ($build.includeEnv) {
-        foreach ($envRel in $build.includeEnv) {
-            $rel = ($envRel -replace '\\', '/').TrimStart('/')
-            $envSrc = Join-Path $DeployDir $rel
-            if (-not (Test-Path $envSrc)) {
-                W-Warn "includeEnv not found, skipping (place real $rel): $envSrc"
-                continue
-            }
-            Copy-Item $envSrc (Join-Path $staging '.env') -Force
-            W-OK "includeEnv -> .env: $rel"
-        }
-    }
-
-    # ── Create tar.gz ──
-    Push-Location $staging
-    try {
-        $items = @(Get-ChildItem -Force | ForEach-Object { $_.Name })
-        if ($items.Count -eq 0) {
-            W-Err "Staging directory is empty"
-            Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-            return $false
-        }
-        & tar -czf $tarPath @items
-        if ($LASTEXITCODE -ne 0) {
-            W-Err "tar failed for: $id"
-            return $false
-        }
-        $size = "{0:N1} MB" -f ((Get-Item $tarPath).Length / 1MB)
-        W-OK "Packed: $tarName ($size)"
-    } catch {
-        W-Err "tar error: $_"
-        return $false
-    } finally {
-        Pop-Location
-        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    return $true
-}
-
-# ── Node.js packing ──
-# Optional build (e.g. NestJS TS -> JS), then source copy (like Python backend).
-# Ships source + package.json + package-lock.json; server runs npm ci --production.
-# Supports SSR frameworks (Next.js, Nuxt SSR) and pure Node.js backends (Express, NestJS).
-function Pack-Nodejs {
-    param($comp)
-
-    $id = $comp.id
-    $build = $comp.build
-    W-Step "Node.js: $id ($($comp.displayName))"
-
-    $src = Join-Path $global:WorkspaceRoot $comp.sourcePath
-    if (-not (Test-Path $src)) {
-        W-Err "Source not found: $src"
-        return $false
-    }
-
-    $mode = if ($build.mode) { [string]$build.mode } else { "app-package" }
-    $usePackagePrefix = ($mode -ne 'source-tar')
-
-    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $artifactPattern = if ($build.artifactPattern) { $build.artifactPattern } else { "$id-*.tar.gz" }
-    $tarName = $artifactPattern -replace '\*', $timestamp
-    $tarPath = Join-Path $OutDir $tarName
-
-    $pm = if ($build.packageManager) { $build.packageManager } else { "npm" }
-
-    W-Info "Source:  $src"
-    W-Info "Mode:    $mode"
-    W-Info "Pkg mgr: $pm"
-    W-Info "Output:  $tarName"
-
-    if ($DryRun) {
-        if ($build.buildScript) {
-            W-Warn "[DryRun] Would run: $pm $($build.buildScript)"
-        }
-        W-Warn "[DryRun] Would pack source + includes"
-        if ($build.includeEnv) {
-            W-Warn "[DryRun] includeEnv: $($build.includeEnv -join ', ')"
-        }
-        return $true
-    }
-
-    # ── Optional build step (e.g. NestJS: npm run build -> dist/) ──
-    if ($build.buildScript) {
-        Push-Location $src
-        try {
-            if (-not (Test-Path 'node_modules')) {
-                $installCmd = switch ($pm) {
-                    "pnpm" { "pnpm install" }
-                    "yarn" { "yarn install" }
-                    "npm"  { "npm install" }
-                    default { "$pm install" }
-                }
-                W-Warn "node_modules missing, running $installCmd..."
-                $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-                Invoke-Expression $installCmd 2>&1 | ForEach-Object { Write-Host $_ }
-                $ErrorActionPreference = $prev
-                if ($LASTEXITCODE -ne 0) { W-Err "$installCmd failed"; return $false }
-            }
-
-            $buildCmd = "$pm $($build.buildScript)"
-            W-Step "Running: $buildCmd"
-            $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-            Invoke-Expression $buildCmd 2>&1 | ForEach-Object { Write-Host $_ }
-            $ErrorActionPreference = $prev
-            if ($LASTEXITCODE -ne 0) {
-                W-Err "Build failed: $id"
-                return $false
-            }
-        } finally {
-            Pop-Location
-        }
-    }
-
-    # ── Create staging directory ──
-    $staging = Join-Path $env:TEMP "pack-$id-$timestamp"
-    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-    New-Item -ItemType Directory -Path $staging -Force | Out-Null
-
-    $codeRoot = if ($usePackagePrefix) {
-        Join-Path $staging 'package'
-    } else {
-        $staging
-    }
-    New-Item -ItemType Directory -Path $codeRoot -Force | Out-Null
-
-    # ── Robocopy source -> codeRoot (with excludes) ──
-    $robArgs = @($src, $codeRoot, '/E')
-    if ($build.excludeDirs) {
-        $robArgs += '/XD'
-        $robArgs += @($build.excludeDirs)
-    }
-    if ($build.excludeFiles) {
-        $robArgs += '/XF'
-        $robArgs += @($build.excludeFiles)
-    }
-    $robArgs += '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS'
-
-    W-Info "Copying source (excluding $($build.excludeDirs.Count) dirs, $($build.excludeFiles.Count) files)..."
-    robocopy @robArgs 2>$null | Out-Null
-    $rc = $LASTEXITCODE
-    if ($rc -ge 16) {
-        W-Err "robocopy serious error (exit $rc)"
-        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-        return $false
-    }
-    if ($rc -ge 8) {
-        W-Warn "robocopy had some copy failures (exit $rc), continuing..."
-    }
-
-    # ── Post-clean: backup/copy files (robocopy Unicode patterns unreliable) ──
-    $fubi = [char]0x526f + [char]0x672c  # "副本"
-    Get-ChildItem -Path $codeRoot -Recurse -File | Where-Object {
-        $_.Name -like '*.bak.*' -or $_.Name -like "*$fubi*"
-    } | ForEach-Object {
-        Remove-Item $_.FullName -Force
-        W-Info "[clean] $($_.FullName.Replace($staging, '').TrimStart('\'))"
-    }
-
-    # ── Write VERSION file ──
-    $versionContent = @"
-project=$id
-built=$timestamp
-host=$env:COMPUTERNAME
-"@
-    [System.IO.File]::WriteAllText((Join-Path $codeRoot 'VERSION'), $versionContent, $global:PS_UTF8_NO_BOM)
-    W-Info "[ok] $(if ($usePackagePrefix) { 'package/VERSION' } else { 'VERSION' })"
-
-    # ── Include files (relative to deploy root, preserve paths) ──
-    $allIncludes = @()
-    if ($build.keyFiles) { $allIncludes += @($build.keyFiles) }
-    if ($build.includeFiles) { $allIncludes += @($build.includeFiles) }
-
-    foreach ($f in $allIncludes) {
-        $rel = ($f -replace '\\', '/').TrimStart('/')
-        $fSrc = Join-Path $DeployDir $rel
-        if (-not (Test-Path $fSrc)) {
-            W-Warn "include not found, skipping: $rel"
-            continue
-        }
-        $fDest = Join-Path $staging ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
-        $fDestParent = Split-Path $fDest -Parent
-        if (-not (Test-Path $fDestParent)) {
-            New-Item -ItemType Directory -Path $fDestParent -Force | Out-Null
-        }
-        Copy-Item $fSrc $fDest -Force
-        W-OK "include: $rel"
-    }
-
-    # ── Include env (SECURITY-CRITICAL) ──
-    if ($build.includeEnv) {
-        foreach ($envRel in $build.includeEnv) {
-            $rel = ($envRel -replace '\\', '/').TrimStart('/')
-            $envSrc = Join-Path $DeployDir $rel
-            if (-not (Test-Path $envSrc)) {
-                W-Warn "includeEnv not found, skipping (place real $rel): $envSrc"
-                continue
-            }
-            Copy-Item $envSrc (Join-Path $codeRoot '.env') -Force
-            W-OK "includeEnv -> .env: $rel"
-        }
-    }
-
-    # ── Create tar.gz ──
-    Push-Location $staging
-    try {
-        $items = @(Get-ChildItem -Force | ForEach-Object { $_.Name })
-        if ($items.Count -eq 0) {
-            W-Err "Staging directory is empty"
-            Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-            return $false
-        }
-        & tar -czf $tarPath @items
-        if ($LASTEXITCODE -ne 0) {
-            W-Err "tar failed for: $id"
-            return $false
-        }
-        $size = "{0:N1} MB" -f ((Get-Item $tarPath).Length / 1MB)
-        W-OK "Packed: $tarName ($size)"
-    } catch {
-        W-Err "tar error: $_"
-        return $false
-    } finally {
-        Pop-Location
-        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    return $true
-}
 
 # ── Pack a single project group ──
 function Pack-Project {
@@ -915,10 +584,6 @@ function Pack-Project {
             if (-not (Pack-Backend $comp)) { $allOk = $false }
         } elseif ($kind -eq 'java') {
             if (-not (Pack-Java $comp)) { $allOk = $false }
-        } elseif ($kind -eq 'go') {
-            if (-not (Pack-Go $comp)) { $allOk = $false }
-        } elseif ($kind -eq 'nodejs') {
-            if (-not (Pack-Nodejs $comp)) { $allOk = $false }
         } else {
             W-Warn "Unknown component kind: $kind ($($comp.id)), skipping"
         }
@@ -1037,10 +702,6 @@ foreach ($comp in $resolvedComponents) {
         $compOk = Pack-Backend $comp
     } elseif ($kind -eq 'java') {
         $compOk = Pack-Java $comp
-    } elseif ($kind -eq 'go') {
-        $compOk = Pack-Go $comp
-    } elseif ($kind -eq 'nodejs') {
-        $compOk = Pack-Nodejs $comp
     } else {
         W-Warn "Unknown component kind: $kind ($cid), skipping"
         continue

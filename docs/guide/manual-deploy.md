@@ -6,6 +6,23 @@
 
 > **正常流程**：首次部署用 [完整部署步骤](./deploy-from-scratch.md)，增量发版用 [增量发版与回滚](./incremental-release.md)。本文仅在脚本异常或需要手动干预时使用。
 
+## ★通道现状（2026-10-23 更新，先读这段）
+
+**B/C 两台已全面宝塔托管**（v2「宝塔就全宝塔」），与本文部分章节的历史背景不同：
+
+| 层 | 现行做法（宝塔通道，主力） | 本文旧内容（native 应急通道，冻结维护） |
+|----|---------------------------|----------------------------------------|
+| Python 主服务 | 宝塔 Python 项目（面板启停/日志） | systemd 单元 → **B/C 已全部清除，禁双轨**（重启抢端口实证） |
+| 伴随服务 | 宝塔 supervisor 插件 | systemd |
+| 前端 | 宝塔 HTML 站点（面板注册） | generate-nginx 直写 |
+| 站点 conf | `vhost/nginx/html_<站点名>.conf`（**必须带 html_ 前缀**） | `vhost/nginx/default.conf` |
+| 路由调整 | 面板 → 站点设置 → 配置文件 | 手编 default.conf |
+
+- **各项目特殊配置、conf 位置、参数调整**：见 `project-configs/<项目>/DEPLOY-NOTES.md`（financial / deepquant / official-site）。
+- 部署后符合性自检：`BASE_DOMAIN=<生产域名> bash scripts/tools/check-deploy.sh`（40 项）。
+- 服务器上手工调面板 API：`eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' /www/wwwroot/project/deploy.env.server-X)"; export BAOTA_PANEL_URL BAOTA_API_KEY; python3 /www/wwwroot/project/uploads/dist/channels/baota-api.py <cmd>`（⚠️eval 后必须 export）。
+- ⚠️**在宝塔托管的机器上执行本文 systemd 章节 = 制造双轨**，仅在 native 应急通道机器（如 VM 试点）使用。
+
 ## 目录
 
 - [前置条件](#前置条件)
@@ -169,7 +186,7 @@ ENV_FILE="$PKG_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
     echo "[*] 生成 .env（首次部署）..."
     # 参见下方「手动生成 .env」章节
-    # 使用 configs/financial-api.env.example 模板 + sed 渲染占位符
+    # 使用 assets/financial-api.env.example 模板 + sed 渲染占位符
 else
     echo "[OK] .env 已存在，保留"
 fi
@@ -271,7 +288,7 @@ fi
 
 ```bash
 if [ ! -f "$PKG_DIR/.env" ]; then
-    # 参见下方「手动生成 .env」章节，使用 configs/deepquant.env.example
+    # 参见下方「手动生成 .env」章节，使用 assets/deepquant.env.example
     echo "[*] 需生成 .env，参见手动生成章节"
 fi
 ```
@@ -280,7 +297,7 @@ fi
 
 ```bash
 # 安装服务（参见下方 systemd 章节）
-cp configs/systemd/quantdinger-backend.service /etc/systemd/system/
+cp assets/systemd/quantdinger-backend.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable quantdinger-backend
 
@@ -297,7 +314,9 @@ curl -sf http://127.0.0.1:5000/api/health | python3 -m json.tool
 
 ## 手动配置 Nginx
 
-### 方式一：动态生成（推荐）
+> ★宝塔通道下站点 conf 为 `vhost/nginx/html_<站点名>.conf`（html_ 前缀必须，面板功能按此读取），路由调整优先走面板「配置文件」编辑器。下述 `default.conf` 方式仅适用于 native 应急通道（default.conf 现为面板默认站点兜底，勿放业务路由）。
+
+### 方式一：动态生成（native 应急通道）
 
 ```bash
 # 从 TOML 配置动态生成 Nginx 配置
@@ -377,11 +396,13 @@ location / {
 
 ## 手动安装 systemd 服务
 
+> ★**仅限 native 应急通道**（冻结维护）。宝塔托管的机器（B/C）**禁止**安装这些单元——systemd 与宝塔 Python 项目/supervisor 双轨会抢端口（Restart=always 反抢实证，崩溃循环 2284 次）。B/C 上的旧单元已于 2026-10-23 清除。v2 下服务模板已迁至 `assets/systemd/`（configs/ 目录已废弃）。
+
 ### financial-api 系列（4 个服务）
 
 ```bash
-# 服务文件在 dist/configs/systemd/ 或 configs/systemd/
-CONFIGS=/www/wwwroot/project/uploads/dist/configs/systemd
+# 服务文件在 dist/assets/systemd/
+CONFIGS=/www/wwwroot/project/uploads/dist/assets/systemd
 
 for svc in financial-api financial-crawler financial-worker financial-streaming; do
     cp "$CONFIGS/${svc}.service" /etc/systemd/system/
@@ -455,7 +476,7 @@ gunzip -c /root/backup_quant_zc_20260728.sql.gz \
 
 ```bash
 PKG_DIR=/www/wwwroot/project/financial/financial-api/package
-TEMPLATE=/www/wwwroot/project/uploads/dist/configs/financial-api.env.example
+TEMPLATE=/www/wwwroot/project/uploads/dist/assets/financial-api.env.example
 
 # 生成 AUTH_SECRET_KEY
 AUTH_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
@@ -467,7 +488,7 @@ SMTP_PASSWORD="你的SMTP密码"
 DOMAIN="example.com"
 WWW_DOMAIN="www.example.com"
 APP_NAME="MyApp"
-SERVER_IP="121.41.44.216"
+SERVER_IP="<服务器IP>"  # B=103.100.211.12 / C=177.4.41.137；旧 A(121.41.44.216) 已于 2026-10-22 废弃
 
 sed -e "s|__PG_PASSWORD__|${PG_PASSWORD}|g" \
     -e "s|__REDIS_PASSWORD__|${REDIS_PASSWORD}|g" \
@@ -487,7 +508,7 @@ chmod 600 "$PKG_DIR/.env"
 
 ```bash
 PKG_DIR=/www/wwwroot/project/deepquant/backend/package
-TEMPLATE=/www/wwwroot/project/uploads/dist/configs/deepquant.env.example
+TEMPLATE=/www/wwwroot/project/uploads/dist/assets/deepquant.env.example
 
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 ADMIN_PASSWORD="你的管理员密码"  # 或随机生成: python3 -c "import secrets; print(secrets.token_urlsafe(16))"

@@ -3,7 +3,7 @@
 #
 # Uses config_loader.py to read project-configs/*.toml directly (no projects.json).
 # Sets: PROJECT_IDS, DEPLOY_PATH[id], ARTIFACT_NAME[id], SERVICES[id],
-#       HEALTH_URL[id], NGINX_RELOAD[id], DEPLOY_HOOK[id], PROJECT_KIND[id],
+#       HEALTH_URL[id], DEPLOY_HOOK[id], PROJECT_KIND[id],
 #       PROJECT_DISPLAY_NAME[id], PUBLIC_URL[id], PROJECT_ROOT[id],
 #       VENV_SHARED[id], PROJECT_ID[id]
 # Also sets: WORKSPACE_ROOT, PROJECT_BASE

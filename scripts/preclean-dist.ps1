@@ -11,7 +11,7 @@
 $dist = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'
 if (-not (Test-Path $dist)) { exit 0 }
 
-$dirs = @('configs', 'lib', 'scripts', 'project-configs')
+$dirs = @('assets', 'configs', 'lib', 'scripts', 'project-configs', 'core', 'kind', 'channel', 'tools', 'ops')
 foreach ($d in $dirs) {
     $p = Join-Path $dist $d
     if (Test-Path $p) {

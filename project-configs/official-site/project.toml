@@ -1,4 +1,4 @@
-# project-configs/official-site/project.toml — 卓筹介绍站
+# project-configs/official-site/project.toml — 卓筹介绍站（v2 意图模型）
 #
 # 单组件项目示例：一个项目也可以只有一个前端组件。
 
@@ -6,12 +6,10 @@
 id = "official-site"
 display_name = "卓筹介绍站"
 
-# ── 关键配置 ──
 [deploy]
 backup_retention = 5
 health_timeout = 30
 
-# ── 组件：介绍站前端 ──
 [[components]]
 id = "official-site"
 kind = "frontend"
@@ -19,7 +17,9 @@ display_name = "卓筹介绍站"
 source_path = "official-site"
 public_url = "/qd/"
 deploy_path = "official-site/dist"
-nginx_reload = true
+routes = [
+    { path = "/qd/", type = "static", spa = true },
+]
 
   [components.build]
   package_manager = "pnpm"
@@ -27,9 +27,4 @@ nginx_reload = true
   dist_dir = "dist"
   artifact = "official-site-dist.tar.gz"
   # 构建期环境文件（VITE_* 等），构建前复制为源码根 .env
-  env_file = "configs/official-site.env"
-
-  [[components.nginx.locations]]
-  path = "/qd/"
-  type = "static"
-  spa_fallback = true
+  env_file = "assets/official-site.env"

@@ -51,10 +51,10 @@ export PATH
 
 # Load deploy.env (optional; probe does not require passwords)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for _env_lib in "$SCRIPT_DIR/lib/load-deploy-env.sh" \
-                "$SCRIPT_DIR/../lib/load-deploy-env.sh"; do
+for _env_lib in "$SCRIPT_DIR/core/load-deploy-env.sh" \
+                "$SCRIPT_DIR/../core/load-deploy-env.sh"; do
     if [ -f "$_env_lib" ]; then
-        # shellcheck source=lib/load-deploy-env.sh
+        # shellcheck source=core/load-deploy-env.sh
         source "$_env_lib"
         load_deploy_env "$(dirname "$_env_lib")/.." || true
         break
@@ -70,9 +70,9 @@ PROJECT_SERVICES=()
 PROJECT_HEALTH=()
 _load_projects_probe() {
     local cl=""
-    for cand in "$SCRIPT_DIR/lib/config_loader.py" \
-                "$SCRIPT_DIR/../lib/config_loader.py" \
-                "$PROJECT_BASE/uploads/dist/lib/config_loader.py"; do
+    for cand in "$SCRIPT_DIR/core/config_loader.py" \
+                "$SCRIPT_DIR/../core/config_loader.py" \
+                "$PROJECT_BASE/uploads/dist/core/config_loader.py"; do
         [ -n "$cand" ] && [ -f "$cand" ] && { cl="$cand"; break; }
     done
     [ -z "$cl" ] && return 0

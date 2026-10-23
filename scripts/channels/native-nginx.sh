@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# lib/nginx.sh — Nginx configuration and deployment for deploy.sh
+# channels/native-nginx.sh — 宿主 nginx 路由后端（native / docker 通道共用）
+#
+# ★2026-10-22 三通道重构：本文件不再是独立通道，是 native/docker 通道共用的
+# 路由后端（generate-nginx 配置生成 + reload），由通道文件负责 source。
+# 宝塔通道（baota.sh）不加载本文件——路由由面板站点 + 原生反代全权管理。
+#
+# 状态：★冻结维护——仅供未迁移到宝塔通道的服务器（A/B）与 docker 通道使用：
+#   - 不新增功能、不修非阻断 bug
+#   - A/B 迁移到宝塔通道后本文件随 native.sh 一起退役
 #
 # Provides: nginx_reload_safe, disable_baota_nginx_conflicts,
 #           sync_nginx, nginx_has_location, deploy_nginx
@@ -65,7 +73,7 @@ disable_baota_nginx_conflicts() {
 
 # -- Generate Nginx config from TOML configs (calls generate-nginx.py) --
 sync_nginx() {
-    local gen_script="$SCRIPT_DIR/generate-nginx.py"
+    local gen_script="$SCRIPT_DIR/tools/generate-nginx.py"
     [ ! -f "$gen_script" ] && { err "generate-nginx.py not found"; return 1; }
 
     local conf_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
@@ -138,7 +146,7 @@ deploy_nginx() {
     log "配置 Nginx..."
     local nginx_target="${NGINX_CONF_TARGET:-/www/server/panel/vhost/nginx/default.conf}"
 
-    local gen_script="$SCRIPT_DIR/generate-nginx.py"
+    local gen_script="$SCRIPT_DIR/tools/generate-nginx.py"
     if [ ! -f "$gen_script" ]; then
         err "generate-nginx.py not found"
         return 1

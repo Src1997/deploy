@@ -39,7 +39,7 @@ $ConfigsDir   = Join-Path $DeployDir 'project-configs'
 $PackagesDir  = Join-Path $DeployDir 'dist\packages'
 
 # ── Shared constants & helpers (encoding, logging, Get-Python) ──
-. (Join-Path $ScriptsDir 'lib\_ps-common.ps1')
+. (Join-Path $ScriptsDir '_ps-common.ps1')
 
 # ── Scan project configs ──
 function Get-ProjectConfigs {
@@ -78,7 +78,7 @@ function Clean-OldArchives {
         $files = $groups[$prefix]
         if ($files.Count -gt $MaxArchivesPerProject) {
             $files | Select-Object -Skip $MaxArchivesPerProject | ForEach-Object {
-                Remove-Item $_.FullName -Force
+                Remove-BuildFile $_.FullName
                 W-Warn "Cleaned old archive: $($_.Name)"
             }
         }
@@ -94,8 +94,8 @@ function Check-DistFreshness {
     # NOTE: pack.ps1 is Windows-only, not copied to dist/ (server doesn't need it)
     $scriptPairs = @(
         @{ Src = Join-Path $ScriptsDir 'deploy.sh';             Dst = Join-Path $DistDir 'deploy.sh' }
-        @{ Src = Join-Path $ScriptsDir 'tools\detect-status.sh'; Dst = Join-Path $DistDir 'detect-status.sh' }
-        @{ Src = Join-Path $ScriptsDir 'tools\generate-nginx.py';Dst = Join-Path $DistDir 'generate-nginx.py' }
+        @{ Src = Join-Path $ScriptsDir 'tools\detect-status.sh'; Dst = Join-Path $DistDir 'tools\detect-status.sh' }
+        @{ Src = Join-Path $ScriptsDir 'tools\generate-nginx.py';Dst = Join-Path $DistDir 'tools\generate-nginx.py' }
         @{ Src = Join-Path $ScriptsDir 'deploy-python.sh';Dst = Join-Path $DistDir 'deploy-python.sh' }
     )
     $stale = $false
@@ -108,34 +108,36 @@ function Check-DistFreshness {
         }
     }
 
-    # -- lib/ directory: compare each file --
-    $libSrc = Join-Path $ScriptsDir 'lib'
-    $libDst = Join-Path $DistDir 'lib'
-    if ((Test-Path $libSrc) -and (Test-Path $libDst)) {
-        Get-ChildItem $libSrc -File | ForEach-Object {
-            $dstFile = Join-Path $libDst $_.Name
-            if (Test-Path $dstFile) {
-                if ($_.LastWriteTime -gt (Get-Item $dstFile).LastWriteTime) {
-                    W-Warn "Source newer than dist: lib/$($_.Name)"
+    # -- core/ kind/ channel/ directories: compare each file --
+    foreach ($layer in 'core', 'kinds', 'channels') {
+        $layerSrc = Join-Path $ScriptsDir $layer
+        $layerDst = Join-Path $DistDir $layer
+        if ((Test-Path $layerSrc) -and (Test-Path $layerDst)) {
+            Get-ChildItem $layerSrc -File | ForEach-Object {
+                $dstFile = Join-Path $layerDst $_.Name
+                if (Test-Path $dstFile) {
+                    if ($_.LastWriteTime -gt (Get-Item $dstFile).LastWriteTime) {
+                        W-Warn "Source newer than dist: $layer/$($_.Name)"
+                        $stale = $true
+                    }
+                } else {
+                    W-Warn "Missing in dist/: $layer/$($_.Name)"
                     $stale = $true
                 }
-            } else {
-                W-Warn "Missing in dist/: lib/$($_.Name)"
-                $stale = $true
             }
         }
     }
 
-    # -- configs/ directory: compare each file recursively --
-    $cfgSrc = Join-Path $DeployDir 'configs'
-    $cfgDst = Join-Path $DistDir 'configs'
+    # -- assets/ directory: compare each file recursively --
+    $cfgSrc = Join-Path $DeployDir 'assets'
+    $cfgDst = Join-Path $DistDir 'assets'
     if ((Test-Path $cfgSrc) -and (Test-Path $cfgDst)) {
         Get-ChildItem $cfgSrc -File -Recurse | ForEach-Object {
             $rel = $_.FullName.Substring($cfgSrc.Length + 1)
             $dstFile = Join-Path $cfgDst $rel
             if (Test-Path $dstFile) {
                 if ($_.LastWriteTime -gt (Get-Item $dstFile).LastWriteTime) {
-                    W-Warn "Source newer than dist: configs/$rel"
+                    W-Warn "Source newer than dist: assets/$rel"
                     $stale = $true
                 }
             }
@@ -148,7 +150,7 @@ function Check-DistFreshness {
 }
 
 # ── Copy deploy assets to dist/ ──
-# Server-side needs: deploy.sh, lib/*.sh + config_loader.py, configs/,
+# Server-side needs: deploy.sh, core/ kind/ channel/, tools/, ops/, assets/,
 # project-configs/, deploy.env.example, and the target deploy.env.<target>.
 # Windows-only files (pack.ps1, _ps-common.ps1) are NOT copied.
 function Copy-DeployAssets {
@@ -163,28 +165,23 @@ function Copy-DeployAssets {
     # should not linger in dist/ when targeting a different environment.
     $staleFiles = @(
         (Join-Path $DistDir 'pack.ps1')
-        (Join-Path $DistDir 'lib\_ps-common.ps1')
+        (Join-Path $DistDir '_ps-common.ps1')
     )
     Get-ChildItem $DistDir -Filter 'deploy.env.*' -File |
         Where-Object { $_.Name -ne 'deploy.env.example' } |
         ForEach-Object { $staleFiles += $_.FullName }
     foreach ($f in $staleFiles) {
         if (Test-Path $f) {
-            Remove-Item $f -Force
+            Remove-BuildFile $f
             W-Warn "Cleaned stale: $(Split-Path $f -Leaf)"
         }
     }
 
-    # Core scripts (server-side only: deploy.sh, detect-status.sh, generate-nginx.py,
-    # deploy-python.sh, setup-wireguard.sh, log-audit.sh, log-hygiene.sh).
+    # Core scripts (server-side only: deploy.sh, deploy-python.sh at dist root;
+    # tools/ = detect-status.sh, generate-nginx.py; ops/ = wireguard + log tools).
     # pack.ps1 is Windows-only, NOT copied to dist/.
     $copy = @(
         (Join-Path $ScriptsDir 'deploy.sh'),
-        (Join-Path $ScriptsDir 'tools\detect-status.sh'),
-        (Join-Path $ScriptsDir 'tools\generate-nginx.py'),
-        (Join-Path $ScriptsDir 'tools\setup-wireguard.sh'),
-        (Join-Path $ScriptsDir 'tools\log-audit.sh'),
-        (Join-Path $ScriptsDir 'tools\log-hygiene.sh'),
         (Join-Path $ScriptsDir 'deploy-python.sh')
     )
     foreach ($f in $copy) {
@@ -193,34 +190,65 @@ function Copy-DeployAssets {
             W-OK "Copied: $(Split-Path $f -Leaf)"
         }
     }
-
-    # configs/
-    if (Test-Path $DeployDir\configs) {
-        $dc = Join-Path $DistDir 'configs'
-        if (Test-Path $dc) { Remove-Item $dc -Recurse -Force }
-        Copy-Item $DeployDir\configs $dc -Recurse -Force
-        W-OK "Copied: configs/"
+    # tools/ (probes & generators used by deploy.sh at runtime)
+    $distTools = Join-Path $DistDir 'tools'
+    Remove-BuildDir $distTools
+    New-Item -ItemType Directory -Path $distTools -Force | Out-Null
+    foreach ($f in @('detect-status.sh', 'generate-nginx.py')) {
+        $src = Join-Path $ScriptsDir ('tools\' + $f)
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $distTools $f) -Force
+            W-OK "Copied: tools/$f"
+        }
+    }
+    # ops extras (wireguard + log tools live with the numbered ops scripts)
+    $distOps = Join-Path $DistDir 'ops'
+    if (-not (Test-Path $distOps)) { New-Item -ItemType Directory -Path $distOps -Force | Out-Null }
+    foreach ($f in @('setup-wireguard.sh', 'log-audit.sh', 'log-hygiene.sh')) {
+        $src = Join-Path $ScriptsDir ('ops\' + $f)
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $distOps $f) -Force
+            W-OK "Copied: ops/$f"
+        }
     }
 
-    # lib/ — copy only server-side files (*.sh + config_loader.py).
-    # _ps-common.ps1 is Windows-only, excluded from dist/.
-    if (Test-Path $ScriptsDir\lib) {
-        $dl = Join-Path $DistDir 'lib'
-        if (Test-Path $dl) { Remove-Item $dl -Recurse -Force }
-        New-Item -ItemType Directory -Path $dl -Force | Out-Null
-        Get-ChildItem $ScriptsDir\lib -File | Where-Object {
-            $_.Extension -in '.sh', '.py'
-        } | ForEach-Object {
-            Copy-Item $_.FullName (Join-Path $dl $_.Name) -Force
+    # assets/ (env templates + systemd units + wireguard)
+    if (Test-Path $DeployDir\assets) {
+        $dc = Join-Path $DistDir 'assets'
+        Remove-BuildDir $dc
+        Copy-Item $DeployDir\assets $dc -Recurse -Force
+        W-OK "Copied: assets/"
+    }
+
+    # core/ kind/ channel/ — layered copy, same structure as the source tree.
+    # Server-side files only (*.sh + *.py); _ps-common.ps1 is Windows-only.
+    # ★ v2：kind/frontend、kind/backend、channel/baota|native|docker 均为子目录，
+    #   必须 -Recurse 并保留相对路径。
+    foreach ($layer in 'core', 'kinds', 'channels') {
+        $src = Join-Path $ScriptsDir $layer
+        if (Test-Path $src) {
+            $dst = Join-Path $DistDir $layer
+            Remove-BuildDir $dst
+            Get-ChildItem $src -Recurse -File | Where-Object {
+                $_.Extension -in '.sh', '.py'
+            } | ForEach-Object {
+                $rel = $_.FullName.Substring($src.Length).TrimStart('\', '/')
+                $target = Join-Path $dst $rel
+                $targetDir = Split-Path $target -Parent
+                if (-not (Test-Path $targetDir)) {
+                    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+                }
+                Copy-Item $_.FullName $target -Force
+            }
+            W-OK "Copied: $layer/ (server-side .sh + .py only, recursive)"
         }
-        W-OK "Copied: lib/ (server-side .sh + .py only)"
     }
 
     # ops/ — copy only server-side .sh files (ops scripts like 05-setup-supervisor.sh).
     # wsl-*.ps1 / wsl-autostart.sh are Windows-only or WSL-specific, excluded from dist/.
     if (Test-Path $ScriptsDir\ops) {
-        $do = Join-Path $DistDir 'scripts\ops'
-        if (Test-Path $do) { Remove-Item $do -Recurse -Force }
+        $do = Join-Path $DistDir 'ops'
+        Remove-BuildDir $do
         New-Item -ItemType Directory -Path $do -Force | Out-Null
         # Copy top-level .sh files (01-*.sh, 02-*.sh, etc.)
         Get-ChildItem $ScriptsDir\ops -File | Where-Object {
@@ -233,13 +261,13 @@ function Copy-DeployAssets {
         if (Test-Path $libConflicts) {
             Copy-Item $libConflicts (Join-Path $do 'lib-clear-conflicts.sh') -Force
         }
-        W-OK "Copied: scripts/ops/ (server-side .sh only)"
+        W-OK "Copied: ops/ (server-side .sh only)"
     }
 
     # project-configs/ (for server-side TOML reading via config_loader.py)
     if (Test-Path $ConfigsDir) {
         $dpc = Join-Path $DistDir 'project-configs'
-        if (Test-Path $dpc) { Remove-Item $dpc -Recurse -Force }
+        Remove-BuildDir $dpc
         Copy-Item $ConfigsDir $dpc -Recurse -Force
         W-OK "Copied: project-configs/"
     }
@@ -274,6 +302,15 @@ function Copy-DeployAssets {
     } elseif (Test-Path $DeployDir\deploy.env) {
         Copy-Item $DeployDir\deploy.env (Join-Path $DistDir 'deploy.env') -Force
         W-OK "Copied: deploy.env"
+    }
+
+    # ★2026-10-22：额外拷贝所有 server 专属 env（B/C 迁移实证坑——漏传导致
+    # 服务器通道解析静默回退 native、清场脚本拿不到面板凭证）
+    Get-ChildItem $DeployDir -Filter 'deploy.env.*' -File | Where-Object {
+        $_.Name -match '^deploy\.env\.(server-[a-z0-9]+|vm)$'
+    } | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $DistDir $_.Name) -Force
+        W-OK "Copied: $($_.Name)"
     }
 
     # -- Write .scripts-version stamp (for server-side freshness check) --

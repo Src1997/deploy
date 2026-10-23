@@ -62,6 +62,7 @@ load_deploy_env() {
         [ -n "$f" ] && [ -f "$f" ] || continue
         # Preserve env vars that were explicitly set before sourcing deploy.env
         local _dry_run="${DEPLOY_DRY_RUN:-}"
+        local _prior_channel="${DEPLOY_CHANNEL:-}"
         set -a
         # Strip CRLF (\r) before sourcing - Windows-edited env files
         # would inject \r into variable values causing garbled errors
@@ -70,6 +71,9 @@ load_deploy_env() {
         set +a
         # Restore DRY_RUN if it was explicitly set in environment (overrides deploy.env)
         [ -n "$_dry_run" ] && DEPLOY_DRY_RUN="$_dry_run"
+        # ★通道选择权优先级：调用方显式设置（环境变量 / --channel）> env 文件
+        #   （否则 deploy.env.vm 里的 DEPLOY_CHANNEL=baota 会把 docker 试点冲掉）
+        [ -n "$_prior_channel" ] && export DEPLOY_CHANNEL="$_prior_channel"
         export DEPLOY_ENV_LOADED="$f"
         return 0
     done

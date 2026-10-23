@@ -15,7 +15,7 @@ display_name = "全栈示例项目（React + Java + Go + Node.js）"
 
 # ── 关键文件：随包上传的部署资产 ──
 key_files = [
-    "configs/systemd/fullstack-demo.service",
+    "assets/systemd/fullstack-demo.service",
 ]
 
 # ── 关键配置 ──
@@ -33,18 +33,15 @@ display_name = "React 前端 (npm)"
 source_path = "fullstack-demo/frontend"
 public_url = "/"
 deploy_path = "fullstack-demo/web/dist"
-nginx_reload = true
+routes = [
+    { path = "/", type = "static", spa = true },
+]
 
   [components.build]
   package_manager = "npm"          # 支持 pnpm / npm / yarn
   build_script = "run build"       # npm run build
   dist_dir = "build"               # CRA 默认 build/，Vite 用 dist/
   artifact = "demo-react-web-dist.tar.gz"
-
-  [[components.nginx.locations]]
-  path = "/"
-  type = "static"
-  spa_fallback = true
 
 # ━━ Java 后端（Maven / Spring Boot）━━
 [[components]]
@@ -53,15 +50,12 @@ kind = "java"
 display_name = "Java API (Maven)"
 source_path = "fullstack-demo/java-backend"
 deploy_path = "fullstack-demo/java-api"
-nginx_reload = false
 health_url = "http://127.0.0.1:8080/actuator/health"
-services = ["fullstack-demo-java"]
-
-  [[components.nginx.locations]]
-  path = "/java-api/"
-  type = "proxy"
-  proxy_target = "http://127.0.0.1:8080"
-  proxy_path = "/api/"
+routes = [
+    { path = "/java-api/", type = "proxy", target = "http://127.0.0.1:8080/api/" },
+]
+# 守护进程：宝塔=Java 项目（process.jar/jdk）+ supervisor；原生=systemd 单元
+companions = ["fullstack-demo-java"]
 
   # Maven: mvn clean package -DskipTests → target/*.jar
   # Gradle: gradle build -x test → build/libs/*.jar
@@ -70,63 +64,67 @@ services = ["fullstack-demo-java"]
   jar_dir = "target"               # Maven: target, Gradle: build/libs
   jar_pattern = "demo-api-*.jar"   # 精确匹配（可选，留空则自动检测最新）
   artifact_pattern = "demo-java-api-*.tar.gz"
-  include_files = ["configs/fullstack-demo-java.env.example"]
+  include_files = ["assets/fullstack-demo-java.env.example"]
   # ★ 显式允许真实 .env 进包（安全白名单）
-  include_env = ["configs/fullstack-demo-java.env"]
+  include_env = ["assets/fullstack-demo-java.env"]
 
+# ━━ Go / Node.js 组件样例（2026-10-22 瘦身：打包与部署实现已移除）━━
+# 真实项目零使用；将来需要时按 python/java 的扩展模式恢复：
+# TOML baota_* 键 + baota.sh ensure 包装 + 面板 goModel/nodejsModel。
+# 以下保留原始 TOML 样例供参考（已注释，不会被加载）：
 # ━━ Go 后端（Gin）━━
-[[components]]
-id = "demo-go-api"
-kind = "go"
-display_name = "Go API (Gin)"
-source_path = "fullstack-demo/go-backend"
-deploy_path = "fullstack-demo/go-api"
-nginx_reload = false
-health_url = "http://127.0.0.1:8081/health"
-services = ["fullstack-demo-go"]
-
-  [[components.nginx.locations]]
-  path = "/go-api/"
-  type = "proxy"
-  proxy_target = "http://127.0.0.1:8081"
-  proxy_path = "/api/"
-
-  [components.build]
-  # 交叉编译为 Linux 二进制（在 Windows 上构建部署到 Linux 服务器）
-  build_command = "$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o demo-go-api ./cmd/server"
-  binary_name = "demo-go-api"      # 二进制文件名（可选，留空则自动检测）
-  # binary_dir = "bin"             # 二进制输出目录（可选，默认源码根）
-  artifact_pattern = "demo-go-api-*.tar.gz"
-  include_files = ["configs/fullstack-demo-go.env.example"]
-  include_env = ["configs/fullstack-demo-go.env"]
-
+# [[components]]
+# id = "demo-go-api"
+# kind = "go"
+# display_name = "Go API (Gin)"
+# source_path = "fullstack-demo/go-backend"
+# deploy_path = "fullstack-demo/go-api"
+# nginx_reload = false
+# health_url = "http://127.0.0.1:8081/health"
+# services = ["fullstack-demo-go"]
+# 
+#   [[components.nginx.locations]]
+#   path = "/go-api/"
+#   type = "proxy"
+#   proxy_target = "http://127.0.0.1:8081"
+#   proxy_path = "/api/"
+# 
+#   [components.build]
+#   # 交叉编译为 Linux 二进制（在 Windows 上构建部署到 Linux 服务器）
+#   build_command = "$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o demo-go-api ./cmd/server"
+#   binary_name = "demo-go-api"      # 二进制文件名（可选，留空则自动检测）
+#   # binary_dir = "bin"             # 二进制输出目录（可选，默认源码根）
+#   artifact_pattern = "demo-go-api-*.tar.gz"
+#   include_files = ["assets/fullstack-demo-go.env.example"]
+#   include_env = ["assets/fullstack-demo-go.env"]
+# 
 # ━━ Node.js 后端（NestJS）━━
-[[components]]
-id = "demo-nodejs-api"
-kind = "nodejs"
-display_name = "Node.js API (NestJS)"
-source_path = "fullstack-demo/nodejs-backend"
-deploy_path = "fullstack-demo/nodejs-api"
-nginx_reload = false
-health_url = "http://127.0.0.1:8082/health"
-services = ["fullstack-demo-nodejs"]
-
-  [[components.nginx.locations]]
-  path = "/node-api/"
-  type = "proxy"
-  proxy_target = "http://127.0.0.1:8082"
-  proxy_path = "/api/"
-
-  # ── Node.js 打包配置 ──
-  # 可选 build_script：NestJS 需要 tsc 编译 TS → JS
-  # 不配 build_script 则跳过构建步骤（纯 JS 项目如 Express）
-  [components.build]
-  package_manager = "npm"          # pnpm / npm / yarn
-  build_script = "run build"       # npm run build (NestJS → dist/)
-  artifact_pattern = "demo-nodejs-api-*.tar.gz"
-
-  # 排除列表使用 [nodejs_defaults]（_shared.toml），可在此追加
-  [components.pack]
-  extra_exclude_dirs = [".nestjs"]
-  include_files = ["configs/fullstack-demo-nodejs.env.example"]
-  include_env = ["configs/fullstack-demo-nodejs.env"]
+# [[components]]
+# id = "demo-nodejs-api"
+# kind = "nodejs"
+# display_name = "Node.js API (NestJS)"
+# source_path = "fullstack-demo/nodejs-backend"
+# deploy_path = "fullstack-demo/nodejs-api"
+# nginx_reload = false
+# health_url = "http://127.0.0.1:8082/health"
+# services = ["fullstack-demo-nodejs"]
+# 
+#   [[components.nginx.locations]]
+#   path = "/node-api/"
+#   type = "proxy"
+#   proxy_target = "http://127.0.0.1:8082"
+#   proxy_path = "/api/"
+# 
+#   # ── Node.js 打包配置 ──
+#   # 可选 build_script：NestJS 需要 tsc 编译 TS → JS
+#   # 不配 build_script 则跳过构建步骤（纯 JS 项目如 Express）
+#   [components.build]
+#   package_manager = "npm"          # pnpm / npm / yarn
+#   build_script = "run build"       # npm run build (NestJS → dist/)
+#   artifact_pattern = "demo-nodejs-api-*.tar.gz"
+# 
+#   # 排除列表使用 [nodejs_defaults]（_shared.toml），可在此追加
+#   [components.pack]
+#   extra_exclude_dirs = [".nestjs"]
+#   include_files = ["assets/fullstack-demo-nodejs.env.example"]
+#   include_env = ["assets/fullstack-demo-nodejs.env"]

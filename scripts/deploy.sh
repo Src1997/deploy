@@ -38,15 +38,13 @@ fi
 #
 # 架构说明：
 #   本文件是主入口，仅包含：帮助、参数解析、环境加载、交互菜单、主入口逻辑。
-#   所有功能函数已拆分到 lib/ 下的模块文件中：
-#     lib/common.sh          — 颜色、日志、CRLF 修复、新鲜度检查
-#     lib/preflight.sh        — 部署前检查
-#     lib/service-ops.sh      — 服务重启、健康检查、状态总览、日志查看
-#     lib/backup-rollback.sh  — 备份与回滚
-#     lib/nginx.sh            — Nginx 配置生成与部署
-#     lib/deploy-kinds.sh     — 各类型部署函数（frontend/python/java/go/nodejs）
-#     lib/deploy-dispatch.sh — 部署调度（排序/批量/汇总）
-#     lib/interactive.sh     — 交互式菜单
+#   功能函数按职责分三层（仓库 scripts/ 与 dist/ 同构）：
+#     core/                   — 主链路：common、环境装载、preflight、服务操作、
+#                               备份回滚、调度、交互、config_loader.py
+#     kinds/                  — 前端(frontend.sh) 与后端(backend-*.sh) 部署流程
+#     channel/                — 部署通道：baota.sh+baota_api.py（宝塔原生）、
+#                               nginx.sh（旧链路 generate-nginx+systemd）
+#   运维与探针：ops/（编号运维系列）、tools/（detect-status、generate-nginx）
 # ═══════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -56,22 +54,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── 加载共享库 ────────────────────────────────────────────────────────
 # shellcheck source=lib/common.sh
-source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/core/common.sh"
 
 # -- Script freshness check (after common.sh provides the function) --
 _check_script_freshness || true
 
-# Pre-scan for --target= to set DEPLOY_TARGET before env loading
+# Pre-scan for --target= / --channel= to set env before env loading
+_CLI_CHANNEL=""
 for _pre_arg in "$@"; do
     case "$_pre_arg" in
         --target=*) export DEPLOY_TARGET="${_pre_arg#--target=}" ;;
+        --channel=*) _CLI_CHANNEL="${_pre_arg#--channel=}" ;;
     esac
 done
 
 # ── 加载环境配置 ──────────────────────────────────────────────────────
 # shellcheck source=lib/load-deploy-env.sh
-source "$SCRIPT_DIR/lib/load-deploy-env.sh"
+source "$SCRIPT_DIR/core/load-deploy-env.sh"
 load_deploy_env "$SCRIPT_DIR" || true
+# CLI --channel 优先级最高（env 文件里的 DEPLOY_CHANNEL 不得覆盖显式指定）
+[ -n "$_CLI_CHANNEL" ] && export DEPLOY_CHANNEL="$_CLI_CHANNEL"
 
 # ── 路径与配置常量 ────────────────────────────────────────────────────
 PROJECT_BASE="${PROJECT_BASE:-/www/wwwroot/project}"
@@ -107,10 +109,10 @@ audit_log() {
 
 # ── 加载项目清单 ──────────────────────────────────────────────────────
 SCRIPT_DIR_DEPLOY="$SCRIPT_DIR"
-if [ -f "$SCRIPT_DIR_DEPLOY/lib/load-projects.sh" ]; then
-    source "$SCRIPT_DIR_DEPLOY/lib/load-projects.sh"
-elif [ -f "$DIST_ROOT/lib/load-projects.sh" ]; then
-    source "$DIST_ROOT/lib/load-projects.sh"
+if [ -f "$SCRIPT_DIR_DEPLOY/core/load-projects.sh" ]; then
+    source "$SCRIPT_DIR_DEPLOY/core/load-projects.sh"
+elif [ -f "$DIST_ROOT/core/load-projects.sh" ]; then
+    source "$DIST_ROOT/core/load-projects.sh"
 else
     echo "[ERR] load-projects.sh not found" >&2
     exit 1
@@ -135,19 +137,27 @@ is_known_project() {
 
 # ── 加载功能模块 ──────────────────────────────────────────────────────
 # shellcheck source=lib/preflight.sh
-source "$SCRIPT_DIR/lib/preflight.sh"
+source "$SCRIPT_DIR/core/preflight.sh"
 # shellcheck source=lib/service-ops.sh
-source "$SCRIPT_DIR/lib/service-ops.sh"
+source "$SCRIPT_DIR/core/service-ops.sh"
 # shellcheck source=lib/backup-rollback.sh
-source "$SCRIPT_DIR/lib/backup-rollback.sh"
-# shellcheck source=lib/nginx.sh
-source "$SCRIPT_DIR/lib/nginx.sh"
-# shellcheck source=lib/deploy-kinds.sh
-source "$SCRIPT_DIR/lib/deploy-kinds.sh"
+source "$SCRIPT_DIR/core/backup-rollback.sh"
+# 通道层：registry 按 DEPLOY_CHANNEL（兼容 BAOTA_MODE）加载唯一通道
+# （baota/native/docker，统一动词契约见 project-configs/CHANNEL-CONTRACT.md）
+# shellcheck source=lib/registry.sh
+source "$SCRIPT_DIR/channels/registry.sh"
+load_deploy_channel "$SCRIPT_DIR"
+# kind 层：前端 / 后端（按语言）分层，公共流程调通道动词
+# shellcheck source=lib/_common.sh
+source "$SCRIPT_DIR/kinds/common.sh"
+source "$SCRIPT_DIR/kinds/frontend.sh"
+source "$SCRIPT_DIR/kinds/backend-common.sh"
+source "$SCRIPT_DIR/kinds/backend-python.sh"
+source "$SCRIPT_DIR/kinds/backend-java.sh"
 # shellcheck source=lib/deploy-dispatch.sh
-source "$SCRIPT_DIR/lib/deploy-dispatch.sh"
+source "$SCRIPT_DIR/core/deploy-dispatch.sh"
 # shellcheck source=lib/interactive.sh
-source "$SCRIPT_DIR/lib/interactive.sh"
+source "$SCRIPT_DIR/core/interactive.sh"
 
 # ═══════════════════════════════════════════════════════════════════════
 # 帮助
@@ -178,6 +188,7 @@ show_help() {
     --lines=N           日志行数（默认 50，0=实时跟踪）
     --logs=error        只看 ERROR 级别日志
     --target=<name>     使用 deploy.env.<name> 配置（如 server-a、server-b、server-c、vm）
+    --channel=<name>    覆盖部署通道（native | baota | docker；优先级高于 deploy.env）
     --nginx             部署后自动配置 Nginx（拷贝配置并 reload）
     --nginx --dynamic   动态生成 Nginx 配置（从 TOML 配置生成 location 块）
     --sync-nginx        从 TOML 配置重新生成 Nginx 配置并 reload
@@ -292,6 +303,7 @@ for arg in "$@"; do
         --lines=*)           LOG_LINES="${arg#--lines=}" ;;
         --yes|-y|--ci)       ASSUME_YES=true ;;
         --target=*)          DEPLOY_TARGET="${arg#--target=}"; export DEPLOY_TARGET ;;
+        --channel=*)         DEPLOY_CHANNEL="${arg#--channel=}"; export DEPLOY_CHANNEL ;;
         --nginx)             DEPLOY_NGINX=true ;;
         --dynamic)           NGINX_DYNAMIC=true ;;
         --sync-nginx)        SYNC_NGINX=true ;;
@@ -328,7 +340,7 @@ if $SYNC_SCRIPTS; then
             exit 1
         fi
         echo "[*] Syncing scripts from $dist_dir/ to $script_dir/ ..."
-        local files=(deploy.sh detect-status.sh deploy-python.sh generate-nginx.py)
+        local files=(deploy.sh tools/detect-status.sh deploy-python.sh tools/generate-nginx.py)
         for f in "${files[@]}"; do
             if [ -f "$dist_dir/$f" ]; then
                 cp "$dist_dir/$f" "$script_dir/$f"
@@ -337,8 +349,8 @@ if $SYNC_SCRIPTS; then
         done
         if [ -d "$dist_dir/lib" ]; then
             mkdir -p "$script_dir/lib"
-            cp -r "$dist_dir/lib/"* "$script_dir/lib/" 2>/dev/null || true
-            echo "[OK] Copied: lib/"
+            mkdir -p "$script_dir/core" "$script_dir/kinds" "$script_dir/channels"; cp -r "$dist_dir/core/"* "$script_dir/core/" 2>/dev/null; cp -r "$dist_dir/kinds/"* "$script_dir/kinds/" 2>/dev/null; cp -r "$dist_dir/channels/"* "$script_dir/channels/" 2>/dev/null
+            echo "[OK] Copied: core/ kinds/ channels/"
         fi
         echo "[OK] Script sync complete. Re-run your deploy command."
         exit 0
@@ -387,7 +399,7 @@ if $SHOW_HISTORY; then
     fi
     exit 0
 fi
-if $SYNC_NGINX; then sync_nginx; exit $?; fi
+if $SYNC_NGINX; then channel_routing_sync; exit $?; fi
 if $LIST_BACKUPS; then
     if [ ${#PROJECT_LIST[@]} -gt 0 ]; then
         for p in "${PROJECT_LIST[@]}"; do list_backups "$p" || true; done
@@ -402,14 +414,16 @@ fi
 # 部署 / 回滚需要锁
 acquire_deploy_lock
 
-# 部署前：若已部署则提示（避免误当首次）
+# 部署前：若已部署则提示（避免误当首次）——探测走通道动词（不碰异通道工具）
 _detect_already_deployed() {
     local n=0
-    local id
+    local id svc
     for id in $PROJECT_IDS; do
-        local svc
         for svc in ${SERVICES[$id]:-}; do
-            timeout 3 systemctl is-active --quiet "$svc" 2>/dev/null && n=$((n + 1))
+            [ -z "$svc" ] && continue
+            if channel_service_running "$svc" 2>/dev/null; then
+                n=$((n + 1))
+            fi
         done
     done
     [ "$n" -gt 0 ]
@@ -448,8 +462,8 @@ if [ ${#PROJECT_LIST[@]} -gt 0 ] || [ -n "$PROJECT" ]; then
     # 已部署判定
     if _detect_already_deployed; then
         warn "检测到服务已在运行（非首次部署）"
-        if [ -f "$(dirname "$0")/detect-status.sh" ]; then
-            bash "$(dirname "$0")/detect-status.sh" 2>/dev/null | sed -n '/Phase6/p;/Phase7/p;/Verify/p;/Verdict/p;/Next step/p' || true
+        if [ -f "$(dirname "$0")/tools/detect-status.sh" ]; then
+            bash "$(dirname "$0")/tools/detect-status.sh" 2>/dev/null | sed -n '/Phase6/p;/Phase7/p;/Verify/p;/Verdict/p;/Next step/p' || true
         fi
         echo "  继续将：备份当前版本 → 覆盖代码 → 重启服务"
         if ! $ASSUME_YES; then
@@ -478,15 +492,16 @@ if [ ${#PROJECT_LIST[@]} -gt 0 ] || [ -n "$PROJECT" ]; then
     fi
     audit_log "DEPLOY ${PROJECT_LIST[*]:-$PROJECT} done"
     if $DEPLOY_NGINX; then
-        deploy_nginx
+        # 遗留旗标 --nginx → 通道路由收口（baota 通道会拒绝并提示走面板）
+        channel_routing_sync || true
     fi
     exit 0
 fi
 
 # --nginx 单独执行（无项目参数）
 if $DEPLOY_NGINX; then
-    deploy_nginx
-    exit 0
+    channel_routing_sync
+    exit $?
 fi
 
 # 无参数 → 交互式菜单

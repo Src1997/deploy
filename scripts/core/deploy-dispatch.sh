@@ -2,7 +2,7 @@
 # scripts/lib/deploy-dispatch.sh — 部署调度函数
 #
 # 提供按类型排序、批量部署、部署结果汇总等功能。
-# 依赖：common.sh（颜色/日志）、deploy-kinds.sh（deploy_by_id）、load-projects.sh（PROJECT_KIND 等）
+# 依赖：common.sh（颜色/日志）、kind/_common.sh（deploy_by_id）、load-projects.sh（PROJECT_KIND 等）
 # 被 source 于 deploy.sh，不直接执行。
 
 # ── 单项目部署 ────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ deploy_batch() {
         fi
     done
 
-    # All frontends deployed — now do a single nginx sync + reload
+    # All frontends deployed — 统一路由收口（native/docker=sync_nginx；baota=no-op 由面板管理）
     NGINX_SYNC_PENDING=false
     if [ ${#succeeded[@]} -gt 0 ]; then
         local has_frontend=false
@@ -62,8 +62,8 @@ deploy_batch() {
         done
         if [ "$has_frontend" = "true" ]; then
             echo ""
-            log "批量部署完成，统一同步 Nginx 配置..."
-            sync_nginx || warn "sync_nginx 失败，请手动执行: bash deploy.sh --sync-nginx"
+            log "批量部署完成，统一收口路由配置..."
+            channel_routing_sync || warn "路由收口失败，请检查对应通道的路由配置"
         fi
     fi
 

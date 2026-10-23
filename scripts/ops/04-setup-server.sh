@@ -49,19 +49,19 @@ fi
 
 echo ""
 
-# lib/ 的位置分两种布局：仓库源码（scripts/lib/，= 本脚本上一级）和
-# dist 包（dist/lib/，= 本脚本上两级）。两档都要找。
+# core/ 的位置分两种布局：仓库源码（scripts/core/，= 本脚本上一级）和
+# dist 包（dist/core/，= 本脚本上两级）。两档都要找。
 # 找不到必须 fail fast：下面的 require_deploy_secrets 就来自这个文件，
 # 只 warn 会导致它未定义（bash 127）而被误判成「密码没配」直接 exit 1。
 _ENV_LOADER=""
-for _cand in "$SCRIPT_DIR/../lib/load-deploy-env.sh" "$SCRIPT_DIR/../../lib/load-deploy-env.sh" "$SCRIPT_DIR/lib/load-deploy-env.sh"; do
+for _cand in "$SCRIPT_DIR/core/load-deploy-env.sh" "$SCRIPT_DIR/../core/load-deploy-env.sh" "$SCRIPT_DIR/../../core/load-deploy-env.sh"; do
     [ -f "$_cand" ] && _ENV_LOADER="$_cand" && break
 done
 if [ -z "$_ENV_LOADER" ]; then
-    err "缺少 lib/load-deploy-env.sh（预期在 dist/scripts/lib/ 下），无法加载配置"
+    err "缺少 core/load-deploy-env.sh（预期在 dist/core/ 下），无法加载配置"
     exit 1
 fi
-# shellcheck source=lib/load-deploy-env.sh
+# shellcheck source=core/load-deploy-env.sh
 source "$_ENV_LOADER"
 if load_deploy_env "$SCRIPT_DIR"; then
     log "已加载配置: ${DEPLOY_ENV_LOADED}"

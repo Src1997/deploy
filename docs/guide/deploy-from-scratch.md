@@ -2,6 +2,8 @@
 
 > **Category**: Guide
 
+> ★**通道现状（2026-10-23）**：B/C 已全面宝塔托管——Python 服务=宝塔 Python 项目 + 宝塔 supervisor（**禁 systemd 双轨**），前端=宝塔 HTML 站点，站点 conf=`vhost/nginx/html_<站点名>.conf`（必须带 html_ 前缀），路由调整走面板「配置文件」。本文中 systemd / generate-nginx 内容仅适用于 native 应急通道（冻结维护）。项目特殊配置见 `project-configs/<项目>/DEPLOY-NOTES.md`。
+
 从零开始：**清理 Docker** → 装宝塔 → 配置驱动构建/部署（`project-configs/*.toml`）→ Supervisor 进程守护 + Nginx。
 
 ## 前提条件

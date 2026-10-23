@@ -15,7 +15,7 @@
 # - 幂等：已有密钥/配置不覆盖；重跑只补齐缺失项
 # - 自动 apt 安装 wireguard、写 /etc/wireguard/wg0.conf、wg-quick up、enable 自启
 # - ufw 放行：对端 endpoint 公网 IP → 监听端口（udp）；--allow-ports → wg0 接口
-# - 私钥只落本机 /etc/wireguard/，禁止入库（公钥可记入 configs/wireguard/peers.md）
+# - 私钥只落本机 /etc/wireguard/，禁止入库（公钥可记入 assets/wireguard/peers.md）
 set -euo pipefail
 
 IFACE="wg0"
@@ -117,4 +117,4 @@ log "隧道状态："
 wg show "$IFACE" | grep -E 'interface|public key|peer|allowed ips|latest handshake' || true
 log "尝试 ping 对端 $PEER_TUNNEL_IP（对端未起时失败属正常）："
 ping -c 2 -W 3 "$PEER_TUNNEL_IP" || log "ping 不通：确认对端已执行本脚本且 endpoint/公钥正确"
-log "完成。对端档案请更新 configs/wireguard/peers.md（只记公钥，不记私钥）"
+log "完成。对端档案请更新 assets/wireguard/peers.md（只记公钥，不记私钥）"
