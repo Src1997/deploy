@@ -245,6 +245,17 @@ done
 
 # ── 进程守护：Supervisor 优先（仓库标准），回退 systemd ─────────────────────
 # 与 lib/service-ops.sh 同一优先级约定；本钩子自包含（包内无 lib/），故内联实现。
+#
+# ★BAOTA 守卫（2026-10-26 事故）：宝塔通道（BAOTA_MODE=1 / DEPLOY_CHANNEL=baota）下
+# 本钩子禁止安装/启用/重启任何 systemd 单元——主进程由宝塔面板项目模型
+# （pythonModel stop/start）托管，systemd 单元会与面板进程抢端口：
+# deepquant-backend.service 因 5000 被面板 gunicorn 占用而崩溃循环 13 次。
+# supervisor 伴随服务（MCP 等）不受影响；非 baota（native）通道行为不变。
+_IS_BAOTA=0
+if [ "${BAOTA_MODE:-0}" = "1" ] || [ "${DEPLOY_CHANNEL:-}" = "baota" ]; then
+    _IS_BAOTA=1
+fi
+
 _SUPERVISORCTL=""
 if [ -x /www/server/panel/plugin/supervisor/bin/supervisorctl ]; then
     _SUPERVISORCTL="/www/server/panel/plugin/supervisor/bin/supervisorctl"
@@ -267,6 +278,9 @@ svc_ctl() {
         if _svc_in_supervisor "$svc"; then
             "$_SUPERVISORCTL" "$action" "$svc" 2>/dev/null \
                 || warn "$svc Supervisor ${action} 失败"
+        elif [ "$_IS_BAOTA" = "1" ]; then
+            # ★BAOTA 守卫：面板项目不经 systemctl（防 systemd 双轨抢端口）
+            warn "$svc 为宝塔面板项目，跳过 systemctl ${action}（重启走面板项目模型）"
         else
             systemctl "$action" "$svc" 2>/dev/null \
                 || warn "$svc systemctl ${action} 失败"
@@ -285,6 +299,9 @@ svc_show_status() {
             else
                 warn "$svc: ${status:-unknown} (Supervisor)"
             fi
+        elif [ "$_IS_BAOTA" = "1" ]; then
+            # ★BAOTA 守卫：面板项目状态以面板 GetProjectList 为准，不查 systemd
+            warn "$svc: 宝塔面板项目（状态见宝塔面板 Python 项目列表，不经 systemd）"
         else
             if systemctl is-active "$svc" >/dev/null 2>&1; then
                 ok "$svc: active (systemd)"
@@ -333,7 +350,7 @@ if $DO_DRY_RUN; then
     echo "    Seed         : $($DO_SEED && echo "是（--no-seed 跳过）" || echo "否（--no-seed）")$([ -n "${SEED_MODULE:-}" ] && echo "（module=${SEED_MODULE}）" || echo "（自动探测）")"
     echo "    重启         : $($DO_RESTART && echo "是" || echo "否（--no-restart）")"
     echo "    服务         : ${SERVICES[*]}"
-    echo "    进程守护     : $([ -n "$_SUPERVISORCTL" ] && echo "Supervisor（${_SUPERVISORCTL}）" || echo "未检测到 Supervisor，回退 systemd")"
+    echo "    进程守护     : $([ "$_IS_BAOTA" = "1" ] && echo "宝塔通道（面板项目 + supervisor，不经 systemd）" || { [ -n "$_SUPERVISORCTL" ] && echo "Supervisor（${_SUPERVISORCTL}）" || echo "未检测到 Supervisor，回退 systemd"; })"
     echo "    API 端口     : ${API_PORT}"
     echo ""
     exit 0
@@ -873,6 +890,12 @@ fi
 # Only overwrite + daemon-reload when content actually changed.
 install_service() {
     local name="$1"
+    if [ "$_IS_BAOTA" = "1" ]; then
+        # ★BAOTA 守卫：宝塔通道下绝不安装/启用 systemd 单元（2026-10-26
+        # deepquant-backend 崩溃循环 13 次实证——单元与面板项目抢端口）。
+        ok "${name} 为宝塔通道：跳过 systemd unit 安装（由宝塔面板项目模型接管）"
+        return
+    fi
     if _svc_in_supervisor "$name"; then
         ok "${name} 由 Supervisor 管理，跳过 systemd unit"
         return
@@ -972,6 +995,8 @@ echo "  Quick commands:"
 if _svc_in_supervisor "${SERVICES[0]}"; then
     echo "    supervisorctl status                    # Supervisor 进程总览（当前托管方式）"
     echo "    supervisorctl tail -f ${SERVICES[0]}    # 查看日志（Supervisor 托管，勿用 journalctl）"
+elif [ "$_IS_BAOTA" = "1" ]; then
+    echo "    宝塔面板 → Python 项目 ${SERVICES[0]}   # 面板项目托管（状态/日志在面板，不经 systemd）"
 else
     echo "    systemctl status ${SERVICES[*]}"
     echo "    journalctl -u ${SERVICES[0]} -f"
