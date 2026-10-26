@@ -125,10 +125,13 @@ function Pack-Frontend {
 
     # 构建产物预清理（.NET 硬删除）：vite emptyOutDir 清空旧 dist（>50 文件）
     # 会触发批量删除保护导致构建失败 —— 由工具箱代为清空（2026-10-08 实证坑）
-    $outDir = Join-Path $src $build.distDir
-    if (Test-Path $outDir) {
-        Remove-BuildDir $outDir
-        W-Info "Pre-cleaned build output: $outDir"
+    # ★变量名禁用 $outDir（2026-10-26 实证）：PowerShell 变量名大小写不敏感，
+    #   $outDir 会遮蔽脚本级 $OutDir（dist\packages），导致前端 tar 打进
+    #   <组件>/dist/ 内且自包含，"[OK] Packed" 假象（B/C 事故根因）。
+    $buildOutDir = Join-Path $src $build.distDir
+    if (Test-Path $buildOutDir) {
+        Remove-BuildDir $buildOutDir
+        W-Info "Pre-cleaned build output: $buildOutDir"
     }
 
     Push-Location $src
@@ -180,9 +183,19 @@ function Pack-Frontend {
             return $false
         }
         # ★tar 静默失败防御（2026-10-22 B/C 事故：Packed 假象、文件未写入）
-        $tarItem = Get-Item $tar -ErrorAction SilentlyContinue
+        # 2026-10-26 加固三连：① LiteralPath 精确命中 ② 校验落点目录 == $OutDir
+        #（防相对路径/变量遮蔽类错位）③ 内容反查禁止自包含（tar 打进被扫描目录）
+        $tarItem = Get-Item -LiteralPath $tar -ErrorAction SilentlyContinue
         if (-not $tarItem -or $tarItem.Length -eq 0 -or $tarItem.LastWriteTime -lt (Get-Date).AddMinutes(-2)) {
             W-Err "tar output NOT refreshed: $tar (mtime: $(if ($tarItem) { $tarItem.LastWriteTime } else { 'missing' })) -- deploy aborted"
+            return $false
+        }
+        if ($tarItem.DirectoryName -ne $OutDir) {
+            W-Err "tar landed in wrong directory: $($tarItem.FullName) (expected $OutDir) -- deploy aborted"
+            return $false
+        }
+        if (& tar -tzf $tar 2>$null | Select-String -SimpleMatch $build.artifact -Quiet) {
+            W-Err "tar is self-containing (archive found inside itself): $tar -- deploy aborted"
             return $false
         }
         $size = "{0:N1} MB" -f ($tarItem.Length / 1MB)
