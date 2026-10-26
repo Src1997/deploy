@@ -30,12 +30,21 @@ import config_loader  # noqa: E402
 
 
 def load_projects():
-    """Load project manifest directly from TOML configs."""
-    configs_dir = config_loader.find_configs_dir(__import__('pathlib').Path(SCRIPT_DIR))
+    """Load routing manifest directly from TOML configs.
+
+    ★v2 修复（2026-10-26）：必须走 to_nginx_json()——routes 意图 → nginx 块的
+    翻译在那里完成；裸 load_manifest() 的条目没有 nginx 键，会导致除
+    nginxExtras 外全部 location 丢失（VM 预发 default.conf 只剩 /mcp 的根因）。
+    """
+    import json
+    import pathlib
+
+    configs_dir = config_loader.find_configs_dir(pathlib.Path(SCRIPT_DIR))
     if not configs_dir.is_dir():
         print(f'Error: project-configs/ not found near {SCRIPT_DIR}', file=sys.stderr)
         sys.exit(1)
-    return config_loader.load_manifest(configs_dir)
+    manifest = config_loader.load_manifest(configs_dir)
+    return json.loads(config_loader.to_nginx_json(manifest))
 
 
 def generate_static_location(loc, deploy_path, project_base):
@@ -181,10 +190,10 @@ def generate_location_block(loc, project, project_base):
         return f'    # Unknown location type: {loc_type} for {loc.get("path", "?")}'
 
 
-def generate_header_http():
-    """Generate HTTP-only server header."""
-    return """server {
-    listen 80;
+def generate_header_http(listen_port=80):
+    """Generate HTTP-only server header (listen port configurable — VM 预发 8081)."""
+    return f"""server {{
+    listen {listen_port};
     server_name _;
 
     # -- Gzip --
@@ -362,6 +371,8 @@ def main():
     parser.add_argument('--www-domain', default='', help='WWW domain (for SSL)')
     parser.add_argument('--project-base', default='/www/wwwroot/project',
                         help='Server project base path')
+    parser.add_argument('--listen-port', type=int, default=80,
+                        help='HTTP listen port (http mode; set NGINX_LISTEN_PORT in deploy.env.*)')
     parser.add_argument('--output', '-', help='Output file (default: stdout)')
     args = parser.parse_args()
 
@@ -372,7 +383,7 @@ def main():
 
     # Generate header
     if args.mode == 'http':
-        header = generate_header_http()
+        header = generate_header_http(args.listen_port)
     elif args.mode == 'ssl-redirect':
         if not args.domain or not args.www_domain:
             print('Error: --domain and --www-domain required for SSL modes', file=sys.stderr)

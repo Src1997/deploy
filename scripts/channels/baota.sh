@@ -226,12 +226,30 @@ channel_supported_kinds()    { echo "frontend python java"; }
 channel_wants_host_venv()    { echo "1"; }
 
 channel_routing_sync() {
-    # 宝塔所有权：路由由面板站点 + 原生反代全权管理，工具箱无需（也不可）收口
+    # 生成器接管模式：与 native/docker 一致，由 generate-nginx 收口单 vhost
+    if baota_nginx_generated; then
+        sync_nginx
+        return $?
+    fi
+    # 面板管理模式：路由由面板站点 + 原生反代全权管理，工具箱无需（也不可）收口
     ok "宝塔通道路由由面板管理，无需收口（调整路由：面板 → 网站 → 反向代理）"
     return 0
 }
 
 # ── frontend ──
+
+# ★生成器接管路由模式（2026-10-26 VM 预发）：BAOTA_NGINX_GENERATED=1 时，
+# 宝塔机器不建面板 HTML 站点/原生反代（消灭 html_*.conf / port_*.conf 手工
+# 补丁层），路由统一由 generate-nginx.py 从 TOML 生成单 vhost——
+# 监听端口 NGINX_LISTEN_PORT（VM 预发=8081），目标 default.conf。
+baota_nginx_generated() { [ "${BAOTA_NGINX_GENERATED:-0}" = "1" ]; }
+
+if baota_nginx_generated && ! declare -F sync_nginx >/dev/null 2>&1; then
+    _NG="$SCRIPT_DIR/channels/native-nginx.sh"
+    [ -f "$_NG" ] || _NG="$SCRIPT_DIR_DEPLOY/channels/native-nginx.sh"
+    # shellcheck source=channels/native-nginx.sh
+    [ -f "$_NG" ] && source "$_NG"
+fi
 
 # 前置：建站（缺失时）+ 解析站点根目录（面板 SSOT）+ 反代收口（翻译 routes）
 channel_frontend_prepare() {
@@ -240,6 +258,16 @@ channel_frontend_prepare() {
 
     # DRY_RUN：不碰面板 API，目标按 TOML deploy_path
     if [ "${DEPLOY_DRY_RUN:-0}" = "1" ]; then
+        echo "$fallback"
+        return 0
+    fi
+
+    # 生成器接管模式：目标=TOML deploy_path，不建面板站点、不建反代
+    if baota_nginx_generated; then
+        # ★副作用日志必须走 stderr：本函数 stdout 只允许输出目标路径
+        {
+            ok "$id 路由由 generate-nginx 统一生成（BAOTA_NGINX_GENERATED=1），跳过面板建站"
+        } >&2
         echo "$fallback"
         return 0
     fi
@@ -285,8 +313,13 @@ channel_frontend_restore() {
     fi
 }
 
-# 单组件路由收口：宝塔模式站点 conf 由面板全权管理，工具箱不碰
-channel_frontend_finalize() { :; }
+# 单组件路由收口：面板管理模式=不碰；生成器接管模式=sync_nginx
+channel_frontend_finalize() {
+    if baota_nginx_generated; then
+        sync_nginx || warn "sync-nginx 失败，可手动执行: bash deploy.sh --sync-nginx"
+    fi
+    return 0
+}
 
 # ── python ──
 

@@ -231,6 +231,7 @@ def _component_to_entry(
     project_display_name: str,
     key_files: list[str],
     shared_defaults: dict,
+    project_enabled: bool = True,
 ) -> dict:
     kind = component.get("kind", "frontend")
     comp_id = component["id"]
@@ -241,7 +242,8 @@ def _component_to_entry(
     entry = {
         "id": comp_id,
         "project": project_id,
-        "enabled": True,
+        # 项目级 enabled（如 fullstack-demo 模板默认不上线）优先，其次组件级
+        "enabled": bool(component.get("enabled", project_enabled)),
         "kind": kind,
         "displayName": component.get("display_name", comp_id),
         "sourcePath": component.get("source_path", ""),
@@ -409,10 +411,12 @@ def load_manifest(configs_dir: Path) -> dict:
         project_id = proj.get("id", "")
         project_display_name = proj.get("display_name", project_id)
         key_files = proj.get("key_files", [])
+        # 项目级 enabled：整项目下线开关（模板项目默认不进路由/部署清单）
+        project_enabled = bool(proj.get("enabled", True))
         for comp in r.get("components", []):
             projects.append(_component_to_entry(
                 comp, project_id, project_display_name,
-                key_files, shared_defaults,
+                key_files, shared_defaults, project_enabled,
             ))
 
     # ── 反代聚合 pass（v2 语义修正）──

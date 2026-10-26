@@ -104,6 +104,7 @@ sync_nginx() {
     local py_args=()
     py_args+=(--mode "$mode")
     py_args+=(--project-base "$PROJECT_BASE")
+    py_args+=(--listen-port "${NGINX_LISTEN_PORT:-80}")
     [ -n "$domain" ] && py_args+=(--domain "$domain")
     [ -n "$www_domain" ] && py_args+=(--www-domain "$www_domain")
     py_args+=(--output "$conf_target")

@@ -12,6 +12,9 @@
 [project]
 id = "fullstack-demo"
 display_name = "全栈示例项目（React + Java + Go + Node.js）"
+# ★模板项目默认不上线：不进路由生成（/java-api/ 泄漏进统一 vhost），
+#   需要演练时改为 true 再打包部署
+enabled = false
 
 # ── 关键文件：随包上传的部署资产 ──
 key_files = [

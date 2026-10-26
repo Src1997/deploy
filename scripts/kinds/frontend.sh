@@ -47,6 +47,25 @@ deploy_frontend() {
     fi
     ok "$id 已部署到 $target"
 
+    # ── 子路径 SPA 自引用 symlink（2026-10-26 固化，取代手工补 ln -sfn）──
+    # nginx alias+try_files 的 $uri 查找按 root 语义解析（已知坑）：
+    # /admin/assets/x.js 会尝试 <alias>/admin/assets/x.js，dist 内必须有
+    # dist/admin -> . 才能命中。sub 路径单源=TOML public_url，根站点无需。
+    # ★dist 每次部署被整体替换，symlink 必须每次重建（此处即部署钩子内自动补）。
+    case "${PUBLIC_URL[$id]:-}" in
+        ""|"/") : ;;
+        */)
+            local _sub="${PUBLIC_URL[$id]#/}"
+            _sub="${_sub%/}"
+            if [ -n "$_sub" ] && [ ! -e "$target/$_sub" ]; then
+                ln -sfn . "$target/$_sub" \
+                    && ok "$id 自引用 symlink 已重建: dist/$_sub -> ." \
+                    || warn "$id 自引用 symlink 创建失败: $target/$_sub"
+            fi
+            ;;
+        *) : ;;
+    esac
+
     # ③ 单组件路由收口（批量部署时延迟到全部前端完成后统一收口）
     if [ "${NGINX_SYNC_PENDING:-false}" != "true" ]; then
         channel_frontend_finalize "$id" "$target" ||
