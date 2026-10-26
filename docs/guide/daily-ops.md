@@ -6,6 +6,25 @@
 
 ## 服务管理
 
+> ★按通道分栏：宝塔机（B/C）走面板/supervisor；systemd 命令仅 native 机。
+
+**宝塔机（B/C 现役）**：
+
+```bash
+# 主进程：面板 API（或面板 UI 点重启）
+eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' /www/wwwroot/project/deploy.env.server-b)"
+export BAOTA_PANEL_URL BAOTA_API_KEY
+python3 uploads/dist/channels/baota-api.py python-status financial-api
+python3 uploads/dist/channels/baota-api.py restart-python financial-api
+
+# 伴随服务：宝塔 supervisor（★改过 ini 必须 reread+update 再 restart）
+SCTL=/www/server/panel/pyenv/bin/supervisorctl
+$SCTL status
+$SCTL reread && $SCTL update && $SCTL restart financial-crawler
+```
+
+**native 机（应急通道，冻结）**：
+
 ```bash
 # 查看所有服务状态
 systemctl status financial-api financial-crawler financial-worker financial-streaming quantdinger-backend

@@ -15,6 +15,9 @@
 | **脚本故障 / 手动操作** | [手动部署总入口](docs/guide/manual-deploy.md)（三通道分流见下） |
 | **常用命令速查** | [cheatsheet-commands.md](docs/guide/cheatsheet-commands.md)（打包/部署/回滚/面板 API/中间件） |
 | **要装哪些包** | [install-packages.md](docs/guide/install-packages.md)（本地 + 服务器按通道） |
+| **SSL 证书 / 续签 / 域名** | [ssl-certificates.md](docs/guide/ssl-certificates.md)（acme.sh 链路 + 面板红线） |
+| **切换部署通道 / 清场** | [channel-switch.md](docs/guide/channel-switch.md)（清场脚本 + 6 步流程） |
+| **安全基线 / 暴露面** | [security-baseline.md](docs/guide/security-baseline.md)（审计沉淀 + 周期自查） |
 | ↳ 宝塔通道手动部署（主力） | [manual-deploy-baota.md](docs/guide/manual-deploy-baota.md) |
 | ↳ native 通道手动部署（应急） | [manual-deploy-native.md](docs/guide/manual-deploy-native.md) |
 | ↳ docker 通道手动部署（试点） | [manual-deploy-docker.md](docs/guide/manual-deploy-docker.md) |

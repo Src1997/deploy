@@ -11,6 +11,9 @@
 | [guide/manual-deploy.md](./guide/manual-deploy.md) | 手动部署总入口（脚本不可用 / 故障排查 / 单步操作；★开头有 2026-10-23 通道现状说明） |
 | [guide/cheatsheet-commands.md](./guide/cheatsheet-commands.md) | 常用命令速查（打包/部署/回滚/面板 API/supervisor/中间件/健康检查） |
 | [guide/install-packages.md](./guide/install-packages.md) | 所需安装包清单（本地构建侧 + 服务器按通道 + 中间件 + env 键速查） |
+| [guide/ssl-certificates.md](./guide/ssl-certificates.md) | SSL 证书与域名管理（acme.sh 链路 / 面板红线 / 邮局接管 / 续签失败 SOP） |
+| [guide/channel-switch.md](./guide/channel-switch.md) | 通道切换与清场手册（08-cleanup-baota 用法 / 6 步流程 / 遗留物检查） |
+| [guide/security-baseline.md](./guide/security-baseline.md) | 安全基线（暴露面 / ufw 一元化 / 文件权限 / 双轨红线 / 周期自查） |
 | [guide/manual-deploy-baota.md](./guide/manual-deploy-baota.md) | 手动部署 · 宝塔通道（主力，B/C 现役；面板对象落位 / API 姿势 / 红线） |
 | [guide/manual-deploy-native.md](./guide/manual-deploy-native.md) | 手动部署 · native 通道（冻结维护，systemd + generate-nginx 应急） |
 | [guide/manual-deploy-docker.md](./guide/manual-deploy-docker.md) | 手动部署 · docker 通道（MVP 试点；容器 + 宿主 nginx 收口） |
