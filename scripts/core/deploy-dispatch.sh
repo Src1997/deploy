@@ -112,7 +112,16 @@ deploy_summary() {
     for p in "${deployed[@]}"; do
         local primary_svc="${SERVICES[$p]:-}"
         primary_svc="${primary_svc%% *}"
-        if [ -n "$primary_svc" ]; then
+        if [ "${DEPLOY_CHANNEL:-}" = "baota" ]; then
+            # 宝塔通道：面板项目走面板日志，supervisor 程序走 supervisorctl（不经 systemd）
+            if [ -n "${PROC_PORT[$p]:-}" ]; then
+                echo "    宝塔面板 → Python 项目 $p（面板内查看日志）"
+            elif [ -n "$primary_svc" ]; then
+                echo "    supervisorctl tail -f $primary_svc"
+            else
+                echo "    tail -f /www/wwwlogs/error.log"
+            fi
+        elif [ -n "$primary_svc" ]; then
             echo "    journalctl -u $primary_svc -f"
         else
             echo "    tail -f /www/wwwlogs/error.log"

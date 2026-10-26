@@ -68,6 +68,39 @@ for _pre_arg in "$@"; do
     esac
 done
 
+# ★目标护栏（2026-10-26 事故）：漏带 --target=<t> 时 load-deploy-env.sh 会静默
+#   回落默认 deploy.env（无 DEPLOY_CHANNEL/BAOTA_MODE）→ 通道解析为 native →
+#   在宝塔托管机器上安装 systemd 单元，与面板项目抢端口（deepquant-backend
+#   崩溃循环 13 次实证）。故：同目录存在 deploy.env.<target> 而调用方未显式
+#   指定 DEPLOY_TARGET / DEPLOY_ENV_FILE 时，直接报错退出并给出正确用法。
+if [ -z "${DEPLOY_TARGET:-}" ] && [ -z "${DEPLOY_ENV_FILE:-}" ] \
+   && [[ "${1:-}" != "--help" && "${1:-}" != "-h" ]]; then
+    _guard_found=""
+    for _guard_dir in "$(pwd)" "$SCRIPT_DIR" "$(dirname "$SCRIPT_DIR")"; do
+        for _guard_f in "$_guard_dir"/deploy.env.*; do
+            [ -f "$_guard_f" ] || continue
+            case "$(basename "$_guard_f")" in
+                deploy.env.example) continue ;;
+            esac
+            _guard_found="$_guard_f"; break
+        done
+        [ -n "$_guard_found" ] && break
+    done
+    if [ -n "$_guard_found" ]; then
+        echo "" >&2
+        echo "═══════════════════════════════════════════════════════════" >&2
+        echo -e "\033[31m[ERR]\033[0m 检测到环境文件 $(basename "$_guard_found") 但未指定 --target。" >&2
+        echo "     漏带 --target 会静默回落默认 deploy.env，导致通道（native/baota/docker）" >&2
+        echo "     与实际服务器不符——2026-10-26 deepquant-backend systemd 双轨事故根因。" >&2
+        echo "" >&2
+        echo "     正确用法：bash deploy.sh <components> --target=<target> --yes" >&2
+        echo "     可选 target：$(ls "$(dirname "$_guard_found")"/deploy.env.* 2>/dev/null | sed 's/.*deploy\.env\.//;s/\.example//;s/ /, /g' | sort -u)" >&2
+        echo "     确要使用默认 deploy.env：DEPLOY_ENV_FILE=$(dirname "$_guard_found")/deploy.env bash deploy.sh ..." >&2
+        echo "═══════════════════════════════════════════════════════════" >&2
+        exit 2
+    fi
+fi
+
 # ── 加载环境配置 ──────────────────────────────────────────────────────
 # shellcheck source=lib/load-deploy-env.sh
 source "$SCRIPT_DIR/core/load-deploy-env.sh"
