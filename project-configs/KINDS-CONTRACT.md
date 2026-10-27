@@ -9,7 +9,7 @@
 | 端 | 行为 |
 |----|------|
 | 打包（pack.ps1） | 按 `package_manager`（pnpm/npm/yarn）在 `source_path` 执行 `build_script` → 打包 `dist_dir` → `build.artifact` 命名的 tar.gz |
-| 部署（deploy-kinds.sh） | 备份当前 dist → 清空 `deploy_path` → 解压到 `deploy_path` → `nginx_reload=true` 时同步 nginx（批量部署时延迟到全部前端完成后统一 reload） |
+| 部署（deploy-kinds.sh） | 备份当前 dist → 清空 `deploy_path` → 解压到 `deploy_path` → `nginx_reload=true` 时同步 nginx（批量部署时延迟到全部前端完成后统一 reload）；**子路径 SPA（public_url≠/）部署钩子自动重建 `dist/<sub> -> .` 自引用 symlink**（alias+try_files 的 $uri 按 root 语义解析的已知坑，d40862d） |
 | 双端共用字段 | `source_path` / `deploy_path` / `build.artifact` / `nginx_reload` |
 
 ## python
@@ -67,8 +67,13 @@
 | `baota_jar` / `baota_jdk`（java） | 创建时 | jar 相对 deployPath / JDK bin 路径 |
 
 env 键：`BAOTA_MODE` / `BAOTA_PANEL_URL`（服务器本机 → https://127.0.0.1:<端口>）/
-`BAOTA_API_KEY`（api.json 的 token） / `BAOTA_PYTHON` / `BAOTA_SUPERVISORCTL`。
+`BAOTA_API_KEY`（api.json 的 token） / `BAOTA_PYTHON` / `BAOTA_SUPERVISORCTL`；
+可选 `BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT`（生成式单 vhost 模式，见 CHANNEL-CONTRACT §5）。
 面板 api.json 的 `limit_addr` 必须含 127.0.0.1（部署脚本在服务器本机调用）。
+
+**legacy deploy_hook 在宝塔通道的护栏（0d53ec1）**：deploy-python.sh 检测 BAOTA_MODE=1 /
+DEPLOY_CHANNEL=baota 时**跳过 systemd 单元安装/启用/重启**（面板项目托管主进程，svc_ctl 对
+非 Supervisor 服务以警告代替 systemctl）——防双轨复发（2026-10-26 事故）。
 
 **本机直调**：venv 注册与 Java 创建走 subprocess 调面板自带 Python 执行面板源码
 （HTTP 表单传不了真 list / 需要面板内部类），仅在部署机上可用（deploy.sh 恰在服务器执行）。

@@ -21,6 +21,10 @@ BASE_DOMAIN=www.deepquant.club bash scripts/tools/check-deploy.sh
 
 ## 2. 上传 + 部署
 
+> ★**目标护栏（2026-10-26 起）**：`--target` 是必写项——同目录存在 `deploy.env.<target>`
+> 而调用未指定 `--target` / `DEPLOY_ENV_FILE` 时**直接报错退出**（防漏带参数静默回落默认
+> env 导致通道误判，曾致 systemd 双轨复发事故）。所有示例都带 `--target` 不是可省略的装饰。
+
 ```bash
 # 上传（★tar 管道，scp 在本环境解析不了别名）
 ssh serverB "cat > /www/wwwroot/project/uploads/dist/packages/financial-api-xxx.tar.gz" \

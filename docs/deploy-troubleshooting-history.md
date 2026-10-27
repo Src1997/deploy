@@ -516,3 +516,15 @@ systemctl is-active financial-api financial-crawler financial-worker financial-s
 - **手工调面板 API 姿势**：`eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' deploy.env.server-X)"; export BAOTA_PANEL_URL BAOTA_API_KEY; python3 uploads/dist/channels/baota-api.py <cmd>`——eval 后必须 export（子进程才继承）；ssh 远端命令用单引号包裹（双引号会被本地先展开）。
 - **B deepquant-web conf 曾错指 financial-admin**（rewrite include + 日志路径复制粘贴错误）——deepquant-web 的访问日志一直写进 admin 的文件，已纠正。
 - 符合性自检：`BASE_DOMAIN=<生产域名> bash scripts/tools/check-deploy.sh`（12 组 40 项，终验两台 40/40）。
+
+### 21. systemd 双轨复发（2026-10-26）+ deploy.sh 目标护栏 + 路由单源化（VM 预发）
+
+- **事故**：deepquant-backend.service 在宝塔机上崩溃循环 13 次——5000 被面板 gunicorn 占用。
+  直接诱因：`deploy.sh` 调用**未带 `--target=vm`**，静默回落默认 deploy.env（无 DEPLOY_CHANNEL）
+  → 通道误判为 native → deploy-python.sh 钩子照旧装 systemd 单元，与面板进程抢端口。
+- **纵深防御（三笔修复）**：
+  1. `1cff8ed` deploy.sh **目标护栏**：同目录存在 deploy.env.<target> 而未指定 --target / DEPLOY_ENV_FILE 时直接报错退出（杜绝静默回落）；日志提示按通道区分（baota 不再误导 journalctl）。
+  2. `0d53ec1` deploy-python.sh 钩子**通道感知**：BAOTA_MODE=1 下禁止安装/启用/重启 systemd 单元（supervisor 伴随不受影响；native 行为不变）。
+  3. `1bfb431` pack 修复：前端 tar 错位进组件 dist 且自包含假象——outDir 变量名大小写遮蔽脚本级 OutDir。
+- **教训**：双轨红线不仅要在文档里，还要在代码里强制（护栏 > 约定）；「漏一个 CLI 参数」能击穿整套流程假设。
+- **路由单源化（`d40862d`，VM 预发新模式，B/C 未启用）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT` 时，宝塔机器前端跳过面板建站/反代，由 generate-nginx 从 TOML 统一生成**单 vhost**（含 generate-nginx v2 关键修复：改走 to_nginx_json，此前 routes 意图 location 全丢失只留 nginxExtras）；子路径 SPA 部署钩子自动重建 `dist/<sub> -> .` 自引用 symlink（alias+try_files 按 root 语义解析的已知坑）；`[project].enabled=false` 支持整项目下线（fullstack-demo 默认关闭）。面板管理模式行为不变。

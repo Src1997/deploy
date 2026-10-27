@@ -158,6 +158,7 @@ migrate = "alembic upgrade head"          # 部署时迁移命令（可选）
 | `id` | string | ✅ | 项目唯一标识（deploy.sh 命令行参数） |
 | `display_name` | string | ✅ | 人类可读名称 |
 | `key_files` | array | ❌ | 随包上传的部署资产（native systemd 模板等） |
+| `enabled` | boolean | ❌ | `false` = 整项目下线（模板/演示项目用；fullstack-demo 默认 false，d40862d） |
 
 ### `[deploy]`
 

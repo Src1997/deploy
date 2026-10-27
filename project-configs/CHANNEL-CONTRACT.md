@@ -70,6 +70,11 @@ DEPLOY_CHANNEL = native | baota | docker     # deploy.env.<target> 或 --channel
 | **native** | `channel/native/`（channel.sh + nginx.sh） | ✅ 冻结维护 | systemd + generate-nginx；A/B 应急；hybrid supervisor 探测 |
 | **docker** | `channel/docker/` | ⚠️ MVP | **定位（用户 2026-10-22 拍板）**：应用容器统一维护 + 宿主 nginx 收口路由 + PG/Redis 等基础设施宿主化——"需要别的包配合没问题"，宿主 nginx 是正式组成而非技术债。已试点 deepquant-backend 全绿；多容器/状态视图待验 |
 
+> **baota 可选生成式路由（d40862d，VM 预发）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT`
+> 时，frontend_prepare 跳过面板建站/反代（目标=TOML deploy_path），finalize/routing_sync 走
+> sync_nginx——generate-nginx 从 TOML 统一生成**单 vhost**，消灭 html_*.conf/port_*.conf 手工层。
+> 未设开关时面板管理模式行为不变（B/C 现役即此模式）。
+
 ## 6. env 键
 
 `DEPLOY_CHANNEL`；baota 另需 `BAOTA_PANEL_URL` / `BAOTA_API_KEY`（api.json 的

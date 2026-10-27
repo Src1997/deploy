@@ -217,6 +217,7 @@ python3 /www/wwwroot/project/uploads/dist/channels/baota-api.py <cmd>
 
 ```bash
 # 服务器上 40 项符合性自检（html_ conf / 端口绑定 / supervisor / 面板功能 / Redis bind / WG …）
+# ★必须在目标服务器上 SSH 执行——脚本检查的是本机文件与端口，本地跑会大片误报
 BASE_DOMAIN=<生产域名> bash /www/wwwroot/project/uploads/dist/tools/check-deploy.sh
 ```
 
