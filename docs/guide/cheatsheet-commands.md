@@ -61,7 +61,8 @@ bash deploy.sh financial --rollback=20261023-103000   # 指定时间戳
 **面板 API 手工调用**（宝塔机 SSH 后）：
 
 ```bash
-eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' /www/wwwroot/project/deploy.env.server-b)"
+# ★Windows 打包分发的 env 文件是 CRLF，凭据值会带 \r 导致 Invalid header——必须 tr -d '\r'
+eval "$(grep -E '^BAOTA_(PANEL_URL|API_KEY)=' /www/wwwroot/project/deploy.env.server-b | tr -d '\r')"
 export BAOTA_PANEL_URL BAOTA_API_KEY          # ★eval 后必须 export
 python3 uploads/dist/channels/baota-api.py <cmd>
 ```
@@ -91,13 +92,23 @@ $SCTL reread && $SCTL update && $SCTL restart <程序名>
 ## 5. 中间件
 
 ```bash
-# PostgreSQL（密码在 deploy.env.* → PG_PASSWORD）
-PGPASSWORD="$PG_PASSWORD" psql -U root -h localhost -d quant_zc -c "SELECT 1;"
+# PostgreSQL（★宝塔机 psql 不在 PATH：/www/server/pgsql/bin/psql）
+# ★项目 .env 的 DATABASE_URL 带 SQLAlchemy 前缀（postgresql+psycopg2://），
+#   直接喂 psql 会把它当库名——先 sed 去前缀：
+PSQL=/www/server/pgsql/bin/psql
+DB=$(grep -E '^DATABASE_URL=' /www/wwwroot/project/financial/financial-api/package/.env \
+    | head -1 | cut -d= -f2- | tr -d '"' | tr -d '\r' | sed 's|postgresql+psycopg2://|postgresql://|')
+$PSQL "$DB" -tAc "SELECT 1;"
 PGPASSWORD="$PG_PASSWORD" pg_dump -U root -h localhost quant_zc | gzip > /root/bak_$(date +%Y%m%d).sql.gz
 
-# 迁移（项目 venv 内）
+# 迁移 / 运维脚本（★venv 在 package/.venv，不在项目根）
 cd /www/wwwroot/project/financial/financial-api/package
 .venv/bin/alembic current && .venv/bin/alembic upgrade head
+.venv/bin/python scripts/promote_super_admin.py --account-id <id> --yes  # 一次性晋升
+
+# ★seed 角色语义（2026-11-10 起）：seed_users 对已存在账号不再重置 role，
+#   升级部署不会把手工晋升的 super_admin 打回 admin（此前每次部署后必须重新 promote）；
+#   新用户仍按 seed spec 创建，初始部署行为不变。
 
 # Redis（★宝塔机生效配置在 /www/server/redis/redis.conf）
 redis-cli -h 127.0.0.1 -a "$REDIS_PASSWORD" ping

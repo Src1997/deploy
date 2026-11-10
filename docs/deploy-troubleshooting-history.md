@@ -528,3 +528,34 @@ systemctl is-active financial-api financial-crawler financial-worker financial-s
   3. `1bfb431` pack 修复：前端 tar 错位进组件 dist 且自包含假象——outDir 变量名大小写遮蔽脚本级 OutDir。
 - **教训**：双轨红线不仅要在文档里，还要在代码里强制（护栏 > 约定）；「漏一个 CLI 参数」能击穿整套流程假设。
 - **路由单源化（`d40862d`，VM 预发新模式，B/C 未启用）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT` 时，宝塔机器前端跳过面板建站/反代，由 generate-nginx 从 TOML 统一生成**单 vhost**（含 generate-nginx v2 关键修复：改走 to_nginx_json，此前 routes 意图 location 全丢失只留 nginxExtras）；子路径 SPA 部署钩子自动重建 `dist/<sub> -> .` 自引用 symlink（alias+try_files 按 root 语义解析的已知坑）；`[project].enabled=false` 支持整项目下线（fullstack-demo 默认关闭）。面板管理模式行为不变。
+
+### 22. MT5 资源模块 VM 升级测试：四轮部署暴露四缺陷 + seed/guard 修复（2026-11-10）
+
+- **背景**：MT5 资源模块（financial-api `future/sunrc_test`）本地 97 测试全绿后 VM 部署升级
+  实测。共 5 轮部署（102914→104012→105138→105740→112313），前四轮各暴露一个本地测试
+  覆盖不到的真实缺陷——**部署升级测试的价值就是这些**。
+- **缺陷 1（RBAC 归一化，10:40 轮）**：`auth/local.py _VALID_ROLES` 与 `admin_router.py
+  _VALID_ADMIN_ROLES` 白名单漏 super_admin → 登录 token role 被归一成 viewer，后台全 403。
+  方案"7 处联动"实测实为 10 处（+local.py 白名单、+admin_router 白名单、+role_permissions 种子/DB）。
+- **缺陷 2（徽标 500，10:51 轮）**：create/update/publish 三端点把裸 FinResource 行喂给强制
+  徽标字段的 AdminResourceItem → ValidationError → 500。HTTP 层此前零覆盖。修复：service
+  统一 `admin_item()` 组装。
+- **缺陷 3（存储根，10:57 轮）**：pydantic .env 加载不注入 os.environ，`storage.get_storage_root()`
+  只读 os.environ + 默认空 → 上传恒 `file.write_failed`。修复：Settings 兜底字段。
+- **缺陷 4（admin 间歇 403，11:05 轮）★最难定位**：API-018 定价保存成功后 `invalidate_cache()`
+  清空进程级 config cache，resources 域无配套重载路径 → 下一个 admin 请求 `get_config` 返回
+  None → `get_admin_user` 把"未加载"降级为 ["admin"] → super_admin 403「管理员权限不足」。
+  症状是**同一 token 时好时坏**（碰巧有别的路由 ensure_loaded 就恢复），一度疑似多 worker/
+  并发/配置漂移。修复：`get_admin_user` 读到 None 先 `ensure_loaded(db)` 重载一次再降级。
+- **seed 语义修正（用户指令）**：`seed_users` 对已存在账号不再同步 role（此前每次部署把手工
+  晋升的 super_admin 打回 admin，必须重新 promote）；新用户创建不变，初始部署不受影响。
+  112313 轮实测：部署后 admin 保持 super_admin，无需 promote。
+- **端到端验证链（112313 全绿）**：登录（jwt_role=super_admin，未 promote）→ 上传 compiled
+  .ex5 + source .mq5（双形态）→ 定价 paid 12800 分（乐观锁 version_no 起始 0，**先查库再带
+  对 versionNo**）→ 上架 → 匿名列表/详情（pendingOrderStatus=null 符合 v1.2"字段缺失或 null"）
+  → 匿名下载 401（契约 API-003 本就要求登录，**验证预期别写"匿名 200/403"**）→ trader 下载
+  paid 403/403 → 转 free（**priceCents 必须显式传 0**，否则 422"金额不能为空"）→ trader 下载
+  free 200 且两形态 cmp 字节一致 → 缓存失效后 admin 请求连续 200（缺陷 4 修复生效）。
+- **运维坑固化**（已进 cheatsheet-commands.md §3/§5）：宝塔凭据 CRLF（`tr -d '\r'`）、
+  psql 在 `/www/server/pgsql/bin/`、DATABASE_URL 去 `+psycopg2` 前缀喂 psql、venv 在
+  `package/.venv`、deploy.sh 只能在 VM 端跑（本机 Git Bash 无 flock）。
