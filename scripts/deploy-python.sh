@@ -842,6 +842,40 @@ log "Running alembic upgrade head..."
 "$VENV_DIR/bin/alembic" upgrade head
 ok "Database migration complete"
 
+# ── 7a. Seed 口令预检（2026-11-12：VM 部署被 seed 安全门拦截的机制级防线）────
+# seed.py 安全门（debug=false 缺口令即拒绝）读 os.environ 与 Settings（.env）两个
+# 来源；本预检跑在 seed 之前，缺配置时直接给出修法并中止，取代半途 traceback。
+_seed_password_preflight() {
+    local admin_ok=false demo_ok=false debug_val="true"
+    # 来源 1：进程环境变量（deploy.env source / deploy.sh passthrough）
+    [ -n "${SEED_ADMIN_PASSWORD:-}" ] && admin_ok=true
+    [ -n "${SEED_DEMO_PASSWORD:-}" ] && demo_ok=true
+    # 来源 2：package/.env（seed.py 2026-11-12 治本后经 Settings 兜底生效）
+    if [ -f "$ENV_FILE" ]; then
+        if [ "$admin_ok" = false ] && grep -q '^SEED_ADMIN_PASSWORD=..*' "$ENV_FILE" 2>/dev/null; then
+            admin_ok=true
+        fi
+        if [ "$demo_ok" = false ] && grep -q '^SEED_DEMO_PASSWORD=..*' "$ENV_FILE" 2>/dev/null; then
+            demo_ok=true
+        fi
+        debug_val=$(grep '^DEBUG=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || echo "true")
+    fi
+    if $admin_ok && $demo_ok; then
+        return 0
+    fi
+    if [ "$debug_val" != "false" ]; then
+        warn "SEED 口令未配置且 DEBUG!=false：seed 将使用默认口令（仅开发环境可接受）"
+        return 0
+    fi
+    err "SEED 口令预检失败：debug=false 且 os.environ / $ENV_FILE 均无 SEED_ADMIN_PASSWORD / SEED_DEMO_PASSWORD，seed 将拒绝执行，部署中止（seed 未跑，迁移已完成）。"
+    err "修复（二选一，配置后重跑部署即可）："
+    err "  ① 工具链层（推荐，随 --target 加载生效）：本地 deploy/deploy.env.<target> 追加："
+    err "       SEED_ADMIN_PASSWORD=<真实口令>"
+    err "       SEED_DEMO_PASSWORD=<真实口令>"
+    err "  ② 应用层：服务器 $ENV_FILE 追加上述两键（seed.py 经 Settings 兜底读取）。"
+    exit 1
+}
+
 # ── 7. Seed（部署时显式执行；与 app 启动时的 SEED_ON_STARTUP 解耦）────────
 # 门控优先级（命中即停止）：
 #   1. --no-seed                    → 跳过
@@ -868,12 +902,14 @@ if $DO_SEED; then
             _seed_on_deploy=$(grep '^SEED_ON_DEPLOY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || echo "")
         fi
         if $FIRST_DEPLOY; then
+            _seed_password_preflight
             log "首次部署，执行 seed（初始化基础数据）..."
             "$VENV_DIR/bin/python" -m "$SEED_MODULE"
             ok "Seed complete (first deploy)"
         elif [[ "$_seed_on_deploy" == "false" ]]; then
             warn "SEED_ON_DEPLOY=false，跳过 seed（运行时数据保持不变）"
         else
+            _seed_password_preflight
             log "Running seed..."
             "$VENV_DIR/bin/python" -m "$SEED_MODULE"
             ok "Seed complete"
