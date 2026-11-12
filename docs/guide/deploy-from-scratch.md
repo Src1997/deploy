@@ -258,6 +258,17 @@ bash deploy.sh --nginx
 # deploy.sh 根据 NGINX_CONF_NAME 自动选择 SSL 模式动态生成
 ```
 
+> **★前置约定：web 站点的 DNS 解析记录（工具箱不代管，需在域名解析控制台手工配置）**
+>
+> 工具箱只消费 `deploy.env.server-*` 的 `DOMAIN`/`WWW_DOMAIN` 生成 nginx `server_name` 并配证书，**不创建、不修改任何 DNS 记录**。A 记录还是 CNAME 由解析控制台决定，工具箱两者都兼容，但**推荐 www 用 CNAME 指向裸域**：
+>
+> | 记录 | 类型 | 值 |
+> |------|------|-----|
+> | `@`（裸域） | A | `<服务器IP>` |
+> | `www` | **CNAME** | `<裸域域名>` |
+>
+> 理由（2026-10-28 www.deepquant.club 被阿里公共DNS单独污染实证）：独立 A 记录的 www 是一个"独立名字"，可被 DNS 污染/误拦截**单独命中**（裸域正常、www 挂）；CNAME 结构下 www 与裸域同命运，要坏一起坏，故障时可引导用户改用裸域，且监控判定也更简单（只需盯裸域 A 记录）。
+
 ### 3. 配置宝塔邮局
 
 #### 方法一：宝塔邮局自建（Postfix + Dovecot + Rspamd）
