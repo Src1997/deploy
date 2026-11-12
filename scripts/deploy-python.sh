@@ -670,8 +670,17 @@ fi
 # 安全保证：只追加 .env 中确实不存在的 key，绝不覆盖已有值
 # 跳过含 __PLACEHOLDER__ 的值（如 __PG_PASSWORD__），这些只在首次生成时由 sed 渲染
 sync_env() {
-    local example="$PKG_DIR/.env.example"
+    local example=""
     local env_file="$ENV_FILE"
+    # 与首次部署的模板查找顺序保持一致：优先用本次上传的 dist/assets 模板。
+    # 包内 PKG_DIR/.env.example 可能是几个月前的旧版，只把它当最后兜底，
+    # 否则新增配置项（如 ORDER_PAY_TIMEOUT_MINUTES）永远同步不到已存在的 .env。
+    for t in "$CONFIGS_SRC/$ENV_TEMPLATE" \
+             "$PROJECT_BASE/uploads/dist/assets/$ENV_TEMPLATE" \
+             "$(dirname "${BASH_SOURCE[0]}")/../assets/$ENV_TEMPLATE" \
+             "$PKG_DIR/.env.example"; do
+        [[ -f "$t" ]] && example="$t" && break
+    done
     if [[ ! -f "$example" || ! -f "$env_file" ]]; then
         return
     fi
@@ -712,6 +721,48 @@ sync_env() {
 }
 
 sync_env
+
+# ── 2.55 支付沙箱密钥注入（G-2.5：仅测试环境；生产留空 = 模拟回调等效 404）──
+# deploy.env.<target> 经 load-deploy-env.sh 的 `set -a` 自动 export 到本进程，
+# 但应用侧 .env 由 pydantic-settings 在启动时读取、不注入 os.environ，所以必须把
+# 工具链层的测试密钥落到 .env。只改这一个 key，绝不覆盖 .env 中其它已有值；
+# 未配置时保持 .env 原样，让沙箱端点在生产自然关闭。
+sync_sandbox_secret() {
+    local env_file="$ENV_FILE"
+    [[ -f "$env_file" ]] || return 0
+    if [[ -z "${SANDBOX_SHARED_SECRET:-}" ]]; then
+        log "SANDBOX_SHARED_SECRET 未配置：模拟回调保持关闭（生产预期）"
+        return 0
+    fi
+    SANDBOX_ENV_FILE="$env_file" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["SANDBOX_ENV_FILE"])
+secret = os.environ["SANDBOX_SHARED_SECRET"].strip()
+key = "SANDBOX_SHARED_SECRET="
+lines = path.read_text(encoding="utf-8").splitlines()
+out, found, changed = [], False, False
+for line in lines:
+    if line.startswith(key):
+        if found:            # 丢弃重复行，避免历史部署留下多份密钥
+            changed = True
+            continue
+        found = True
+        changed = changed or line != key + secret
+        out.append(key + secret)
+    else:
+        out.append(line)
+if not found:
+    out += ["", "# ── 支付沙箱密钥（部署链注入；生产留空）──", key + secret]
+    changed = True
+if changed:
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+    chmod 600 "$env_file"
+    ok "SANDBOX_SHARED_SECRET 已同步到 .env（长度 ${#SANDBOX_SHARED_SECRET}，值不落日志）"
+}
+sync_sandbox_secret
 
 # ── 2.6 CORS_ORIGINS 增量更新（追加 SERVER_IP + Tailscale IP）─────────
 # 确保 CORS_ORIGINS 包含当前 SERVER_IP 和 Tailscale 穿透 IP
