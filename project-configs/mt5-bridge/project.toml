@@ -1,0 +1,44 @@
+# project-configs/mt5-bridge/project.toml — MT5 Bridge Service（win 通道首个接入项目）
+#
+# ★ 本项目仅可在 Windows 目标机部署（MetaTrader5 包 Windows-only；MT5 IPC 需
+#   交互式桌面会话 → hosting=user-session，见 docs/win-channel-design-2026-11-13.md D9）。
+#   Linux 目标机不要部署此组件（pip 装 MetaTrader5 必失败）。
+#
+# 部署方式（win 通道不走 bash 链路）：
+#   本机:  powershell -File scripts\deploy-win.ps1 mt5-bridge -Target server-win -Yes
+#   远程:  pack.ps1 mt5-bridge 打包 → dist 同步目标机 → 目标机执行 deploy-win.ps1
+#
+# ★ 试验端口 9199（现役用户会话 bridge 用 9099，两者并存互不干扰）
+
+[project]
+id = "mt5-bridge"
+display_name = "MT5 Bridge Service"
+
+[[components]]
+id = "mt5-bridge"
+kind = "python"
+display_name = "MT5 Bridge（MT5 采集桥接，Windows-only）"
+source_path = "financial/mt5-bridge-service"
+deploy_path = "mt5-bridge"
+# win 通道健康门：/health 返回 200 且 mt5Initialized 视终端状态（试点阶段
+# 试验配置不初始化 MT5 终端，health 仍为 200）
+health_url = "http://127.0.0.1:9199/health"
+
+[components.process]
+# ★ cmd 与 port 成对（config_loader validate 要求；cmd 为 POSIX 占位形态）
+port = 9199
+cmd = ".venv/Scripts/python.exe svc_entry.py debug"
+# ★ win 通道实际启动命令（user-session 托管；首段 = 可执行，相对 PKG_DIR）。
+#   入口 = svc_entry.py debug（_run_debug：HTTP 先起，MT5 初始化失败不退出、
+#   指数退避重试——2026-11-13 主形态切换后的官方启动方式；bridge 无 app.main 模块）
+cmd_win = ".venv/Scripts/python.exe svc_entry.py debug"
+# ★ MT5 IPC 需交互式桌面会话（Session 0 服务形态不通，svc_entry.py 2026-11-13 实证）
+hosting = "user-session"
+
+[components.pack]
+package_mode = "app-package"
+# ★ config/config.ini* 与 accounts.json*（现役账号清单）含本地库密码与试验参数，
+#   不进包（部署后按环境手工放置；敏感值可用 MT5_BRIDGE_DB_PASSWORD 环境变量注入，
+#   settings.py 已支持）。★2026-11-16 试点实证：accounts.json 不排除时，
+#   accounts_from_db=false 会回落到它 → 试验位加载现役账号 attach 真实终端采集
+extra_exclude_files = ["config.ini*", "accounts.json*"]

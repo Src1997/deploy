@@ -261,6 +261,10 @@ def _component_to_entry(
         "process": {
             "port": process.get("port", ""),
             "cmd": process.get("cmd", ""),
+            # win 通道专用：Windows 形态启动命令（缺省回退 cmd，POSIX venv 路径在 Win 必错）
+            "cmdWin": process.get("cmd_win", ""),
+            # win 通道进程托管形态：service(NSSM, 缺省) | user-session(MT5 IPC 类组件)
+            "hosting": process.get("hosting", "service"),
             "migrate": process.get("migrate", ""),
             # java 专用：jar 相对 deployPath / JDK bin 绝对路径
             "jar": process.get("jar", ""),
@@ -488,6 +492,9 @@ def validate(manifest: dict) -> list[str]:
         proc = p.get("process", {})
         if bool(proc.get("cmd")) != bool(proc.get("port")):
             errors.append(f"[{pid}] process.port 与 process.cmd 必须同时配置（或都不配）")
+        # win 通道意图校验：hosting 枚举
+        if proc.get("hosting") and proc["hosting"] not in ("service", "user-session"):
+            errors.append(f"[{pid}] process.hosting 非法: {proc['hosting']}（可选: service | user-session）")
         if process_companions_fallback({"process": proc}) and not p.get("companions"):
             errors.append(f"[{pid}] companions 误写在 [components.process] 段内，请移到组件根级（process 段之前）")
     return errors
@@ -505,7 +512,7 @@ def to_bash_eval(manifest: dict, project_base: str = "") -> str:
                  "PROJECT_KIND PROJECT_DISPLAY_NAME "
                  "PUBLIC_URL PROJECT_ROOT VENV_SHARED PROJECT_ID "
                  "POST_DEPLOY_CHECK_PATH WEB_PATH DEPLOY_HOOK "
-                 "PROC_PORT PROC_CMD PROC_MIGRATE PROC_JAR PROC_JDK COMPANIONS ROUTES_JSON "
+                 "PROC_PORT PROC_CMD PROC_CMD_WIN PROC_HOSTING PROC_MIGRATE PROC_JAR PROC_JDK COMPANIONS ROUTES_JSON "
                  "SITE_NAME PROXY_SPECS COMPANION_JSON COMPANION_SERVICES")
 
     enabled = [p for p in manifest["projects"] if p.get("enabled", True)]
@@ -550,6 +557,9 @@ def to_bash_eval(manifest: dict, project_base: str = "") -> str:
         proc_migrate = proc.get("migrate", "")
         lines.append(f"PROC_PORT[{pid}]={shlex.quote(str(proc_port))}")
         lines.append(f"PROC_CMD[{pid}]={shlex.quote(proc_cmd)}")
+        # win 通道意图（bash 侧不消费；保持 bash-eval 对 manifest 键的完整镜像）
+        lines.append(f"PROC_CMD_WIN[{pid}]={shlex.quote(proc.get('cmdWin', ''))}")
+        lines.append(f"PROC_HOSTING[{pid}]={shlex.quote(proc.get('hosting', 'service'))}")
         lines.append(f"PROC_MIGRATE[{pid}]={shlex.quote(proc_migrate)}")
         lines.append(f"PROC_JAR[{pid}]={shlex.quote(proc.get('jar', ''))}")
         lines.append(f"PROC_JDK[{pid}]={shlex.quote(proc.get('jdk', ''))}")

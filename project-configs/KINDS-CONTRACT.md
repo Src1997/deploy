@@ -14,11 +14,21 @@
 
 ## python
 
+> **三端契约（2026-11-13 起）**：本 kind 有**三套实现**——本地打包（`scripts/pack.ps1`，
+> PowerShell）、Linux 部署（`scripts/kind/deploy-kinds.sh` + `scripts/deploy-python.sh`，Bash）、
+> **Windows 部署（`scripts/deploy-win.ps1`，PowerShell，win 通道）**。
+> 改任何一端行为前先读本文；改完后必须**三端同步**并在核对清单勾掉。
+> win 通道专属键：`process.cmd_win`（Windows 形态启动命令）、`process.hosting`
+> （service=NSSM / user-session=用户会话后台进程，MT5 IPC 类必用——Session 0 服务形态
+> 下 MetaTrader5 通道不通，svc_entry.py 2026-11-13 实证）。设计：docs/win-channel-design-2026-11-13.md。
+
 | 端 | 行为 |
 |----|------|
 | 打包（pack.ps1） | 两种 `package_mode`：**app-package**=源码进归档 `package/` 子目录（financial-api）；**source-tar**=源码在归档根（deepquant-backend，为了让 MCP `extra_source` 搭车）。排除列表取 `_shared.toml [python_defaults]` + `extra_exclude_*`；`.env` 全排除，仅 `include_env` 白名单放行 |
-| 部署（deploy-kinds.sh） | 走 `deploy_hook`（默认 `scripts/deploy-python.sh`）：**清空 pkg_dir（保留 .env/.venv/logs/data）** → 解压 → 渲染 .env 模板占位符（`__PG_PASSWORD__` 等，值来自 deploy.env）→ venv + pip → **MCP 自动检测**（有 `mcp_server/` 子目录就 pip install 进共享 venv）→ 按需迁移 → 重启 `services` 列表 |
+| 部署（deploy-kinds.sh，Linux） | 走 `deploy_hook`（默认 `scripts/deploy-python.sh`）：**清空 pkg_dir（保留 .env/.venv/logs/data）** → 解压 → 渲染 .env 模板占位符（`__PG_PASSWORD__` 等，值来自 deploy.env）→ venv + pip → **MCP 自动检测**（有 `mcp_server/` 子目录就 pip install 进共享 venv）→ 按需迁移 → 重启 `services` 列表 |
+| 部署（deploy-win.ps1，Windows） | 同等语义的 PowerShell 实现：清空 pkg_dir（保留名单与 Linux 一致）→ 解压（Win10 bsdtar）→ .env 模板渲染（同占位符集合，已存在 .env 永不覆盖）→ venv + pip（腾讯源；MetaTrader5 等 Windows-only 包在此正常安装）→ 按 `hosting` 装服务（NSSM / user-session PID 文件）→ 端口竞态防护后重启 → 健康门 ×3 → deploy.log 审计。**一期延后**：MCP 自动检测、migrate |
 | 双端共用字段 | `package_mode` / `include_files` / `include_env` / `extra_source` / `health_url` / `services` / `post_deploy_check_path` |
+| win 专属字段 | `process.cmd_win` / `process.hosting`（config_loader: cmdWin / hosting） |
 
 ## java
 

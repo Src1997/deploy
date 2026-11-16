@@ -198,7 +198,9 @@ migrate = "alembic upgrade head"          # 部署时迁移命令（可选）
 |------|------|
 | `port` | 监听端口 |
 | `cmd` | 启动命令（相对 deploy_path，通道拼绝对路径；容器内需绑 0.0.0.0） |
-| `migrate` | 部署时迁移命令（可选，如 `alembic upgrade head`） |
+| `cmd_win` | **win 通道专用**：Windows 形态启动命令（首段=可执行，相对 PKG_DIR）。缺省回退 `cmd`，但 POSIX venv 路径（`.venv/bin/`）在 Windows 必错——**Windows 目标组件必须显式声明**（2026-11-13 新增） |
+| `hosting` | **win 通道专用**：进程托管形态。`service`（缺省，NSSM Windows 服务，需管理员）/ `user-session`（用户会话后台进程——MT5 IPC 类组件必用，Session 0 服务形态下 MetaTrader5 通道不通，svc_entry.py 2026-11-13 实证）（2026-11-13 新增） |
+| `migrate` | 部署时迁移命令（可选，如 `alembic upgrade head`；win 通道一期延后） |
 
 ### `companions`（伴随服务意图）
 

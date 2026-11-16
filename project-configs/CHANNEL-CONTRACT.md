@@ -13,7 +13,7 @@
 ## 1. 通道选择与所有权（v2 核心原则）
 
 ```
-DEPLOY_CHANNEL = native | baota | docker     # deploy.env.<target> 或 --channel=
+DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --channel=
 ```
 
 - **兼容**：未设置时 `BAOTA_MODE=1` → baota，否则 → native。
@@ -23,6 +23,10 @@ DEPLOY_CHANNEL = native | baota | docker     # deploy.env.<target> 或 --channel
   baota = 面板 API + 宝塔 supervisor，不碰 systemd/宿主 nginx；
   native = systemd + 宿主 nginx（generate-nginx 路由后端 `channel/native/nginx.sh`）；
   docker = docker/compose + 宿主 nginx 路由。
+- **★win 通道（2026-11-13 新增）**：Windows 目标机专用，**不走 bash 链路**——
+  执行器为目标机上的 `deploy-win.ps1`（PowerShell 平行入口，与 deploy.sh 对称）。
+  bash 侧 registry 仅做枚举校验与误配引导（Linux 目标配 win → exit 2 + 用法提示）。
+  设计与实现细节：`docs/win-channel-design-2026-11-13.md`（D1 平行入口 / D9 双形态托管）。
 
 ## 2. 通道注册（scripts/channel/registry.sh）
 
@@ -53,22 +57,24 @@ DEPLOY_CHANNEL = native | baota | docker     # deploy.env.<target> 或 --channel
 
 ## 4. 意图 → 通道翻译表（v2 灵魂）
 
-| TOML 意图 | baota | native | docker |
-|----|----|----|----|
-| `routes(type=root/static)` | 宝塔 HTML 站点 | generate-nginx location | 宿主 nginx 静态 |
-| `routes(type=proxy/websocket)` | 面板原生反代 CreateProxy | generate-nginx proxy | 宿主 nginx 代理 → 容器（host 网络，端口即宿主端口） |
-| `process(port,cmd)` | 宝塔 Python/Java 项目（名=组件 id，cmd 自动拼 deploy_path 绝对路径） | systemd 单元 `<id>.service`（模板 assets/systemd/） | Dockerfile + compose（port 发布 127.0.0.1） |
-| `process(migrate)` | 部署时 venv 内执行 | 同左 | 镜像构建/启动时（预留） |
-| `process(jar,jdk)`（java） | 宝塔 Java 项目 | systemd | 暂不支持 |
-| `companions` | 宝塔 supervisor 程序 | systemd 单元 `<name>.service` | 预留 |
+| TOML 意图 | baota | native | docker | win（2026-11-13） |
+|----|----|----|----|----|
+| `routes(type=root/static)` | 宝塔 HTML 站点 | generate-nginx location | 宿主 nginx 静态 | 一期不支持（MT5 组件均为纯后端；preflight 报错） |
+| `routes(type=proxy/websocket)` | 面板原生反代 CreateProxy | generate-nginx proxy | 宿主 nginx 代理 → 容器（host 网络，端口即宿主端口） | 同上 |
+| `process(port,cmd)` | 宝塔 Python/Java 项目（名=组件 id，cmd 自动拼 deploy_path 绝对路径） | systemd 单元 `<id>.service`（模板 assets/systemd/） | Dockerfile + compose（port 发布 127.0.0.1） | `cmd_win`（缺省回退 cmd，POSIX 路径在 Win 必错）→ 托管形态见下行 |
+| `process(hosting)` | —（宝塔项目即形态） | —（systemd 即形态） | —（容器即形态） | `service`=NSSM 服务（需管理员）/ `user-session`=用户会话后台进程（MT5 IPC 类，D9 勘误）缺省 service |
+| `process(migrate)` | 部署时 venv 内执行 | 同左 | 镜像构建/启动时（预留） | 一期延后（warn 跳过） |
+| `process(jar,jdk)`（java） | 宝塔 Java 项目 | systemd | 暂不支持 | 不支持（一期 kind=python only） |
+| `companions` | 宝塔 supervisor 程序 | systemd 单元 `<name>.service` | 预留 | user-session 后台进程（有 cmd 声明时） |
 
-## 5. 通道实现现状（2026-10-22）
+## 5. 通道实现现状（2026-11-13 更新）
 
 | 通道 | 目录 | 状态 | 说明 |
 |----|----|----|----|
 | **baota** | `channel/baota/`（channel.sh + baota_api.py） | ✅ 主力 | 全宝塔所有权：站点/反代/项目/supervisor/状态/日志 |
 | **native** | `channel/native/`（channel.sh + nginx.sh） | ✅ 冻结维护 | systemd + generate-nginx；A/B 应急；hybrid supervisor 探测 |
 | **docker** | `channel/docker/` | ⚠️ MVP | **定位（用户 2026-10-22 拍板）**：应用容器统一维护 + 宿主 nginx 收口路由 + PG/Redis 等基础设施宿主化——"需要别的包配合没问题"，宿主 nginx 是正式组成而非技术债。已试点 deepquant-backend 全绿；多容器/状态视图待验 |
+| **win** | `scripts/deploy-win.ps1`（PowerShell 平行入口） | 🆕 P1 试点 | Windows 目标机（MT5 生态：MetaTrader5 包 Windows-only）；kind=python only；NSSM/user-session 双形态托管；无路由层。首个接入 mt5-bridge（试验位 9199）。P2 待远程 OpenSSH 真机验证 |
 
 > **baota 可选生成式路由（d40862d，VM 预发）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT`
 > 时，frontend_prepare 跳过面板建站/反代（目标=TOML deploy_path），finalize/routing_sync 走
@@ -84,7 +90,11 @@ token 字段，★不是 key）/ `BAOTA_PYTHON` / `BAOTA_SUPERVISORCTL`；
 ## 7. 新增通道核对清单
 
 - [ ] `scripts/channel/<name>/channel.sh` 实现 §3 全部 16 动词
+      （**win 通道例外**：PowerShell 平行入口 `scripts/deploy-win.ps1` 以同名函数实现 16 动词，
+      详见 docs/win-channel-design-2026-11-13.md D1——目标机无 bash，registry.sh 对 win
+      只做枚举校验与误配引导）
 - [ ] `registry.sh` 通道表登记 + 互斥约束（如有）
 - [ ] `config_loader.py` 若需新意图键：entry + bash-eval 两处同步
-- [ ] `tests/run-all.sh` 第 9 项自动覆盖动词审计
+      （win 已加：`process.cmd_win` → cmdWin / `process.hosting` → hosting）
+- [ ] `tests/run-all.sh` 第 9 项自动覆盖动词审计（win：扫描 deploy-win.ps1 同名函数）
 - [ ] 本文件 §5 更新；真机单组件试点后再标 ✅
