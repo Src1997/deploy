@@ -651,6 +651,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
             -e "s|__PG_USER__|${PG_USER:-root}|g" \
             -e "s|__POSTGRES_DB__|${POSTGRES_DB:-quant_zc}|g" \
             -e "s|__PORT__|${API_PORT}|g" \
+            -e "s|__SEED_ADMIN_PASSWORD__|${SEED_ADMIN_PASSWORD:-}|g" \
+            -e "s|__SEED_DEMO_PASSWORD__|${SEED_DEMO_PASSWORD:-}|g" \
             "$template" > "$ENV_FILE"
         ok ".env generated from template: $template"
     else

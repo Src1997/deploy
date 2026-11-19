@@ -225,8 +225,61 @@ core/backup-rollback.sh 对齐；find 排除名单与第 4 步保持一致——
 
 ## 7. 非目标（一期明确不做）
 
-- frontend/java/go/nodejs kind 的 Windows 部署
-- Windows 路由层（Nginx for Windows / IIS）
+- ~~frontend/java/go/nodejs kind 的 Windows 部署~~（frontend 已于 2026-11-18 落地，见 §8）
+- ~~Windows 路由层（Nginx for Windows / IIS）~~（bootstrap 脚本方式已于 2026-11-18 落地，见 §8）
 - WinRM 协议、PowerShell Remoting
 - 宝塔 Windows 面板对接
 - docker Windows 容器
+
+## 8. P2 实战复盘（2026-11-18，winvm 192.168.31.200 单机化战役）
+
+一期"非目标"清单中两项已随单机化落地转正，另有若干目标机环境坑固化为工具箱能力：
+
+### 8.1 落地转正（2026-11-18）
+
+| 原一期非目标 | 现状 |
+|---|---|
+| frontend kind Windows 部署 | ✅ `deploy-win.ps1` kind=frontend：找包→备份→清空→平铺解压→完整性校验（对齐 Linux kinds/frontend.sh）；无服务无健康门 |
+| Windows 路由层（Nginx） | ✅ bootstrap 脚本 `assets/win/setup-nginx-frontend.ps1`（幂等）：nginx 1.26 解压 + nginx.conf（无 BOM）+ NSSM 服务 nginx-quant + 防火墙 80；/api/ proxy + /api/ws websocket + /admin/ alias 全量模板 |
+
+migrate/seed 也同步落地：`process.migrate` 用包内 venv 执行；首次部署（.env 本次新生成）或 `SEED_ON_DEPLOY=1` 自动跑 `python -m app.db.seed`，密码从 deploy.env `SEED_ADMIN_PASSWORD`/`SEED_DEMO_PASSWORD` 经 **PS 进程环境**注入（不经 cmd——见 8.2 坑⑤）。
+
+### 8.2 目标机环境坑（按杀伤力排序）
+
+1. **★全新 Windows 缺 msvcp140.dll（vc_redist 未装）**：PG 的 icuuc67.dll PE 导入表依赖
+   msvcp140 → initdb/postgres 全部 0xC0000135 秒退，与运行账号无关。psql/pg_ctl 不依赖
+   ICU 所以能跑，极具误导性。诊断武器：pefile 解析 PE 导入表对比。
+   修复：`vc_redist.x64.exe /install /quiet /norestart`（assets/win 自带）。
+   **新 Windows 目标机 bootstrap 第一件事 = 装 VC++ 运行库。**
+2. **PG initdb 拒管理员提升令牌**：SSH 会话拿完整令牌 → initdb 必须走
+   `schtasks /RL LIMITED`（受限令牌）。完成判定不能只看 PG_VERSION（出现很早），
+   要等任务结果 0 或 `base/1` 模板目录存在。postgres 常驻 = NSSM + NetworkService
+   （非管理员组）。全套幂等脚本：`assets/win/final-pg-redis.ps1`。
+3. **Windows OpenSSH 会话回收**：ssh 拉起的进程随会话关闭被杀（Start-Process 也逃不掉）
+   → 常驻进程必须 NSSM 服务或 schtasks 计划任务。
+4. **nssm stderr 假告警**：nssm 把正常输出写 stderr（restart 的 "STOP:"），PS5.1
+   EAP=Stop 下 2>&1 抛 NativeCommandError → restart 实际成功却中断部署、服务停
+   STOPPED。已修：`Invoke-Nssm` 统一入口临时降级 EAP。
+5. **cmd `set X=v && ` 尾空格污染值**：`set SEED_ADMIN_PASSWORD=<明文密码> && ...`（示例密码已脱敏，真实值见 deploy.env）
+   把尾空格带进密码 → 登录 401。凡传值一律走 PS 进程环境或脚本内赋值。
+6. **nginx.conf 必须 UTF-8 无 BOM**：PS5.1 `Set-Content -Encoding UTF8` 带 BOM 会崩
+   nginx conf 解析 → 用 `[IO.File]::WriteAllText(path, $c, UTF8Encoding($false))`。
+7. **环境文件编码**：requirements.txt 含中文注释必须 UTF-8 带 BOM（GBK locale pip 解码崩）；
+   PowerShell 脚本必须 UTF-8 带 BOM（无 BOM 按 GBK 读，中文吃引号解析崩）。
+   bat 必须 CRLF（LF bat cmd 静默失败 exit 1 无日志）。
+8. **SFTP 路径前导 /**：Windows OpenSSH SFTP 必须 `/C:/deploy/...`，否则 EACCES/ENOENT。
+9. **切库改 host 别忘改密码**：bridge config.ini 从 VM 切 127.0.0.1 时 password 还是
+   旧库的 → FATAL password authentication failed（首次接线必查项）。
+
+### 8.3 单机全栈布局（winvm 实证，可作新目标机模板）
+
+```
+C:\opt\{pgsql,nssm,redis,nginx}         # 基础设施（NSSM 托管 pg-quant/redis-quant/nginx-quant）
+C:\deploy\{scripts,dist\packages,project-configs,configs,deploy.env.server-win}
+C:\wwwroot\project\...                  # PROJECT_BASE（deploy_path 布局与 Linux 侧同构）
+```
+
+- financial-api：NSSM 服务，127.0.0.1:5001，health=/api/health
+- mt5-bridge：schtasks（SYSTEM，9199）；MT5 IPC 联调期须切交互会话（管理员自登+shell:startup）
+- fin_mt5_* 表由 bridge 自建（CREATE TABLE IF NOT EXISTS），api 侧 alembic 不管这组表
+- bridge health 偶发超时 = MT5 初始化重试阻塞事件循环（无终端的预期行为，装终端后消失）

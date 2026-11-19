@@ -78,6 +78,9 @@ routes = [
 [components.process]
 port = 5001
 cmd = ".venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 5001 --no-access-log"
+# ★ win 通道实际启动命令（hosting=service，NSSM；uvicorn 无 POSIX 色彩的 python -m 形态）
+cmd_win = ".venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 5001 --no-access-log"
+hosting = "service"
 migrate = "alembic upgrade head"
 
 # 伴随服务（宝塔=supervisor / 原生=systemd 单元；主进程已由 process 接管）

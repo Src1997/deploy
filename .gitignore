@@ -29,3 +29,11 @@ scripts/openapi_tmp.json
 
 # deploy.env 的本地备份（含明文密码，永不提交）
 deploy.env.*.bak_*
+
+# Windows 通道：目标机本地分发的大体积安装包 + 一次性诊断归档（严禁入库）
+# 安装包经 scp 单独投放到目标机 C:\deploy\assets\win\，不进版本库
+assets/win/*.zip
+assets/win/*.exe
+# 含明文凭据的初始化脚本 + 一次性诊断归档（diag*/pg-extract，严禁入库）
+assets/win/final-pg-redis.ps1
+assets/win/archive-*/

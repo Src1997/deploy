@@ -10,7 +10,8 @@
     契约：CHANNEL-CONTRACT.md 16 动词 —— 以同名 PowerShell 函数实现，
     启动时执行与 registry.sh 等价的动词断言（缺失 fail-fast）。
 
-    kind × channel：一期仅支持 kind=python；进程托管双形态：
+    kind × channel：python + frontend（frontend=2026-11-18 winvm 单机化落地）；
+    进程托管双形态（仅 python kind）：
       service       — NSSM Windows 服务（普通后端，需管理员）
       user-session  — 用户会话后台进程（MT5 IPC 类组件，Session 0 服务形态
                       下 MetaTrader5 通道不通，2026-11-13 实证）
@@ -164,7 +165,7 @@ function Load-ManifestWin {
     $script:Manifest = ($jsonOut | Out-String | ConvertFrom-Json)
 
     foreach ($p in $script:Manifest.projects) { $script:CompMap[$p.id] = $p }
-    W-OK "manifest: $($script:Manifest.projects.Count) 个组件（win 通道消费 kind=python）"
+    W-OK "manifest: $($script:Manifest.projects.Count) 个组件（win 通道消费 kind: $(channel_supported_kinds)）"
 }
 
 # ── 组件路径解析（布局与 Linux 侧一致：PKG_DIR = DEPLOY_PATH/package）──
@@ -174,9 +175,10 @@ function Get-CompPaths {
     $deployDir = Join-Path $script:ProjectBase $deployPath.Trim('\')
     # app-package（包内 package/ 前缀）→ PKG_DIR = deploy_dir\package；source-tar → deploy_dir 本身
     $mode = if ($comp.build.mode) { [string]$comp.build.mode } else { 'app-package' }
-    $pkgDir = if ($mode -eq 'source-tar') { $deployDir } else { Join-Path $deployDir 'package' }
+    # frontend：deploy_path 即 dist 目录，tar 平铺直放（2026-11-18 winvm 实证布局）
+    $pkgDir = if ($mode -eq 'source-tar' -or $comp.kind -eq 'frontend') { $deployDir } else { Join-Path $deployDir 'package' }
     return [pscustomobject]@{
-        Id = $comp.id; Mode = $mode
+        Id = $comp.id; Mode = $mode; Kind = [string]$comp.kind
         DeployDir = $deployDir; PkgDir = $pkgDir
     }
 }
@@ -211,21 +213,34 @@ function Find-Artifact {
 # win 通道 16 动词（契约：CHANNEL-CONTRACT.md §3，与 bash 通道同名）
 # ══════════════════════════════════════════════════════════════════
 
-function channel_name { "win（NSSM / user-session，无路由层）" }
-function channel_supported_kinds { "python" }
+function channel_name { "win（NSSM / user-session，路由层走 bootstrap 脚本）" }
+function channel_supported_kinds { "python frontend" }
 function channel_wants_host_venv { "1" }
 
 function channel_routing_sync {
-    # win 通道一期无路由层（MT5 组件均为纯后端，对外路由在 Linux 生产机收口）
-    W-Warn "win 通道无路由层：channel_routing_sync 为 no-op"
+    # win 通道路由层 = nginx（assets/win/setup-nginx-frontend.ps1 bootstrap；
+    # 2026-11-18 winvm 实证：nginx 1.26 alias+try_files 对子路径 SPA 无需
+    # Linux 侧的 dist/<sub> 自引用 symlink，静态资源实测 200）
+    W-Warn "win 通道路由层由 bootstrap 脚本管理（assets/win/setup-nginx-frontend.ps1），routing_sync 为 no-op"
 }
 
-function channel_frontend_prepare { W-Err "win 通道一期不支持 frontend kind"; return $false }
-function channel_frontend_preserve { W-Err "win 通道一期不支持 frontend kind"; return $false }
-function channel_frontend_restore  { W-Err "win 通道一期不支持 frontend kind"; return $false }
-function channel_frontend_finalize { W-Err "win 通道一期不支持 frontend kind"; return $false }
-function channel_java_install      { W-Err "win 通道一期不支持 java kind"; return $false }
-function channel_java_restart      { W-Err "win 通道一期不支持 java kind"; return $false }
+function channel_frontend_prepare {
+    param([string]$Id)
+    $comp = $script:CompMap[$Id]
+    if (-not $comp -or $comp.kind -ne 'frontend') { return "" }
+    # 返回目标目录（= deploy_path，前端 dist 平铺直放，无 package/ 前缀）
+    $paths = Get-CompPaths $comp
+    return $paths.DeployDir
+}
+function channel_frontend_preserve { param([string]$Id, [string]$Target) return $true }   # win 无通道资产（无 .user.ini 等）
+function channel_frontend_restore  { param([string]$Id, [string]$Target) return $true }
+function channel_frontend_finalize { param([string]$Id, [string]$Target)
+    # 路由收口由 bootstrap 脚本一次性完成（nginx.conf 全量模板），单组件收口无意义
+    W-Info "$Id 路由层无需单组件收口（nginx.conf 全量模板已含 routes）"
+    return $true
+}
+function channel_java_install      { W-Err "win 通道不支持 java kind"; return $false }
+function channel_java_restart      { W-Err "win 通道不支持 java kind"; return $false }
 
 # ── cmd_win 解析：首段 = 可执行（相对路径一律相对 PKG_DIR），其余 = 参数 ──
 function Resolve-CmdWin {
@@ -317,6 +332,19 @@ function Assert-Admin {
     return $true
 }
 
+# ── Invoke-Nssm：nssm 调用统一入口（2026-11-18 winvm 实证坑）──
+# nssm 把正常输出也写 stderr（如 restart 的 "STOP:"），PS5.1 在 $ErrorActionPreference=Stop
+# 下 2>&1 重定向会把 stderr 抛成 NativeCommandError —— restart 实际成功却中断部署，
+# 服务停在 STOPPED（financial-api 首次部署实证）。统一在此临时降级 EAP。
+function Invoke-Nssm {
+    param([Parameter(Mandatory)]$Nssm, [Parameter(Mandatory)][string[]]$NssmArgs)
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & $Nssm @NssmArgs 2>&1 | Out-Null
+        return $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prev }
+}
+
 function channel_python_install {
     param([string]$Id, [string]$PkgDir)
     $comp = $script:CompMap[$Id]
@@ -346,19 +374,19 @@ function channel_python_install {
     if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
 
     W-Step "NSSM 安装服务: $Id"
-    & $nssm install $Id $parsed.Exe $parsed.Args 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-Nssm -Nssm $nssm -NssmArgs @('install', $Id, $parsed.Exe, $parsed.Args)) -ne 0) {
         # 已存在 → 更新参数（install 幂等：先 remove 再装，与服务重建语义一致）
-        W-Warn "install 返回 $LASTEXITCODE（可能已存在），重建服务..."
-        & $nssm stop $Id 2>$null | Out-Null
-        & $nssm remove $Id confirm 2>&1 | Out-Null
-        & $nssm install $Id $parsed.Exe $parsed.Args 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { W-Err "NSSM 重建失败: $Id"; return $false }
+        W-Warn "install 返回非 0（可能已存在），重建服务..."
+        Invoke-Nssm -Nssm $nssm -NssmArgs @('stop', $Id) | Out-Null
+        Invoke-Nssm -Nssm $nssm -NssmArgs @('remove', $Id, 'confirm') | Out-Null
+        if ((Invoke-Nssm -Nssm $nssm -NssmArgs @('install', $Id, $parsed.Exe, $parsed.Args)) -ne 0) {
+            W-Err "NSSM 重建失败: $Id"; return $false
+        }
     }
-    & $nssm set $Id AppDirectory $PkgDir | Out-Null
-    & $nssm set $Id AppStdout (Join-Path $logsDir "$Id.out.log") | Out-Null
-    & $nssm set $Id AppStderr (Join-Path $logsDir "$Id.err.log") | Out-Null
-    & $nssm set $Id Start SERVICE_AUTO_START | Out-Null
+    Invoke-Nssm -Nssm $nssm -NssmArgs @('set', $Id, 'AppDirectory', $PkgDir) | Out-Null
+    Invoke-Nssm -Nssm $nssm -NssmArgs @('set', $Id, 'AppStdout', (Join-Path $logsDir "$Id.out.log")) | Out-Null
+    Invoke-Nssm -Nssm $nssm -NssmArgs @('set', $Id, 'AppStderr', (Join-Path $logsDir "$Id.err.log")) | Out-Null
+    Invoke-Nssm -Nssm $nssm -NssmArgs @('set', $Id, 'Start', 'SERVICE_AUTO_START') | Out-Null
     W-OK "服务已安装（自动启动）: $Id"
     return $true
 }
@@ -390,8 +418,9 @@ function channel_python_restart {
     if (-not $nssm) { W-Err "NSSM 未找到"; return $false }
     if (-not (Assert-Admin)) { return $false }
     W-Step "NSSM 重启服务: $Id"
-    & $nssm restart $Id 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { & $nssm start $Id 2>&1 | Out-Null }
+    if ((Invoke-Nssm -Nssm $nssm -NssmArgs @('restart', $Id)) -ne 0) {
+        Invoke-Nssm -Nssm $nssm -NssmArgs @('start', $Id) | Out-Null
+    }
     Start-Sleep -Seconds 2
     return (channel_service_running -Svc $Id)
 }
@@ -577,10 +606,82 @@ function Invoke-ComponentDeploy {
     param([Parameter(Mandatory)][string]$Id)
     $comp = $script:CompMap[$Id]
     if (-not $comp) { W-Err "未知组件: $Id"; return $false }
-    if ($comp.kind -ne 'python') {
-        W-Err "win 通道一期仅支持 kind=python，$Id 为 $($comp.kind)"
-        return $false
+    switch ($comp.kind) {
+        'python'   { return (Invoke-PythonDeploy -Id $Id) }
+        'frontend' { return (Invoke-FrontendDeploy -Id $Id) }
+        default    { W-Err "win 通道不支持 kind=$($comp.kind)（$Id）"; return $false }
     }
+}
+
+# ── frontend kind：找包 → 备份 → 清空 → 平铺解压 → 完整性校验（无服务无健康门）──
+function Invoke-FrontendDeploy {
+    param([Parameter(Mandatory)][string]$Id)
+    $comp = $script:CompMap[$Id]
+    $paths = Get-CompPaths $comp
+    W-Banner "部署: $Id ($($comp.displayName)) [frontend]"
+    W-Info "target_dir : $($paths.DeployDir)"
+
+    # ── 1. 包查找 ──
+    $artifact = Find-Artifact $comp
+    if (-not $artifact) { return $false }
+    W-OK "包: $($artifact.Name) ($('{0:N1} MB' -f ($artifact.Length / 1MB)))"
+
+    # ── 2. 目录准备 + 备份（前端 dist 整体替换，无保留名单）──
+    foreach ($d in @($paths.DeployDir, (Join-Path $script:ProjectBase 'backup'))) {
+        if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+    }
+    $maxBackups = if ($script:Cfg['MAX_BACKUPS']) { [int]$script:Cfg['MAX_BACKUPS'] } else { 5 }
+    $backupBase = Join-Path $script:ProjectBase 'backup'
+    if (Test-Path $paths.DeployDir) {
+        $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $bakDir = Join-Path (Join-Path $backupBase $Id) $ts
+        New-Item -ItemType Directory -Path $bakDir -Force | Out-Null
+        W-Step "备份 → $bakDir"
+        robocopy $paths.DeployDir $bakDir '/E' '/NFL' '/NDL' '/NJH' '/NJS' '/NC' '/NS' 2>$null | Out-Null
+        if ($LASTEXITCODE -ge 8) { W-Err "备份失败（robocopy exit=$LASTEXITCODE），部署中止"; return $false }
+        W-OK "备份完成"
+        $baks = Get-ChildItem (Join-Path $backupBase $Id) -Directory | Sort-Object Name
+        if ($baks.Count -gt $maxBackups) {
+            $baks | Select-Object -First ($baks.Count - $maxBackups) | ForEach-Object {
+                Remove-BuildDir $_.FullName; W-Info "清理旧备份: $($_.Name)"
+            }
+        }
+    } else {
+        W-Info "首次部署（无既有 dist，跳过备份）"
+    }
+
+    # ── 3. tar 内文件数（完整性校验基准）──
+    $tarFiles = @(& tar -tzf $artifact.FullName 2>$null | Where-Object { $_ -notmatch '/$' }).Count
+
+    # ── 4. 清空 + 平铺解压（tar 内容与 deploy_path 同构，无 package/ 前缀）──
+    W-Step "清空 dist + 解压 $($artifact.Name)"
+    Get-ChildItem $paths.DeployDir -Force | ForEach-Object {
+        if ($_.PSIsContainer) { Remove-BuildDir $_.FullName } else { Remove-BuildFile $_.FullName }
+    }
+    & tar -xzf $artifact.FullName -C $paths.DeployDir
+    if ($LASTEXITCODE -ne 0) { W-Err "解压失败（tar exit=$LASTEXITCODE）"; return $false }
+
+    # ── 5. 完整性校验（对齐 Linux kinds/frontend.sh 的 tar vs extracted 计数）──
+    $extracted = @(Get-ChildItem $paths.DeployDir -Recurse -File).Count
+    if ($extracted -lt $tarFiles) {
+        W-Warn "$Id 解压可能不完整: tar=$tarFiles extracted=$extracted"
+    }
+    $indexHtml = Test-Path (Join-Path $paths.DeployDir 'index.html')
+    if (-not $indexHtml) { W-Err "dist 缺 index.html —— 部署失败"; return $false }
+
+    # ★Windows 分歧点：Linux 侧子路径 SPA 需 dist/<sub> -> . 自引用 symlink
+    # （alias+try_files root 语义坑），winvm nginx 1.26 实测无需（资源 200）；
+    # 部署后建议 curl 一个 /<sub>/assets/*.js 验证。无 junction 是刻意的——
+    # junction 自引用会让 robocopy 备份/清理无限递归。
+    $auditLine = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | DEPLOY-OK | $Id | $($artifact.Name) | kind=frontend"
+    [System.IO.File]::AppendAllText((Join-Path (Join-Path $script:ProjectBase 'uploads') 'deploy.log'), $auditLine + "`n", $global:PS_UTF8_NO_BOM)
+    W-OK "部署完成: $Id（文件数 $extracted）"
+    return $true
+}
+
+function Invoke-PythonDeploy {
+    param([Parameter(Mandatory)][string]$Id)
+    $comp = $script:CompMap[$Id]
     $paths = Get-CompPaths $comp
     W-Banner "部署: $Id ($($comp.displayName)) [$($paths.Mode)]"
     W-Info "deploy_dir : $($paths.DeployDir)"
@@ -647,6 +748,7 @@ function Invoke-ComponentDeploy {
     W-OK "代码就位"
 
     # ── 6. .env 渲染（模板存在且 PKG_DIR\.env 不存在时；已存在不覆盖）──
+    $wasFresh = -not (Test-Path (Join-Path $paths.PkgDir '.env'))
     $envTemplate = Join-Path (Join-Path $DeployRoot 'configs') "$Id.env.example"
     if ((Test-Path $envTemplate) -and -not (Test-Path (Join-Path $paths.PkgDir '.env'))) {
         W-Step "渲染 .env（模板: configs\$Id.env.example）"
@@ -659,6 +761,9 @@ function Invoke-ComponentDeploy {
             '__WWW_DOMAIN__' = $script:Cfg['WWW_DOMAIN']; '__APP_NAME__' = $script:Cfg['APP_NAME']
             '__POSTGRES_DB__' = $script:Cfg['POSTGRES_DB']; '__PKG_DIR__' = $paths.PkgDir
             '__PORT__' = $comp.process.port; '__API_PORT__' = $comp.process.port
+            '__WEB_PATH__' = $comp.webPath
+            '__SEED_ADMIN_PASSWORD__' = $script:Cfg['SEED_ADMIN_PASSWORD']
+            '__SEED_DEMO_PASSWORD__' = $script:Cfg['SEED_DEMO_PASSWORD']
         }
         foreach ($k in $repl.Keys) { $content = $content.Replace($k, [string]$repl[$k]) }
         Write-TextFile -Path (Join-Path $paths.PkgDir '.env') -Value $content
@@ -682,11 +787,66 @@ function Invoke-ComponentDeploy {
         $ErrorActionPreference = $prev
         if ($LASTEXITCODE -ne 0) { W-Err "pip install 失败"; return $false }
         W-OK "依赖安装完成"
+    } elseif (Test-Path (Join-Path $paths.PkgDir 'pyproject.toml')) {
+        # 2026-11-18 winvm 单机化：pyproject 工程（无 requirements.txt）按包本体安装
+        W-Step "pip install .（pyproject 依赖，腾讯源）"
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        Push-Location $paths.PkgDir
+        & $venvPython -m pip install . `
+            -i https://mirrors.cloud.tencent.com/pypi/simple --quiet --disable-pip-version-check 2>&1 |
+            ForEach-Object { Write-Host "    $_" }
+        Pop-Location
+        $ErrorActionPreference = $prev
+        if ($LASTEXITCODE -ne 0) { W-Err "pip install . 失败"; return $false }
+        W-OK "依赖安装完成（pyproject）"
     }
 
-    # ── 8. 迁移（win 通道一期延后）──
-    if ([string]$comp.process.migrate) {
-        W-Warn "process.migrate 在 win 通道一期延后支持（跳过: $($comp.process.migrate)）"
+    # ── 8. 迁移 + seed（2026-11-18 winvm 单机化落地，走包内 venv）──
+    $migCmd = [string]$comp.process.migrate
+    if ($migCmd) {
+        W-Step "迁移: $migCmd"
+        $mParts = $migCmd.Split(' ', 2)
+        $mExe = Join-Path $venvDir ("Scripts\" + $mParts[0] + ".exe")
+        if (-not (Test-Path $mExe)) { $mExe = Join-Path $venvDir ("Scripts\" + $mParts[0]) }
+        if (-not (Test-Path $mExe)) { W-Err "迁移可执行不存在: $mExe"; return $false }
+        $mArgs = if ($mParts.Count -gt 1) { $mParts[1] -split ' ' } else { @() }
+        Push-Location $paths.PkgDir
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $mExe @mArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
+        $rc = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        Pop-Location
+        if ($rc -ne 0) { W-Err "迁移失败（exit=$rc）——部署中止"; return $false }
+        W-OK "迁移完成"
+    }
+
+    # seed：首次部署（.env 本次新生成）或 deploy.env SEED_ON_DEPLOY=1 时执行；
+    # 密码从 deploy.env SEED_*_PASSWORD 注入进程环境（非 debug 模式缺密码 =
+    # seed 自身报明确 RuntimeError，可诊断；★cmd `set X=v && ` 尾空格污染坑的
+    # 教训——这里由 PS 进程环境精确赋值，不经 cmd）。
+    $seedOnDeploy = $script:Cfg['SEED_ON_DEPLOY']
+    $doSeed = (($wasFresh -and ($seedOnDeploy -ne '0')) -or ($seedOnDeploy -eq '1')) `
+        -and (Test-Path (Join-Path $paths.PkgDir 'app\db\seed.py'))
+    if ($doSeed) {
+        W-Step "seed（app.db.seed；首次部署=$wasFresh, SEED_ON_DEPLOY=$seedOnDeploy）"
+        if (-not $script:Cfg['SEED_ADMIN_PASSWORD'] -or -not $script:Cfg['SEED_DEMO_PASSWORD']) {
+            W-Warn "SEED_ADMIN_PASSWORD / SEED_DEMO_PASSWORD 未在 deploy.env 配置——非 debug 模式 seed 会拒绝默认密码"
+        }
+        $prevA = $env:SEED_ADMIN_PASSWORD; $prevB = $env:SEED_DEMO_PASSWORD
+        $env:SEED_ADMIN_PASSWORD = $script:Cfg['SEED_ADMIN_PASSWORD']
+        $env:SEED_DEMO_PASSWORD = $script:Cfg['SEED_DEMO_PASSWORD']
+        Push-Location $paths.PkgDir
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $venvPython -m app.db.seed 2>&1 | ForEach-Object { Write-Host "    $_" }
+        $rc = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        Pop-Location
+        $env:SEED_ADMIN_PASSWORD = $prevA; $env:SEED_DEMO_PASSWORD = $prevB
+        if ($rc -ne 0) {
+            W-Warn "seed 失败（exit=$rc）——不阻塞部署（DB schema 已就位，可手工补跑 seed）"
+        } else {
+            W-OK "seed 完成"
+        }
     }
 
     # ── 9. 服务化 + 重启 ──
@@ -745,7 +905,7 @@ function Invoke-ComponentRollback {
         Stop-UserSessionProc -Svc $Id -PkgDir $paths.PkgDir | Out-Null
     } else {
         $nssm = Get-NssmPath
-        if ($nssm) { & $nssm stop $Id 2>$null | Out-Null }
+        if ($nssm) { Invoke-Nssm -Nssm $nssm -NssmArgs @('stop', $Id) | Out-Null }
     }
 
     Get-ChildItem $paths.PkgDir -Force | Where-Object {
@@ -774,9 +934,10 @@ Assert-ChannelVerbs
 
 # ── -List ──
 if ($List) {
-    W-Banner "可用组件（win 通道可部署 = kind python）"
+    W-Banner "可用组件（win 通道可部署 = kind python / frontend）"
     foreach ($p in $script:Manifest.projects) {
-        $flag = if ($p.kind -eq 'python') { "✓ python" } else { "× $($p.kind)（一期不支持）" }
+        $ok = $p.kind -in @('python', 'frontend')
+        $flag = if ($ok) { "✓ $($p.kind)" } else { "× $($p.kind)（win 通道不支持）" }
         $en = if ($p.enabled) { "" } else { " [disabled]" }
         Write-Host ("  {0,-22} {1} {2}" -f $p.id, $flag, $en)
     }
@@ -808,7 +969,7 @@ if ($Components.Count -gt 0) {
     foreach ($id in $flat) {
         $id = $id.Trim()
         if ($id -eq 'all') {
-            $selected += @($script:Manifest.projects | Where-Object { $_.enabled -and $_.kind -eq 'python' })
+            $selected += @($script:Manifest.projects | Where-Object { $_.enabled -and $_.kind -in @('python', 'frontend') })
         } elseif ($script:CompMap.ContainsKey($id)) {
             $selected += $script:CompMap[$id]
         } else {

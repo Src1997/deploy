@@ -59,12 +59,12 @@ DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --c
 
 | TOML 意图 | baota | native | docker | win（2026-11-13） |
 |----|----|----|----|----|
-| `routes(type=root/static)` | 宝塔 HTML 站点 | generate-nginx location | 宿主 nginx 静态 | 一期不支持（MT5 组件均为纯后端；preflight 报错） |
-| `routes(type=proxy/websocket)` | 面板原生反代 CreateProxy | generate-nginx proxy | 宿主 nginx 代理 → 容器（host 网络，端口即宿主端口） | 同上 |
+| `routes(type=root/static)` | 宝塔 HTML 站点 | generate-nginx location | 宿主 nginx 静态 | frontend kind=2026-11-18 落地：deploy_path 平铺直放（无路由单组件收口）；nginx.conf 由 bootstrap 脚本（assets/win/setup-nginx-frontend.ps1）按 routes 全量生成 |
+| `routes(type=proxy/websocket)` | 面板原生反代 CreateProxy | generate-nginx proxy | 宿主 nginx 代理 → 容器（host 网络，端口即宿主端口） | 同上（bootstrap nginx.conf 模板含 /api/ proxy + /api/ws websocket） |
 | `process(port,cmd)` | 宝塔 Python/Java 项目（名=组件 id，cmd 自动拼 deploy_path 绝对路径） | systemd 单元 `<id>.service`（模板 assets/systemd/） | Dockerfile + compose（port 发布 127.0.0.1） | `cmd_win`（缺省回退 cmd，POSIX 路径在 Win 必错）→ 托管形态见下行 |
 | `process(hosting)` | —（宝塔项目即形态） | —（systemd 即形态） | —（容器即形态） | `service`=NSSM 服务（需管理员）/ `user-session`=用户会话后台进程（MT5 IPC 类，D9 勘误）缺省 service |
-| `process(migrate)` | 部署时 venv 内执行 | 同左 | 镜像构建/启动时（预留） | 一期延后（warn 跳过） |
-| `process(jar,jdk)`（java） | 宝塔 Java 项目 | systemd | 暂不支持 | 不支持（一期 kind=python only） |
+| `process(migrate)` | 部署时 venv 内执行 | 同左 | 镜像构建/启动时（预留） | ✅ 2026-11-18 落地：包内 venv 执行 + 首次部署自动 seed（密码 deploy.env SEED_*_PASSWORD 经 PS 进程环境注入） |
+| `process(jar,jdk)`（java） | 宝塔 Java 项目 | systemd | 暂不支持 | 不支持 |
 | `companions` | 宝塔 supervisor 程序 | systemd 单元 `<name>.service` | 预留 | user-session 后台进程（有 cmd 声明时） |
 
 ## 5. 通道实现现状（2026-11-13 更新）
@@ -74,7 +74,7 @@ DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --c
 | **baota** | `channel/baota/`（channel.sh + baota_api.py） | ✅ 主力 | 全宝塔所有权：站点/反代/项目/supervisor/状态/日志 |
 | **native** | `channel/native/`（channel.sh + nginx.sh） | ✅ 冻结维护 | systemd + generate-nginx；A/B 应急；hybrid supervisor 探测 |
 | **docker** | `channel/docker/` | ⚠️ MVP | **定位（用户 2026-10-22 拍板）**：应用容器统一维护 + 宿主 nginx 收口路由 + PG/Redis 等基础设施宿主化——"需要别的包配合没问题"，宿主 nginx 是正式组成而非技术债。已试点 deepquant-backend 全绿；多容器/状态视图待验 |
-| **win** | `scripts/deploy-win.ps1`（PowerShell 平行入口） | 🆕 P1 试点 | Windows 目标机（MT5 生态：MetaTrader5 包 Windows-only）；kind=python only；NSSM/user-session 双形态托管；无路由层。首个接入 mt5-bridge（试验位 9199）。P2 待远程 OpenSSH 真机验证 |
+| **win** | `scripts/deploy-win.ps1`（PowerShell 平行入口） | ✅ P2 已验证 | Windows 目标机（MT5 生态：MetaTrader5 包 Windows-only）；kind=python+frontend（frontend 2026-11-18）；NSSM/user-session 双形态托管；migrate+seed 已落地。首个接入 mt5-bridge；P2 真机=winvm 192.168.31.200 单机全栈（PG/Redis/api/nginx/bridge 五件套常驻，2026-11-18 实证）；bootstrap 脚本=assets/win/{final-pg-redis,setup-nginx-frontend}.ps1；实战坑清单见 docs/win-channel-design-2026-11-13.md §P2 复盘 |
 
 > **baota 可选生成式路由（d40862d，VM 预发）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT`
 > 时，frontend_prepare 跳过面板建站/反代（目标=TOML deploy_path），finalize/routing_sync 走
