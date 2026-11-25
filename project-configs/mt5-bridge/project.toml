@@ -18,7 +18,7 @@ display_name = "MT5 Bridge Service"
 id = "mt5-bridge"
 kind = "python"
 display_name = "MT5 Bridge（MT5 采集桥接，Windows-only）"
-source_path = "financial/mt5-bridge-service"
+source_path = "financial/financial-api/mt5-bridge"
 deploy_path = "mt5-bridge"
 # win 通道健康门：/health 返回 200 且 mt5Initialized 视终端状态（试点阶段
 # 试验配置不初始化 MT5 终端，health 仍为 200）

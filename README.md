@@ -112,7 +112,7 @@ pack.ps1 (打包)        deploy.sh (部署)
 | deepquant | `deepquant-web` `deepquant-backend`（MCP 由 backend 携带，勿单拆组件，见 project.toml 内事故注记） | `bash deploy.sh deepquant` |
 | official-site | `official-site` | `bash deploy.sh official-site` |
 | fullstack-demo | `demo-react-web` `demo-java-api` `demo-go-api` `demo-nodejs-api` | `bash deploy.sh fullstack-demo` |
-| **ea-lab** | ⚠️ 待接入：`ea-lab-api` 依赖 MetaTrader5（Windows 专属，Linux 装不上），打包侧需先过滤该依赖并关闭 MT5 爬虫；数据库方案（VM 本地 `ea_lab_db`）已定 | 待前置条件完成后新增 `project-configs/ea-lab/project.toml` |
+| **ea-lab** | 🚫 已退场（2026-11-20，B3 大屏迁入 financial 后停用）：大屏能力由 financial 承接（financial-api `ea_dashboard` 域 + financial-web `/ea-dashboard`，数据源 fin_mt5_*）；不再接入 deploy 体系。原部署=外部服务器 103.210.236.54（`python run-prod.py` 用户会话 + Apache :8888 反代），退场操作手册见 `financial/docs/plans/ea-lab-api退场操作手册-2026-11-20.md` | 代码留底 `D:\Workspace\backup\ea-lab-pre-migration-20261120` |
 
 > 目标：工作区内任意项目任意组合一键部署。新增项目只需 `project-configs/<name>/project.toml`，无需改脚本。
 > 多服务器目标：`--target=server-a|server-b|server-c`（环境文件 `deploy.env.server-*`，含密码已 gitignore）。

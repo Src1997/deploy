@@ -13,7 +13,7 @@
 ## 1. 通道选择与所有权（v2 核心原则）
 
 ```
-DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --channel=
+DEPLOY_CHANNEL = native | baota | docker | win | baota-win     # deploy.env.<target> 或 --channel=
 ```
 
 - **兼容**：未设置时 `BAOTA_MODE=1` → baota，否则 → native。
@@ -27,6 +27,12 @@ DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --c
   执行器为目标机上的 `deploy-win.ps1`（PowerShell 平行入口，与 deploy.sh 对称）。
   bash 侧 registry 仅做枚举校验与误配引导（Linux 目标配 win → exit 2 + 用法提示）。
   设计与实现细节：`docs/win-channel-design-2026-11-13.md`（D1 平行入口 / D9 双形态托管）。
+- **★baota-win 通道（2026-11-25 新增，win 通道退役后唯一 Windows 通道）**：
+  执行器为目标机上的 `deploy-win-baota.ps1`（win 执行器的宝塔化分叉，同 16 动词契约）。
+  托管分叉：nginx 站点/反代 = 宝塔（脚本只校验不改写）；python hosting=service =
+  宝塔 Python 项目 = 原生 Windows 服务 `python_site_<id>`（重启/状态直接操作该服务，
+  与面板语义等价）；user-session 同 win（MT5 IPC）；**NSSM 已全部退役**。
+  设计与落地：`docs/baota-win-redesign-2026-11-25.md`。
 
 ## 2. 通道注册（scripts/channel/registry.sh）
 
@@ -57,15 +63,15 @@ DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --c
 
 ## 4. 意图 → 通道翻译表（v2 灵魂）
 
-| TOML 意图 | baota | native | docker | win（2026-11-13） |
-|----|----|----|----|----|
-| `routes(type=root/static)` | 宝塔 HTML 站点 | generate-nginx location | 宿主 nginx 静态 | frontend kind=2026-11-18 落地：deploy_path 平铺直放（无路由单组件收口）；nginx.conf 由 bootstrap 脚本（assets/win/setup-nginx-frontend.ps1）按 routes 全量生成 |
-| `routes(type=proxy/websocket)` | 面板原生反代 CreateProxy | generate-nginx proxy | 宿主 nginx 代理 → 容器（host 网络，端口即宿主端口） | 同上（bootstrap nginx.conf 模板含 /api/ proxy + /api/ws websocket） |
-| `process(port,cmd)` | 宝塔 Python/Java 项目（名=组件 id，cmd 自动拼 deploy_path 绝对路径） | systemd 单元 `<id>.service`（模板 assets/systemd/） | Dockerfile + compose（port 发布 127.0.0.1） | `cmd_win`（缺省回退 cmd，POSIX 路径在 Win 必错）→ 托管形态见下行 |
-| `process(hosting)` | —（宝塔项目即形态） | —（systemd 即形态） | —（容器即形态） | `service`=NSSM 服务（需管理员）/ `user-session`=用户会话后台进程（MT5 IPC 类，D9 勘误）缺省 service |
-| `process(migrate)` | 部署时 venv 内执行 | 同左 | 镜像构建/启动时（预留） | ✅ 2026-11-18 落地：包内 venv 执行 + 首次部署自动 seed（密码 deploy.env SEED_*_PASSWORD 经 PS 进程环境注入） |
-| `process(jar,jdk)`（java） | 宝塔 Java 项目 | systemd | 暂不支持 | 不支持 |
-| `companions` | 宝塔 supervisor 程序 | systemd 单元 `<name>.service` | 预留 | user-session 后台进程（有 cmd 声明时） |
+| TOML 意图 | baota | native | docker | win（2026-11-13） | baota-win（2026-11-25） |
+|----|----|----|----|----|----|
+| `routes(type=root/static)` | 宝塔 HTML 站点 | generate-nginx location | 宿主 nginx 静态 | frontend kind=2026-11-18 落地：deploy_path 平铺直放（无路由单组件收口）；nginx.conf 由 bootstrap 脚本（assets/win/setup-nginx-frontend.ps1）按 routes 全量生成 | 宝塔站点根目录 = frontend deploy_path（M1 落地 fin.local）；脚本只校验站点/反代槽位，不改写 |
+| `routes(type=proxy/websocket)` | 面板原生反代 CreateProxy | generate-nginx proxy | 宿主 nginx 代理 → 容器（host 网络，端口即宿主端口） | 同上（bootstrap nginx.conf 模板含 /api/ proxy + /api/ws websocket） | 宝塔反代槽位 `C:\BtSoft\nginx\conf\proxy\fin.local\api.conf`（M1 落地）；routing_sync 校验在位 |
+| `process(port,cmd)` | 宝塔 Python/Java 项目（名=组件 id，cmd 自动拼 deploy_path 绝对路径） | systemd 单元 `<id>.service`（模板 assets/systemd/） | Dockerfile + compose（port 发布 127.0.0.1） | `cmd_win`（缺省回退 cmd，POSIX 路径在 Win 必错）→ 托管形态见下行 | 同 win 用 `cmd_win`；service 形态 = 宝塔 Python 项目（wrapper service.exe + service.json） |
+| `process(hosting)` | —（宝塔项目即形态） | —（systemd 即形态） | —（容器即形态） | `service`=NSSM 服务（需管理员）/ `user-session`=用户会话后台进程（MT5 IPC 类，D9 勘误）缺省 service | `service`=宝塔 Python 项目 = 原生 Windows 服务 `python_site_<id>`（NSSM 退役）/ `user-session` 同 win（宝塔计划任务守护兜底）；缺省 service |
+| `process(migrate)` | 部署时 venv 内执行 | 同左 | 镜像构建/启动时（预留） | ✅ 2026-11-18 落地：包内 venv 执行 + 首次部署自动 seed（密码 deploy.env SEED_*_PASSWORD 经 PS 进程环境注入） | 同 win（deploy-win-baota.ps1 沿用同链路） |
+| `process(jar,jdk)`（java） | 宝塔 Java 项目 | systemd | 暂不支持 | 不支持 | 不支持 |
+| `companions` | 宝塔 supervisor 程序 | systemd 单元 `<name>.service` | 预留 | user-session 后台进程（有 cmd 声明时） | 同 win |
 
 ## 5. 通道实现现状（2026-11-13 更新）
 
@@ -74,7 +80,8 @@ DEPLOY_CHANNEL = native | baota | docker | win     # deploy.env.<target> 或 --c
 | **baota** | `channel/baota/`（channel.sh + baota_api.py） | ✅ 主力 | 全宝塔所有权：站点/反代/项目/supervisor/状态/日志 |
 | **native** | `channel/native/`（channel.sh + nginx.sh） | ✅ 冻结维护 | systemd + generate-nginx；A/B 应急；hybrid supervisor 探测 |
 | **docker** | `channel/docker/` | ⚠️ MVP | **定位（用户 2026-10-22 拍板）**：应用容器统一维护 + 宿主 nginx 收口路由 + PG/Redis 等基础设施宿主化——"需要别的包配合没问题"，宿主 nginx 是正式组成而非技术债。已试点 deepquant-backend 全绿；多容器/状态视图待验 |
-| **win** | `scripts/deploy-win.ps1`（PowerShell 平行入口） | ✅ P2 已验证 | Windows 目标机（MT5 生态：MetaTrader5 包 Windows-only）；kind=python+frontend（frontend 2026-11-18）；NSSM/user-session 双形态托管；migrate+seed 已落地。首个接入 mt5-bridge；P2 真机=winvm 192.168.31.200 单机全栈（PG/Redis/api/nginx/bridge 五件套常驻，2026-11-18 实证）；bootstrap 脚本=assets/win/{final-pg-redis,setup-nginx-frontend}.ps1；实战坑清单见 docs/win-channel-design-2026-11-13.md §P2 复盘 |
+| **win** | `scripts/deploy-win.ps1`（PowerShell 平行入口） | ⚠️ 已退役（2026-11-25） | NSSM 托管形态随宝塔化改造退役，脚本保留仅作历史参考；winvm 已迁 baota-win（NSSM 零残留） |
+| **baota-win** | `scripts/deploy-win-baota.ps1`（PowerShell 平行入口） | ✅ 现役（2026-11-25 落地） | winvm 192.168.31.200 唯一 Windows 通道：宝塔面板托管站点/反代/Redis/Python 项目（= 原生服务 python_site_<id>）+ PG 原生服务 postgresql-quant + MT5 桥 user-session（宝塔计划任务守护）；env=deploy.env.server-baota-win；前置校验走面板 API（config/get_config + site/get_site_info）；全栈终验 6 服务/6 端口全绿 |
 
 > **baota 可选生成式路由（d40862d，VM 预发）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT`
 > 时，frontend_prepare 跳过面板建站/反代（目标=TOML deploy_path），finalize/routing_sync 走
@@ -90,9 +97,10 @@ token 字段，★不是 key）/ `BAOTA_PYTHON` / `BAOTA_SUPERVISORCTL`；
 ## 7. 新增通道核对清单
 
 - [ ] `scripts/channel/<name>/channel.sh` 实现 §3 全部 16 动词
-      （**win 通道例外**：PowerShell 平行入口 `scripts/deploy-win.ps1` 以同名函数实现 16 动词，
-      详见 docs/win-channel-design-2026-11-13.md D1——目标机无 bash，registry.sh 对 win
-      只做枚举校验与误配引导）
+      （**win / baota-win 通道例外**：PowerShell 平行入口 `scripts/deploy-win.ps1` /
+      `scripts/deploy-win-baota.ps1` 以同名函数实现 16 动词，
+      详见 docs/win-channel-design-2026-11-13.md D1 与 docs/baota-win-redesign-2026-11-25.md
+      ——目标机无 bash，registry.sh 对两者只做枚举校验与误配引导）
 - [ ] `registry.sh` 通道表登记 + 互斥约束（如有）
 - [ ] `config_loader.py` 若需新意图键：entry + bash-eval 两处同步
       （win 已加：`process.cmd_win` → cmdWin / `process.hosting` → hosting）
