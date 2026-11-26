@@ -73,7 +73,7 @@
 | W1 | refresh token 明文 localStorage | ✅ 已落实 | api `591a631` + web `0c270a13`：LoginResult 全端点 Set-Cookie `fin_refresh_token`（httponly/lax/secure，续期回写，logout 清除）；/auth/refresh body 优先 Cookie 兜底；web 改内存存储+存量迁移，不再落 localStorage；api 756 passed / web 123 用例过 |
 | W2 | WS/OAuth/代登 token 走 URL query | ✅ 已落实 | api `591a631` + web `0c270a13`：WS 首帧 `{"type":"auth","token"}` 握手（先于订阅，认证后 conn.user 升级；query token 过渡期兼容）；OAuth/imp_token 已有读后 replaceState 清理 |
 | X13 | admin 无 lint/CI/工程化门禁 | ✅ 已落实 | admin `a08d8d8`：ESLint flat config（基线对齐 web）+ lint 脚本 + 310 存量错误清零 + GitHub Actions CI（软链 ../financial-web 匹配 build 跨仓审计）+ AGENTS.md；eslint 0 错误 / vue-tsc / vitest 129 过 |
-| X14 | audit 脚本隐性跨仓依赖 + schema 双仓无比对 | ✅ 已落实 | web `7ab38b50` + admin `d1942d1`：api-field-audit.mjs 迁入 web/packages/contracts/scripts/（resolveWebRoot/resolveAdminRoot），admin 改调同一实体；admin api-sync --check 增 schema.d.ts 字节级比对防漂移 |
+| X14 | audit 脚本隐性跨仓依赖 + schema 双仓无比对 | ✅ 已落实 | web `7ab38b50` + admin `d1942d1`：api-field-audit.mjs 迁入 web/packages/contracts/scripts/（resolveWebRoot/resolveAdminRoot），admin 改调同一实体；admin api-sync --check 增 schema.d.ts 字节级比对防漂移。**11-26 增强** web `0f843dd1`：新增双 `/api` 前缀守卫（baseURL 已含 /api，路径再带 /api 必 404），修注册页券商检索同根 bug |
 | X1 | fin_mt5_* 表三个 DDL 来源无 SSOT | ✅ 已落实 | api `bfab093`：桥 db.py::_TABLES_DDL_TEMPLATE 为 DDL 唯一 owner（init_tables.sql 镜像 + test_ddl_parity 门禁）；alembic `b5c6d7e8f9a0` 只读校验九表存在；api _ensure_ingest_tables 每进程一次 to_regclass 探测 + 生产缺表 fail-fast + 非生产幂等补齐 |
 | X2 | 桥↔api 契约四通道四种口径 | ✅ 已落实 | api `9125801` + deploy project.toml：新增仓库根 contracts/ 共享 pydantic 包（零 app 依赖）——QuoteTick（Redis 行情，api QuoteSnapshot 改继承）/ IngestPayload（ingest，api schemas 改 re-export）/ RatesResponse（/rates 响应 typed 解析）三通道 SSOT；桥 _build_publish_payloads/_build_ingest_payload/get_rates 改构造契约模型（单条校验失败跳过不中断采集）；打包经 deploy mt5-bridge extra_source 搭车进 package/contracts（DryRun 已验证）；/accounts/verify 保留 API_DOC 文档化；api 775 / 桥 60 测试过。四通道中 DB 通道由 X1 收敛 |
 
@@ -88,3 +88,15 @@
 - ✅ P0+P1+P2 部署验证已于 2026-11-26 完成（详见上方「P0 部署验证」节）
 - 遗留观察项：宝塔面板服务 VM 重启后未自启（btPanel/btTask 需手动 Start-Service，建议核查自启配置）；桥 user-session 形态重启后依赖桌面登录（已知设计约束）；851039 账号快照不更新（status 停用，非缺陷）
 - 评审清单分级落实已全部完成（P0 六项 / P1 十二项 / P2 全部代码项）；未列入本轮的架构项（X3-X7、X9、X11、X15-X20 等）与中低危项按清单 §七 修复路线另行排期
+
+## 部署链收尾（2026-11-26，win/linux 双链架构评审遗留项；非分级清单项）
+
+> 评审范围：win/linux 各自逻辑是否通顺、完整、优雅（对话内评审，未单独出文档）。
+> 结论：Linux 4/4/3、Windows 4/3/3（完整扣分因回滚缺机器资产保护）；共同骨架（kind×channel 矩阵 + 16 动词契约 + config_loader.py SSOT）保留。
+
+| 项 | 状态 | 提交 / 证据 |
+|---|------|------------|
+| 回滚路径补机器资产保护（D-F2 同口径，此前仅部署路径有） | ✅ 已落实（本地+winvm 双演练） | deploy `f89b419`：停服后清空前 stash `config\config.ini` → 清空排除 `*.bat` → robocopy `/XF config.ini *.bat` → 还原 stash；本地 robocopy 排除语义演练 + winvm 真机 `mt5-bridge -Rollback -To latest -Yes`（config.ini/run_bridge_task.bat 在位、health 200） |
+| 退役 win 通道归档收尾 | ✅ 已落实 | deploy `44541db`：`scripts/deploy-win.ps1` → `archive/`（头部退役标记，归档后不可执行）；winvm 远端残留副本删除；run-all.sh 第 9 项动词审计 win→baota-win + **新增回滚机器资产保护审计**（cfg-rb stash 与 *.bat 排除缺一即 FAIL）；registry.sh 误配引导改指 baota-win + 枚举放行 baota-win；CHANNEL-CONTRACT/KINDS-CONTRACT/project.toml 注释/manual-deploy-win.md 同步口径；L1 全绿 |
+| deploy/tmp 诊断脚本清理 | ✅ 已落实 | 184 个临时文件入回收站（含 fernet key / token 两个敏感残留）；保留 rollback_drill.ps1 / syntax-check.ps1 / bt-migrate-notes.md |
+| Linux 链优雅度重构（deploy.sh + config_loader.py 收敛重复逻辑） | ⏸ 未做 | 纯重构不影响正确性，评审 3/5 优雅分来源；建议单独窗口进行 |
