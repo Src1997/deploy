@@ -1109,14 +1109,30 @@ function Invoke-ComponentRollback {
         $ErrorActionPreference = $prev
     }
 
+    # 机器资产保护（D-F2 同口径，2026-11-26 回滚路径补齐——此前仅部署路径有）：
+    #   *.bat = schtasks/守护任务动作目标；config\config.ini = 机器调优资产（端口/凭据）
+    #   均不随版本回退：清空前 stash，robocopy 排除，还原后恢复现值
+    $machineCfg = Join-Path $paths.PkgDir 'config\config.ini'
+    $cfgStash = $null
+    if (Test-Path $machineCfg) {
+        $cfgStash = Join-Path $env:TEMP "deploybaotawin-cfg-rb-$Id.ini"
+        Copy-Item $machineCfg $cfgStash -Force
+    }
     Get-ChildItem $paths.PkgDir -Force | Where-Object {
-        $_.Name -notin @('.env', '.venv', 'logs', 'data')
+        $_.Name -notin @('.env', '.venv', 'logs', 'data') -and $_.Extension -ne '.bat'
     } | ForEach-Object {
         if ($_.PSIsContainer) { Remove-BuildDir $_.FullName } else { Remove-BuildFile $_.FullName }
     }
     robocopy $chosen.FullName $paths.PkgDir '/E' '/XD' (Join-Path $chosen.FullName '.venv') `
+        '/XF' 'config.ini' '*.bat' `
         '/NFL' '/NDL' '/NJH' '/NJS' '/NC' '/NS' 2>$null | Out-Null
     if ($LASTEXITCODE -ge 8) { W-Err "回滚复制失败"; return $false }
+    if ($cfgStash -and (Test-Path $cfgStash)) {
+        New-Item (Split-Path $machineCfg -Parent) -ItemType Directory -Force | Out-Null
+        Copy-Item $cfgStash $machineCfg -Force
+        Remove-BuildFile $cfgStash
+        W-OK "已保留机器资产: config\config.ini（*.bat 未受回滚影响）"
+    }
 
     if (-not $NoRestart) { channel_python_restart -Id $Id | Out-Null }
     $auditLine = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | ROLLBACK | $Id | backup=$($chosen.Name) | channel=baota-win"
