@@ -143,8 +143,8 @@
 ### 后端（financial-api + mt5-bridge）
 
 **架构级（跨模块影响）**
-- **X1. `fin_mt5_*` 表三个 DDL 来源，schema 无单一事实源**：bridge 的 init_tables.sql + db.py::ensure_tables()（IF NOT EXISTS 永不追赶）、api 的 alembic 4 个迁移、mt5_collector._ensure_ingest_tables() 测试补齐——T9 时区口径漂移的结构根源。收敛为 bridge DDL 唯一 owner + alembic 只读校验。
-- **X2. 桥↔api 契约四条通道四种口径**：HTTP 靠手写 API_DOC.md、Redis 行情手拼 camelCase dict 单边校验、DB 表共享 init_tables.sql、ingest 又是 api 侧独立 IngestPayload。无共享包，字段改动人肉同步 4 处 → 抽 `contracts` 共享 pydantic 包（api 已有 generated.py 先例）。
+- **X1. `fin_mt5_*` 表三个 DDL 来源，schema 无单一事实源**：bridge 的 init_tables.sql + db.py::ensure_tables()（IF NOT EXISTS 永不追赶）、api 的 alembic 4 个迁移、mt5_collector._ensure_ingest_tables() 测试补齐——T9 时区口径漂移的结构根源。收敛为 bridge DDL 唯一 owner + alembic 只读校验。【已落实 2026-11-26 api bfab093：桥 db.py::_TABLES_DDL_TEMPLATE 为 DDL 唯一 owner（init_tables.sql 镜像 + test_ddl_parity 门禁）；alembic b5c6d7e8f9a0 只读校验九表存在；api _ensure_ingest_tables 每进程一次 to_regclass 探测 + 生产缺表 fail-fast + 非生产幂等补齐】
+- **X2. 桥↔api 契约四条通道四种口径**：HTTP 靠手写 API_DOC.md、Redis 行情手拼 camelCase dict 单边校验、DB 表共享 init_tables.sql、ingest 又是 api 侧独立 IngestPayload。无共享包，字段改动人肉同步 4 处 → 抽 `contracts` 共享 pydantic 包（api 已有 generated.py 先例）。【已落实 2026-11-26 api 9125801：新增仓库根 contracts/ 共享包（纯 pydantic 零 app 依赖）——QuoteTick（Redis 行情，api QuoteSnapshot 改继承）/ IngestPayload（ingest，api schemas 改 re-export）/ RatesResponse（/rates 响应，api 裸 dict 解析改 typed）三通道收敛；桥侧 _build_publish_payloads/_build_ingest_payload/get_rates 改构造契约模型，打包经 deploy extra_source 搭车进 package/contracts；/accounts/verify 响应字段少且带错误码映射，保留 API_DOC 文档化；api 775 / 桥 60 测试过；DB 通道已由 X1 收敛】
 - **X3. `app/crawler` 是 domains 体系外的 9090 行"影子域"**（占 614 个 py 文件 1/4 体量），两套组织范式并存 → 收编为 domains/crawler 或文档固化豁免。
 - **X4. repository 层夹生**：仅 content/engagement/market/news/trade 走 repositories/（18 域引用），resources/system 直接持 Session 写 ORM，system/app_config 甚至 router 直写 delete → 明确"可选"或补齐。
 - **X5. content↔system 双向依赖成环**：home 聚合域反向 import 5+ 域，auth/local→member/agents 靠函数内延迟 import 绕开 → 聚合类跨域 schema 下沉 app/shared。
@@ -163,8 +163,8 @@
 ### 前端（financial-web + financial-admin）
 
 **架构级**
-- **X13. 两工程分层完全异构**：web 六层（app/core/modules/shell/domains/shared）+ AGENTS.md + audit-boundaries.mjs 强制；admin 传统四层无 lint/无 CI/无测试门禁——"重工程化"与"轻量快跑"断层。
-- **X14. API schema 34k 行字节级重复 + 隐性跨工程依赖**：`src/types/api/generated/schema.d.ts` 两边 MD5 相同（34247 行）；admin package.json 直接执行 `node ../financial-web/scripts/api-field-audit.mjs` → 把 web 的 packages/contracts 提为共享 workspace 包。
+- **X13. 两工程分层完全异构**：web 六层（app/core/modules/shell/domains/shared）+ AGENTS.md + audit-boundaries.mjs 强制；admin 传统四层无 lint/无 CI/无测试门禁——"重工程化"与"轻量快跑"断层。【已落实 2026-11-25 admin a08d8d8：ESLint flat config（基线对齐 web）+ lint 脚本 + 310 存量错误清零 + GitHub Actions CI + AGENTS.md；eslint 0 错误 / vue-tsc / vitest 129 过】
+- **X14. API schema 34k 行字节级重复 + 隐性跨工程依赖**：`src/types/api/generated/schema.d.ts` 两边 MD5 相同（34247 行）；admin package.json 直接执行 `node ../financial-web/scripts/api-field-audit.mjs` → 把 web 的 packages/contracts 提为共享 workspace 包。【已落实 2026-11-25 web 7ab38b50 + admin d1942d1：audit 脚本迁入 web/packages/contracts/scripts/（resolveWebRoot/resolveAdminRoot），admin 改调同一实体；admin api-sync --check 增 schema.d.ts 字节级比对防漂移】
 - **X15. i18n 能力不对等**：web 完整 locales + "No hardcoded copy" 强制；admin 无 vue-i18n——若 C 端多语言则后台永远中文，需显式决策。
 
 **结构级**

@@ -60,14 +60,18 @@
 | W5 | 30s 轮询不感知页面可见性 | ✅ 已落实 | web `43f0b839`：新增 useVisibilityAwareInterval（后台暂停/恢复立即刷新），接入 useAsyncData pollingInterval 通道 + GoldTrendFeed |
 | W1 | refresh token 明文 localStorage | ✅ 已落实 | api `591a631` + web `0c270a13`：LoginResult 全端点 Set-Cookie `fin_refresh_token`（httponly/lax/secure，续期回写，logout 清除）；/auth/refresh body 优先 Cookie 兜底；web 改内存存储+存量迁移，不再落 localStorage；api 756 passed / web 123 用例过 |
 | W2 | WS/OAuth/代登 token 走 URL query | ✅ 已落实 | api `591a631` + web `0c270a13`：WS 首帧 `{"type":"auth","token"}` 握手（先于订阅，认证后 conn.user 升级；query token 过渡期兼容）；OAuth/imp_token 已有读后 replaceState 清理 |
+| X13 | admin 无 lint/CI/工程化门禁 | ✅ 已落实 | admin `a08d8d8`：ESLint flat config（基线对齐 web）+ lint 脚本 + 310 存量错误清零 + GitHub Actions CI（软链 ../financial-web 匹配 build 跨仓审计）+ AGENTS.md；eslint 0 错误 / vue-tsc / vitest 129 过 |
+| X14 | audit 脚本隐性跨仓依赖 + schema 双仓无比对 | ✅ 已落实 | web `7ab38b50` + admin `d1942d1`：api-field-audit.mjs 迁入 web/packages/contracts/scripts/（resolveWebRoot/resolveAdminRoot），admin 改调同一实体；admin api-sync --check 增 schema.d.ts 字节级比对防漂移 |
+| X1 | fin_mt5_* 表三个 DDL 来源无 SSOT | ✅ 已落实 | api `bfab093`：桥 db.py::_TABLES_DDL_TEMPLATE 为 DDL 唯一 owner（init_tables.sql 镜像 + test_ddl_parity 门禁）；alembic `b5c6d7e8f9a0` 只读校验九表存在；api _ensure_ingest_tables 每进程一次 to_regclass 探测 + 生产缺表 fail-fast + 非生产幂等补齐 |
+| X2 | 桥↔api 契约四通道四种口径 | ✅ 已落实 | api `9125801` + deploy project.toml：新增仓库根 contracts/ 共享 pydantic 包（零 app 依赖）——QuoteTick（Redis 行情，api QuoteSnapshot 改继承）/ IngestPayload（ingest，api schemas 改 re-export）/ RatesResponse（/rates 响应 typed 解析）三通道 SSOT；桥 _build_publish_payloads/_build_ingest_payload/get_rates 改构造契约模型（单条校验失败跳过不中断采集）；打包经 deploy mt5-bridge extra_source 搭车进 package/contracts（DryRun 已验证）；/accounts/verify 保留 API_DOC 文档化；api 775 / 桥 60 测试过。四通道中 DB 通道由 X1 收敛 |
 
 ## P2 文档同步
 
-- ✅ 评审文档：T8/T9/A3/T7/W4/W5 已加【已落实 2026-11-26】标记
-- ✅ 桥 API_DOC.md：/rates 与 /accounts/verify 端点补录 + T9 时间口径统一说明
+- ✅ 评审文档：T8/T9/A3/T7/W4/W5 + X13/X14/X1/X2 已加【已落实 2026-11-26】标记
+- ✅ 桥 API_DOC.md：/rates 与 /accounts/verify 端点补录 + T9 时间口径统一说明 + §0 契约 SSOT（contracts 三通道模型索引）
 - ✅ 桥 config.example.ini：server_tz_offset_hours（T9）+ response_cache_ttl_sec（T7）
 
 ## 后续
 
-- P0+P1+P2 部署验证：winvm 仍未恢复（2026-11-25 下午起 ping/SSH 不可达）；P1/P2 代码项随 P0 部署一并生效。恢复后按 P0 节顺序执行，额外验证：桥并发采集/行情无 -10004；WS 重客户端不假死；admin 慢请求 15s 超时提示；A3 索引生效（EXPLAIN /summaries 查询走 idx_fin_mt5_snapshots_login_time）；/rates 二次请求 <50ms（TTL 缓存命中）
-- P2 剩余：X1/X2 契约层收敛（大项）/ X13/X14 admin lint+CI+schema 去重
+- P0+P1+P2 部署验证：winvm 仍未恢复（2026-11-25 下午起 ping/SSH 不可达，2026-11-26 复测仍不可达）；P1/P2 代码项随 P0 部署一并生效。恢复后按 P0 节顺序执行，额外验证：桥并发采集/行情无 -10004；WS 重客户端不假死；admin 慢请求 15s 超时提示；A3 索引生效（EXPLAIN /summaries 查询走 idx_fin_mt5_snapshots_login_time）；/rates 二次请求 <50ms（TTL 缓存命中）；桥重启后 contracts 导入正常（X2 打包搭车，svc_entry 兜底 sys.path）
+- 评审清单分级落实已全部完成（P0 六项 / P1 十二项 / P2 全部代码项）；未列入本轮的架构项（X3-X7、X9、X11、X15-X20 等）与中低危项按清单 §七 修复路线另行排期
