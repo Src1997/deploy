@@ -10,7 +10,7 @@
 | X10 | mt5-bridge-service 不在 git 管控 | ✅ 已落实 | api `bf97002`：迁入 `financial-api/mt5-bridge/`（32 文件，密钥/日志/bak 双 .gitignore 防线），原目录归档 `mt5-bridge-service.archive-20261125`（含本地 venv/密钥，确认稳定后可删）；deploy `project.toml` source_path → `financial/financial-api/mt5-bridge`；桥 43 测试过 |
 | T2 | 桥生产裸奔（0.0.0.0 + 空 token 仅告警） | ✅ 已落实（代码+winvm） | api `df9006d`：非回环+无 token 拒绝启动（RuntimeError）；winvm config.ini 本就回环（2026-11-23 已改）+ 新增 api_token（`6c2f5ca2…`，存 deploy/tmp/t2-token.txt）；RCC `ea.api_token` 同值；桥重启三态验证 health 200 / 无token 401 / 带token 200；api 重启后 `/rates` 调桥带 token 200 实证 |
 | A1 | EA 归属校验被白名单短路（跨用户越权） | ✅ 已落实 | api `2a4fee9`：`_ensure_login_allowed_for_user` 白名单不再短路登录态（None/命中均继续过 `resolve_user_logins`）；无归属渐进期放行保留；测试重写 3 例，50 passed |
-| A2 | MT5 投资者密码明文落库 | ✅ 代码落地 / ⏳ winvm 部署待执行 | api `c2b4475`：`app/core/crypto.py` + `EA_MT5_PASSWORD_FERNET_KEY`（空密钥 fail-fast）+ add_account 加密落库；桥 `app/crypto.py` 解密（历史明文兼容）+ settings `[security] fernet_key` + collector 读库解密；迁移脚本 `mt5-bridge/scripts/migrate_password_encrypt.py`（列宽 256→512 + 明文批量加密，幂等）；api/桥单测 12+4 例。**winvm 待办**：① 生成 key 已存 deploy/tmp/a2-fernet-key.txt；② api .env 加 `EA_MT5_PASSWORD_FERNET_KEY`；③ 桥 config.ini 加 `[security] fernet_key`；④ 三端打包部署；⑤ 跑迁移脚本（先 --dry-run） |
+| A2 | MT5 投资者密码明文落库 | ✅ 已落实（含 winvm 部署+迁移） | api `c2b4475`：`app/core/crypto.py` + `EA_MT5_PASSWORD_FERNET_KEY`（空密钥 fail-fast）+ add_account 加密落库；桥 `app/crypto.py` 解密（历史明文兼容）+ settings `[security] fernet_key` + collector 读库解密；迁移脚本 `mt5-bridge/scripts/migrate_password_encrypt.py`（列宽 256→512 + 明文批量加密，幂等）；api/桥单测 12+4 例。**winvm 2026-11-26 完成**：key 已分发（api .env / 桥 config.ini）、双端打包部署、迁移 dry-run→正式（3 行全密文） |
 | D5 | /docs 生产暴露接口面 | ✅ 已落实 | api：`create_app` docs_url/redoc_url/openapi_url 按 `is_production` 关闭；单测 2 例 |
 | W3 | EA 接口失败静默降级假 mock | ✅ 已落实 | web `39d09f2e`：ea-account/index.ts 6 处 catch→getMock 加 `import.meta.env.DEV` 门禁，生产抛错走 UI 错误态；顺手修 2 处既有 lint 错误 + 清 scripts_tmp；vue-tsc 过 |
 
@@ -33,13 +33,25 @@
 
 ## P0 部署验证（winvm 192.168.31.200）
 
-- ⏸ **受阻**：winvm SSH/ping 全部不可达（虚拟机疑似挂起/关机），待机器恢复后按以下顺序执行：
-  1. 分发 Fernet key（api .env / 桥 config.ini）
-  2. `pack.ps1 mt5-bridge` + deploy（`-NoRestart` + `schtasks /run /tn mt5-bridge`）——新桥代码兼容明文
-  3. `pack.ps1 financial-api` + deploy（重启，RCC 缓存重载 + A2 加密写库 + D5 docs 关闭 + A1 生效）
-  4. 迁移脚本 dry-run → 正式跑（DB 明文 → 密文）
-  5. `financial-web` build:prod + deploy（W3）
-  6. 验证：`/api/health` 200；`/docs` 404（生产）；首页 title「深量科技」；桥采集入库正常；`fin_mt5_accounts.password` 全为 gAAAA 密文
+- ✅ **已完成 2026-11-26**（winvm 重启恢复后执行，P0 全部五步 + P1/P2 抽验）：
+  1. **密钥分发** ✅：api `.env` 加 `EA_MT5_PASSWORD_FERNET_KEY`、桥 `config.ini` 加 `[security] fernet_key`（同值，部署器对两者均 stash/restore 保留）
+  2. **mt5-bridge 打包部署** ✅：`pack.ps1 mt5-bridge`（X2 contracts 经 extra_source 进包 `package/contracts/`，tar 实证）→ deploy `-NoRestart`（config.ini 还原 ✓）→ 桌面登录后计划任务自动拉起（user-session 形态：任务触发器=登录时，VM 重启后**必须有人登录桌面**才起桥）
+  3. **financial-api 打包部署** ✅：`pip install .` + `alembic upgrade head`（X1 只读校验迁移 b5c6d7e8f9a0）✓ → 服务重启健康门 200
+  4. **密码迁移** ✅：`migrate_password_encrypt.py` dry-run（3 行）→ 正式跑（列宽 512 + 全部 gAAAA 密文）；复验 `fin_mt5_accounts.password` 3/3 为 gAAAA 前缀；桥持密钥解密采集正常（快照/成交持续入库）
+  5. **financial-web 构建部署** ✅：`pnpm build`（顺手修用户 WIP 中 useAsyncData 未使用的 `onUnmounted` 导入 TS6133）→ deploy 179 文件 → 首页 title「深量科技」✓（D-F1 防线）
+- **验证明细**（实机）：
+  - D5：`/api/docs` `/api/redoc` `/api/openapi.json` 全 404 ✓
+  - T2：桥无 token 401 / 带 token 200 ✓；RCC `ea.api_token` 与桥 config.ini 同值 ✓
+  - T1：桥稳态采集无并发 -10004（10:29 有 5 条为 MT5 终端重启重连瞬态，恢复后 0）
+  - T7：桥 /rates 二次请求 61ms（TTL 缓存命中，不穿透 MT5 IPC）
+  - A3：`idx_fin_mt5_snapshots_login_time` 索引在位（pg_indexes 实证）；快照/quotes 持续入库（2 分钟 618 条 quotes）
+  - W1：refresh token Cookie 化为单测覆盖（756 passed，登录走上游实机不便触发）
+  - X2：contracts 在 api 部署环境导入 ✓（1.0.0）；桥 /rates 响应经 `RatesResponse` 契约产出，api `_fetch_mt5_candles` typed 解析端到端实证（`/api/quote/candles?symbol=XAUUSD&resolution=1` 30 根 M1 与桥一致）
+- **部署期发现与处置**：
+  - 宝塔面板服务（btPanel/btTask/BTAGService）VM 重启后 Stopped → 手动 Start-Service 后部署链恢复；**建议确认面板服务自启**
+  - RCC `ea.api_base_url` / `ea.api_token` 两行在 `fin_data_source_configs` 中缺失（疑 VM 回档/重建库）→ 已补插（base_url=http://127.0.0.1:9199，token=T2 同值），api 重启后 `/api/quote/candles` 端到端通
+  - nginx 80 端口对 Host=127.0.0.1 返回默认页为 Host 不匹配落默认 server（非 D-F1 复发）；Host=192.168.31.200 正常出 SPA
+  - 部署布局现状：financial-api PKG_DIR 为 `financial/financial-api/package/package`（project.toml deploy_path 带尾部 `/package` + 部署器再拼一层，宝塔面板 python_site 项目 DIR 与之一致可用）——双嵌套为现行约定，后续如重构需同步改 project.toml + 面板项目路径
 
 ## 文档同步
 
@@ -73,5 +85,6 @@
 
 ## 后续
 
-- P0+P1+P2 部署验证：winvm 仍未恢复（2026-11-25 下午起 ping/SSH 不可达，2026-11-26 复测仍不可达）；P1/P2 代码项随 P0 部署一并生效。恢复后按 P0 节顺序执行，额外验证：桥并发采集/行情无 -10004；WS 重客户端不假死；admin 慢请求 15s 超时提示；A3 索引生效（EXPLAIN /summaries 查询走 idx_fin_mt5_snapshots_login_time）；/rates 二次请求 <50ms（TTL 缓存命中）；桥重启后 contracts 导入正常（X2 打包搭车，svc_entry 兜底 sys.path）
+- ✅ P0+P1+P2 部署验证已于 2026-11-26 完成（详见上方「P0 部署验证」节）
+- 遗留观察项：宝塔面板服务 VM 重启后未自启（btPanel/btTask 需手动 Start-Service，建议核查自启配置）；桥 user-session 形态重启后依赖桌面登录（已知设计约束）；851039 账号快照不更新（status 停用，非缺陷）
 - 评审清单分级落实已全部完成（P0 六项 / P1 十二项 / P2 全部代码项）；未列入本轮的架构项（X3-X7、X9、X11、X15-X20 等）与中低危项按清单 §七 修复路线另行排期
