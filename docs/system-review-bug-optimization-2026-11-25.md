@@ -43,8 +43,8 @@
 ## 二、financial-web（C 端）
 
 ### 高
-- **W1. access/refresh token + 用户资料明文 localStorage** — [auth/index.ts:93-100](file:///D:/Workspace/financial/financial-web/src/core/api/auth/index.ts#L93-L100)：XSS 即全量接管（401 自动续期放大 refresh 价值）。修复：refresh 改 httpOnly Cookie。
-- **W2. WS/OAuth/代登 token 全部走 URL query** — websocket/url/index.ts:31-33 等，进网关日志/历史/Referer。改首帧握手或 Sec-WebSocket-Protocol。
+- **W1. access/refresh token + 用户资料明文 localStorage** — [auth/index.ts:93-100](file:///D:/Workspace/financial/financial-web/src/core/api/auth/index.ts#L93-L100)：XSS 即全量接管（401 自动续期放大 refresh 价值）。修复：refresh 改 httpOnly Cookie。【已落实 2026-11-26 api 591a631 + web 0c270a13：全部 LoginResult 端点 Set-Cookie fin_refresh_token（httponly/samesite=lax/secure 按 is_production，滚动续期回写，logout 清除）；/auth/refresh body 优先 Cookie 兜底；web refresh token 改内存存储+存量迁移清理，不再落 localStorage；api 756 passed / web vue-tsc+123 用例过】
+- **W2. WS/OAuth/代登 token 全部走 URL query** — websocket/url/index.ts:31-33 等，进网关日志/历史/Referer。改首帧握手或 Sec-WebSocket-Protocol。【已落实 2026-11-26 api 591a631 + web 0c270a13：WS 改首帧 {"type":"auth","token"} 握手（先于订阅消息，conn.user 认证后升级，query token 过渡期兼容）；OAuth 回调与代登 imp_token 已有读后 replaceState 清理，无需额外改动】
 - **W3. EA 资金接口失败静默降级为假 mock 数据** — [ea-account/index.ts:88-98](file:///D:/Workspace/financial/financial-web/src/core/api/ea-account/index.ts#L88-L98)：网络/5xx 时首页展示硬编码 mock 账号 861125 / 结余 45607.8，isMock 标记仅 1 处消费。金融产品信任红线。修复：降级仅限 dev，否则渲染错误态。【已落实 2026-11-25 web 39d09f2e：6 处 catch 降级加 import.meta.env.DEV 门禁】
 
 ### 中
