@@ -23,7 +23,7 @@ DEPLOY_CHANNEL = native | baota | docker | win | baota-win     # deploy.env.<tar
   baota = 面板 API + 宝塔 supervisor，不碰 systemd/宿主 nginx；
   native = systemd + 宿主 nginx（generate-nginx 路由后端 `channel/native/nginx.sh`）；
   docker = docker/compose + 宿主 nginx 路由。
-- **★win 通道（2026-11-13 新增）**：Windows 目标机专用，**不走 bash 链路**——
+- **★win 通道（2026-11-13 新增；2026-11-25 退役，脚本归档 `archive/deploy-win.ps1`）**：Windows 目标机专用，**不走 bash 链路**——
   执行器为目标机上的 `deploy-win.ps1`（PowerShell 平行入口，与 deploy.sh 对称）。
   bash 侧 registry 仅做枚举校验与误配引导（Linux 目标配 win → exit 2 + 用法提示）。
   设计与实现细节：`docs/win-channel-design-2026-11-13.md`（D1 平行入口 / D9 双形态托管）。
@@ -80,7 +80,7 @@ DEPLOY_CHANNEL = native | baota | docker | win | baota-win     # deploy.env.<tar
 | **baota** | `channel/baota/`（channel.sh + baota_api.py） | ✅ 主力 | 全宝塔所有权：站点/反代/项目/supervisor/状态/日志 |
 | **native** | `channel/native/`（channel.sh + nginx.sh） | ✅ 冻结维护 | systemd + generate-nginx；A/B 应急；hybrid supervisor 探测 |
 | **docker** | `channel/docker/` | ⚠️ MVP | **定位（用户 2026-10-22 拍板）**：应用容器统一维护 + 宿主 nginx 收口路由 + PG/Redis 等基础设施宿主化——"需要别的包配合没问题"，宿主 nginx 是正式组成而非技术债。已试点 deepquant-backend 全绿；多容器/状态视图待验 |
-| **win** | `scripts/deploy-win.ps1`（PowerShell 平行入口） | ⚠️ 已退役（2026-11-25） | NSSM 托管形态随宝塔化改造退役，脚本保留仅作历史参考；winvm 已迁 baota-win（NSSM 零残留） |
+| **win** | `archive/deploy-win.ps1`（已归档，2026-11-25 退役） | ⚠️ 已退役（2026-11-25） | NSSM 托管形态随宝塔化改造退役；winvm 已迁 baota-win（NSSM 零残留） |
 | **baota-win** | `scripts/deploy-win-baota.ps1`（PowerShell 平行入口） | ✅ 现役（2026-11-25 落地） | winvm 192.168.31.200 唯一 Windows 通道：宝塔面板托管站点/反代/Redis/Python 项目（= 原生服务 python_site_<id>）+ PG 原生服务 postgresql-quant + MT5 桥 user-session（宝塔计划任务守护）；env=deploy.env.server-baota-win；前置校验走面板 API（config/get_config + site/get_site_info）；全栈终验 6 服务/6 端口全绿 |
 
 > **baota 可选生成式路由（d40862d，VM 预发）**：`BAOTA_NGINX_GENERATED=1` + `NGINX_LISTEN_PORT`
@@ -97,12 +97,12 @@ token 字段，★不是 key）/ `BAOTA_PYTHON` / `BAOTA_SUPERVISORCTL`；
 ## 7. 新增通道核对清单
 
 - [ ] `scripts/channel/<name>/channel.sh` 实现 §3 全部 16 动词
-      （**win / baota-win 通道例外**：PowerShell 平行入口 `scripts/deploy-win.ps1` /
-      `scripts/deploy-win-baota.ps1` 以同名函数实现 16 动词，
+      （**win（已退役）/ baota-win 通道例外**：PowerShell 平行入口
+      `archive/deploy-win.ps1` / `scripts/deploy-win-baota.ps1` 以同名函数实现 16 动词，
       详见 docs/win-channel-design-2026-11-13.md D1 与 docs/baota-win-redesign-2026-11-25.md
       ——目标机无 bash，registry.sh 对两者只做枚举校验与误配引导）
 - [ ] `registry.sh` 通道表登记 + 互斥约束（如有）
 - [ ] `config_loader.py` 若需新意图键：entry + bash-eval 两处同步
       （win 已加：`process.cmd_win` → cmdWin / `process.hosting` → hosting）
-- [ ] `tests/run-all.sh` 第 9 项自动覆盖动词审计（win：扫描 deploy-win.ps1 同名函数）
+- [ ] `tests/run-all.sh` 第 9 项自动覆盖动词审计（baota-win：扫描 deploy-win-baota.ps1 同名函数）
 - [ ] 本文件 §5 更新；真机单组件试点后再标 ✅

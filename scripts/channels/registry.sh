@@ -36,9 +36,9 @@ _CHANNEL_REQUIRED_VERBS=(
 resolve_deploy_channel() {
     if [ -n "${DEPLOY_CHANNEL:-}" ]; then
         case "$DEPLOY_CHANNEL" in
-            native|baota|docker|win) echo "$DEPLOY_CHANNEL" ; return 0 ;;
+            native|baota|docker|win|baota-win) echo "$DEPLOY_CHANNEL" ; return 0 ;;
             *)
-                err "非法 DEPLOY_CHANNEL='$DEPLOY_CHANNEL'（可选: native | baota | docker | win）"
+                err "非法 DEPLOY_CHANNEL='$DEPLOY_CHANNEL'（可选: native | baota | docker | baota-win；win 已退役）"
                 return 1
                 ;;
         esac
@@ -59,13 +59,18 @@ load_deploy_channel() {
     DEPLOY_CHANNEL="$chan"
     export DEPLOY_CHANNEL
 
-    # ★win 通道不走 bash 链路：目标是 Windows 机器，执行器为目标机上的
-    #   deploy-win.ps1（PowerShell 平行入口，契约同 CHANNEL-CONTRACT.md 16 动词）。
-    #   在 Linux 目标误配 DEPLOY_CHANNEL=win 时给出清晰引导而非"通道文件不存在"。
-    if [ "$chan" = "win" ]; then
-        err "DEPLOY_CHANNEL=win 属 Windows 目标机通道，不在本 bash 链路执行。"
-        err "  正确用法（Windows 目标机上）：powershell -NoProfile -File deploy-win.ps1 <components> -Target=<target> -Yes"
-        err "  设计文档：docs/win-channel-design-2026-11-13.md"
+    # ★win 通道已于 2026-11-25 退役（脚本归档 archive/deploy-win.ps1），现役唯一
+    #   Windows 通道为 baota-win：执行器为目标机上的 deploy-win-baota.ps1（PowerShell
+    #   平行入口，契约同 CHANNEL-CONTRACT.md 16 动词）。在 Linux 目标误配
+    #   DEPLOY_CHANNEL=win / baota-win 时给出清晰引导而非"通道文件不存在"。
+    if [ "$chan" = "win" ] || [ "$chan" = "baota-win" ]; then
+        if [ "$chan" = "win" ]; then
+            err "DEPLOY_CHANNEL=win 已退役（2026-11-25），winvm 已迁 baota-win。"
+        else
+            err "DEPLOY_CHANNEL=baota-win 属 Windows 目标机通道，不在本 bash 链路执行。"
+        fi
+        err "  正确用法（Windows 目标机上）：powershell -NoProfile -File deploy-win-baota.ps1 <components> -Target=<target> -Yes"
+        err "  设计文档：docs/baota-win-redesign-2026-11-25.md"
         exit 2
     fi
 

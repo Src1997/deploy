@@ -1,4 +1,10 @@
-# win 通道手动部署（Windows 目标机）
+# win 通道手动部署（Windows 目标机）【已退役】
+
+> ⚠️ **本通道已于 2026-11-25 退役**（执行器归档 `archive/deploy-win.ps1`）。
+> 现役唯一 Windows 通道为 **baota-win**：`scripts/deploy-win-baota.ps1`，
+> 手册见 [manual-deploy-baota.md](./manual-deploy-baota.md) 与
+> [docs/baota-win-redesign-2026-11-25.md](../baota-win-redesign-2026-11-25.md)。
+> 以下内容仅作历史参考，不再维护。
 
 > 通道：`DEPLOY_CHANNEL=win`。执行器 = `scripts/deploy-win.ps1`（PowerShell 平行入口）。
 > 设计与决策记录：[docs/win-channel-design-2026-11-13.md](../win-channel-design-2026-11-13.md)。

@@ -199,12 +199,12 @@ for chan in baota native docker; do
     fi
 done
 
-# ── win 通道（PowerShell 平行入口，2026-11-13）──
-# deploy-win.ps1 以同名 PowerShell 函数实现 16 动词（设计文档 D1）；
+# ── baota-win 通道（PowerShell 平行入口，2026-11-25 现役；win 通道已归档）──
+# deploy-win-baota.ps1 以同名 PowerShell 函数实现 16 动词；
 # 不经 bash source，用文本扫描函数定义行核对（缺失即 fail-fast）。
-WIN_PS1="$DEPLOY_ROOT/scripts/deploy-win.ps1"
+WIN_PS1="$DEPLOY_ROOT/scripts/deploy-win-baota.ps1"
 if [ ! -f "$WIN_PS1" ]; then
-    bad "win 通道执行器缺失: scripts/deploy-win.ps1"
+    bad "baota-win 通道执行器缺失: scripts/deploy-win-baota.ps1"
     VERB_FAIL=1
 else
     WIN_MISSING=""
@@ -214,37 +214,41 @@ else
             WIN_MISSING="$WIN_MISSING $v"
         fi
     done
-    # 附加检查：win 通道注册进 registry 枚举
+    # 附加检查：win/baota-win 通道注册进 registry 枚举
     if ! grep -q 'native|baota|docker|win' "$DEPLOY_ROOT/scripts/channels/registry.sh"; then
         WIN_MISSING="$WIN_MISSING registry.sh.win-enum"
     fi
+    # 回滚路径机器资产保护（D-F2）：stash config.ini + 清空排除 *.bat 必须在位
+    if ! grep -q 'cfg-rb-' "$WIN_PS1" || ! grep -q "'\*.bat'" "$WIN_PS1"; then
+        WIN_MISSING="$WIN_MISSING rollback-machine-asset-guard"
+    fi
     if [ -n "$WIN_MISSING" ]; then
-        bad "通道 [win] 缺少统一动词/注册: $WIN_MISSING"
+        bad "通道 [baota-win] 缺少统一动词/注册/回滚保护: $WIN_MISSING"
         VERB_FAIL=1
     else
-        pass "通道 [win] 动词完备（deploy-win.ps1 16 函数 + registry 枚举）"
+        pass "通道 [baota-win] 动词完备（deploy-win-baota.ps1 16 函数 + registry 枚举 + 回滚资产保护）"
     fi
 fi
 
-# ── 清空保留名单一致性（win vs Linux，KINDS-CONTRACT 铁律 3 防漂移）──
-# Linux: deploy-python.sh 保留名单；win: deploy-win.ps1 保留数组
+# ── 清空保留名单一致性（baota-win vs Linux，KINDS-CONTRACT 铁律 3 防漂移）──
+# Linux: deploy-python.sh 保留名单；baota-win: deploy-win-baota.ps1 保留数组
 # 两端必须同为 .env .venv logs data
 KEEP_EXPECTED='.env|.venv|logs|data'
-for f in "$DEPLOY_ROOT/scripts/deploy-python.sh" "$DEPLOY_ROOT/scripts/deploy-win.ps1"; do
+for f in "$DEPLOY_ROOT/scripts/deploy-python.sh" "$DEPLOY_ROOT/scripts/deploy-win-baota.ps1"; do
     if ! grep -qE "$KEEP_EXPECTED" "$f"; then
         bad "清空保留名单缺失于 $(basename "$f")（KINDS-CONTRACT 铁律 3）"
         VERB_FAIL=1
     fi
 done
 KEEP_OK=1
-# deploy-win.ps1 保留名单逐项精确核对（-notin @('.env','.venv','logs','data')）
+# deploy-win-baota.ps1 保留名单逐项精确核对（-notin @('.env','.venv','logs','data')）
 for k in '.env' '.venv' 'logs' 'data'; do
-    grep -q "'$k'" "$DEPLOY_ROOT/scripts/deploy-win.ps1" || KEEP_OK=0
+    grep -q "'$k'" "$DEPLOY_ROOT/scripts/deploy-win-baota.ps1" || KEEP_OK=0
 done
 if [ "$KEEP_OK" -eq 1 ]; then
     pass "清空保留名单两端一致（.env .venv logs data）"
 else
-    bad "deploy-win.ps1 清空保留名单与 KINDS-CONTRACT 铁律 3 不一致"
+    bad "deploy-win-baota.ps1 清空保留名单与 KINDS-CONTRACT 铁律 3 不一致"
     VERB_FAIL=1
 fi
 

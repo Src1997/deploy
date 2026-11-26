@@ -1,12 +1,12 @@
-# project-configs/mt5-bridge/project.toml — MT5 Bridge Service（win 通道首个接入项目）
+# project-configs/mt5-bridge/project.toml — MT5 Bridge Service（baota-win 通道接入项目）
 #
 # ★ 本项目仅可在 Windows 目标机部署（MetaTrader5 包 Windows-only；MT5 IPC 需
-#   交互式桌面会话 → hosting=user-session，见 docs/win-channel-design-2026-11-13.md D9）。
+#   交互式桌面会话 → hosting=user-session，见 docs/baota-win-redesign-2026-11-25.md）。
 #   Linux 目标机不要部署此组件（pip 装 MetaTrader5 必失败）。
 #
-# 部署方式（win 通道不走 bash 链路）：
-#   本机:  powershell -File scripts\deploy-win.ps1 mt5-bridge -Target server-win -Yes
-#   远程:  pack.ps1 mt5-bridge 打包 → dist 同步目标机 → 目标机执行 deploy-win.ps1
+# 部署方式（baota-win 通道不走 bash 链路；win 通道 2026-11-25 退役）：
+#   本机:  powershell -File scripts\deploy-win-baota.ps1 mt5-bridge -Target server-baota-win -Yes
+#   远程:  pack.ps1 mt5-bridge 打包 → dist 同步目标机 → 目标机执行 deploy-win-baota.ps1
 #
 # ★ 试验端口 9199（现役用户会话 bridge 用 9099，两者并存互不干扰）
 

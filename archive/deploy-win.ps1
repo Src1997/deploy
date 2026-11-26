@@ -2,6 +2,8 @@
 <#
 .SYNOPSIS
     deploy-win.ps1 - Windows 目标机部署执行器（win 通道，PowerShell 平行入口）
+    【已归档退役 2026-11-25】winvm 已迁 baota-win，现役执行器为 scripts/deploy-win-baota.ps1。
+    本文件仅作历史参考，不可直接执行（相对引用路径已随归档失效）。
 
 .DESCRIPTION
     与 Linux 侧 deploy.sh + core/ + kinds/python + channels/win 对称的
