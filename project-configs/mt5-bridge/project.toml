@@ -42,3 +42,9 @@ package_mode = "app-package"
 #   settings.py 已支持）。★2026-11-16 试点实证：accounts.json 不排除时，
 #   accounts_from_db=false 会回落到它 → 试验位加载现役账号 attach 真实终端采集
 extra_exclude_files = ["config.ini*", "accounts.json*"]
+# X2（2026-11-26）：桥 ↔ api 共享契约包搭车——契约 SSOT 在仓库根
+# financial-api/contracts/（零 app 依赖纯 pydantic），app-package 布局下
+# 拷贝为 package/contracts，与桥 app/ 同级，svc_entry.py 运行时可直接 import
+[[components.pack.extra_source]]
+path = "financial/financial-api/contracts"
+dest = "package/contracts"
