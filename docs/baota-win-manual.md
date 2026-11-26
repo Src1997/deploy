@@ -71,6 +71,18 @@ http://192.168.31.200/api/health （应返回含 `"status":"ok"`）。
 | 部署失败 | 输出里有备份路径；用 `-Rollback` 回滚后排查，别硬再发 |
 | 忘记面板密码 | winvm 上管理员 PowerShell 执行 `cd C:\BtSoft\panel && python tools.py panel` 重置 |
 
+### 5.1 VM 重启/断电恢复后必查（2026-11-26 实证）
+
+| 检查项 | 现象与处置 |
+|---|---|
+| 宝塔面板服务 | btPanel/btTask/BTAGService 可能 Stopped（8888 不通、deploy preflight 失败"无法连接远程服务器"）→ 管理员 PowerShell：`Start-Service btPanel,btTask,BTAGService`；**建议核查其自启配置** |
+| api 服务 | `python_site_financial-api` 可能 Stopped → services.msc 或面板启动 |
+| MT5 桥 | 计划任务 `mt5-bridge` 触发器=**登录时**、仅交互式——必须 **Administrator 登录桌面**才自动拉起；登录后看 `/health`（mt5Initialized）与日志（启动窗口期 10:29 类 `-10004` 为 MT5 终端重连瞬态，恢复后应归零） |
+| RCC 配置 | 若发现 api→桥 401/地址缺失，查 `fin_data_source_configs` 的 `ea.api_base_url` / `ea.api_token`（2026-11-26 曾发现丢失并补插；token 与桥 config.ini `[server] api_token` 同值） |
+| 前端验证 | 浏览器访问 `http://192.168.31.200/`（注意：**127.0.0.1 Host 会落 nginx 默认 server**，非 D-F1 复发） |
+
+> 另：pack.ps1 依赖 config_loader.py（scripts/core/），脚本有更新时同步 `scripts\` 与 `project-configs\` 到目标机，勿只传 deploy-win-baota.ps1。
+
 ## 6. 每次宝塔升级后必查
 
 1. 网站 fin.local 正常：首页/后台/api 三件套 200，且**首页页面标题是「深量科技」**
