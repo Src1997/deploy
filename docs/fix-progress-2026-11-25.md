@@ -48,7 +48,26 @@
 - ✅ api .env.example：EA_MT5_PASSWORD_FERNET_KEY 生成/分发说明
 - ✅ 评审文档：P0 六项 + P1 全部 12 项加【已落实 2026-11-25】标记
 
+## P2（2026-11-26 落实）
+
+| # | 问题 | 状态 | 提交 / 证据 |
+|---|------|------|------------|
+| T8 | 历史净值重建漏出入金 | ✅ 已落实 | api `68a3305`：_seed_equity_history 回放全部成交（交易类 profit+swap+commission / balance 类 profit），基准从当前净值扣全部增量反推；6 例新单测，桥 53 passed |
+| T9 | K 线时间未做券商服务器时区换算 | ✅ 已落实 | api `68a3305`：_server_tz_offset/_mt5_time_to_utc（NY DST 自动推断 + `[mt5] server_tz_offset_hours` 可配，按 UTC 日期缓存）；fetch_rates K 线与净值回放点统一真实 UTC；API_DOC 补 /rates 与 verify 端点 + 时间口径说明 |
+| A3 | fin_mt5_snapshots 无索引 + 全表聚合 | ✅ 已落实 | api `2be1af3`：_latest_snapshot_rows 改 DISTINCT ON (login)；alembic `a3b4c5d6e7f8` 补 idx_fin_mt5_snapshots_login_time（与桥 DDL 同名幂等）；api 751 passed |
+| T7 | 轮询重复全量传输（/rates 无缓存 + account-info 全量 deals） | ✅ 已落实 | api `2be1af3`：桥 /account-info 与 /rates 响应 TTL 缓存（默认 3s，`[server] response_cache_ttl_sec`），D8 overview 同根受益；桥 58 passed |
+| W4 | 首页板块零错误态 | ✅ 已落实 | web `43f0b839`：showSectionError 分支（提示+重试），error 返回值不再无人消费 |
+| W5 | 30s 轮询不感知页面可见性 | ✅ 已落实 | web `43f0b839`：新增 useVisibilityAwareInterval（后台暂停/恢复立即刷新），接入 useAsyncData pollingInterval 通道 + GoldTrendFeed |
+| W1 | refresh token 明文 localStorage | 🔄 实施中 | （api+web 契约改动，见下方 W1/W2 详情） |
+| W2 | WS/OAuth/代登 token 走 URL query | 🔄 实施中 | WS 首帧握手实施中；OAuth 回调/代登 imp_token 为外部上游/admin 协同项，本阶段先做 URL 读后即清缓解 |
+
+## P2 文档同步
+
+- ✅ 评审文档：T8/T9/A3/T7/W4/W5 已加【已落实 2026-11-26】标记
+- ✅ 桥 API_DOC.md：/rates 与 /accounts/verify 端点补录 + T9 时间口径统一说明
+- ✅ 桥 config.example.ini：server_tz_offset_hours（T9）+ response_cache_ttl_sec（T7）
+
 ## 后续
 
-- P0+P1 部署验证：winvm 仍未恢复（2026-11-25 下午起 ping/SSH 不可达）；P1 项均为代码内行为（无新配置/密钥），随 P0 部署一并生效。恢复后按上文顺序执行，额外验证：桥并发采集/行情无 -10004；WS 重客户端不假死；admin 慢请求 15s 超时提示
-- P2：T8/T9 行情正确性 / A3/T7 缓存索引 / W1/W2 token 存储传输 / W4/W5 错误态+可见性 / X1/X2 契约层收敛 / X13/X14 admin lint+CI
+- P0+P1+P2 部署验证：winvm 仍未恢复（2026-11-25 下午起 ping/SSH 不可达）；P1/P2 代码项随 P0 部署一并生效。恢复后按 P0 节顺序执行，额外验证：桥并发采集/行情无 -10004；WS 重客户端不假死；admin 慢请求 15s 超时提示；A3 索引生效（EXPLAIN /summaries 查询走 idx_fin_mt5_snapshots_login_time）；/rates 二次请求 <50ms（TTL 缓存命中）
+- P2 剩余：W1/W2（实施中）/ X1/X2 契约层收敛 / X13/X14 admin lint+CI

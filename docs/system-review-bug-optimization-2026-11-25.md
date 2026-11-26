@@ -19,7 +19,7 @@
 ### 高
 - **A1. EA 账号归属校验被白名单短路（跨用户越权）** — [ea_account/service.py:152-154](file:///D:/Workspace/financial/financial-api/app/domains/market/ea_account/service.py#L152-L154)：`_ensure_login_allowed_for_user` 在 RCC `ea.visible_logins` 未配置（默认 None）时直接放行，任何登录用户 `?login=任意账号` 可读他人余额/净值/成交（/summary、/deals、/equity-history）。修复：登录用户一律先过 resolve_user_logins 归属校验，白名单只决定匿名可见。【已落实 2026-11-25 api 2a4fee9，测试重写 50 passed】
 - **A2. MT5 投资者密码明文落库** — [add_account.py:215-228](file:///D:/Workspace/financial/financial-api/app/domains/market/ea_account/add_account.py#L215-L228)：`fin_mt5_accounts.password` 无加密（DDL 无加密字段）。DB 泄露即可动真实资金。修复：Fernet/KMS 加密，仅桥侧解密。【已落实 2026-11-25 api c2b4475：app/core/crypto.py + 桥侧解密兼容明文 + 迁移脚本；winvm 部署与存量迁移待执行】
-- **A3. fin_mt5_snapshots 无索引 + 每请求全表聚合** — 建表仅主键（mt5_collector/service.py:65-77），/summaries 轮询执行 `GROUP BY login` 全表聚合，随采集线性劣化。修复：建 `(login, created_at DESC)` 索引 + DISTINCT ON。
+- **A3. fin_mt5_snapshots 无索引 + 每请求全表聚合** — 建表仅主键（mt5_collector/service.py:65-77），/summaries 轮询执行 `GROUP BY login` 全表聚合，随采集线性劣化。修复：建 `(login, created_at DESC)` 索引 + DISTINCT ON。【已落实 2026-11-26 api 2be1af3：查询改 DISTINCT ON + alembic a3b4c5d6e7f8 补索引（与桥 DDL 同名幂等），api 751 测试过】
 
 ### 中
 - **A4. debug 默认 True → 验证码进生产日志** — `_server.py:15`；email/sms codes.py 只看 debug 门。
@@ -48,8 +48,8 @@
 - **W3. EA 资金接口失败静默降级为假 mock 数据** — [ea-account/index.ts:88-98](file:///D:/Workspace/financial/financial-web/src/core/api/ea-account/index.ts#L88-L98)：网络/5xx 时首页展示硬编码 mock 账号 861125 / 结余 45607.8，isMock 标记仅 1 处消费。金融产品信任红线。修复：降级仅限 dev，否则渲染错误态。【已落实 2026-11-25 web 39d09f2e：6 处 catch 降级加 import.meta.env.DEV 门禁】
 
 ### 中
-- **W4.** 首页板块零错误态（HomePageSection:126-235），useHomeBlockData 的 error 返回值无人消费，失败整块静默消失 → 补错误分支+重试。
-- **W5.** 30s 轮询不感知页面可见性（GoldTrendFeed:89-95 等，全库仅 1 处处理）→ 封装 useVisibilityAwareInterval。
+- **W4.** 首页板块零错误态（HomePageSection:126-235），useHomeBlockData 的 error 返回值无人消费，失败整块静默消失 → 补错误分支+重试。【已落实 2026-11-26 web 43f0b839：showSectionError 分支（提示+重试按钮），与骨架屏互斥】
+- **W5.** 30s 轮询不感知页面可见性（GoldTrendFeed:89-95 等，全库仅 1 处处理）→ 封装 useVisibilityAwareInterval。【已落实 2026-11-26 web 43f0b839：新增 useVisibilityAwareInterval（后台暂停/恢复可见立即刷新），接入 useAsyncData pollingInterval 全量轮询通道 + GoldTrendFeed】
 - **W6.** 前端角色守卫基于可篡改 localStorage（guards/role.ts:19-33）→ 服务端已强校验为前提，前端以 /auth/info 实时为准。
 - **W7.** 全局 onError 每个失败请求弹 toast 无合并（setupRequest.ts:37-40）→ 5s 去重。
 - **W8.** 快讯/消息列表无虚拟化（NewsFlashList:17-29）→ 窗口化渲染。
@@ -105,9 +105,9 @@
 ### 中
 - **T5. mt5Initialized 判定失真** — collector.py:1767：只反映"曾成功"，终端掉线仍 true → 上游守护会持续拿"健康"。以 lastCollect 超阈值联动。
 - **T6. PG 密码明文 config.ini** — config.ini:50；settings 已支持 env 优先但未启用（settings.py:277），另有 database_url 死属性。
-- **T7. 轮询重复全量传输** — account-info 内嵌全量 deals（deals_lookback_days=0 从 2000 年起）；/rates 无 TTL 缓存。拆轻量 summary + 2-5s 缓存。
-- **T8. 历史净值重建漏出入金** — collector.py:856-866：balance 类 deal 被排除未回放，有出入金账号曲线系统性偏移。
-- **T9. K 线时间未做券商服务器时区换算** — collector.py:1749-1751：MT5 time 是服务器时区纪元（UTC+2/+3），上游按 UTC 解释偏移 2-3 小时；equity 采样用本地 time.time()，两套口径并存。
+- **T7. 轮询重复全量传输** — account-info 内嵌全量 deals（deals_lookback_days=0 从 2000 年起）；/rates 无 TTL 缓存。拆轻量 summary + 2-5s 缓存。【已落实 2026-11-26 api 2be1af3：桥 /account-info 与 /rates 加响应 TTL 缓存（默认 3s，response_cache_ttl_sec 可配），高频轮询不穿透 MT5 IPC/全量序列化（D8 同根受益）；轻量 /summary 端点已存在】
+- **T8. 历史净值重建漏出入金** — collector.py:856-866：balance 类 deal 被排除未回放，有出入金账号曲线系统性偏移。【已落实 2026-11-26 api 68a3305：_seed_equity_history 回放全部成交（交易类 profit+swap+commission / balance 类 profit），基准从当前净值扣全部增量反推；6 例新单测，桥 53 过】
+- **T9. K 线时间未做券商服务器时区换算** — collector.py:1749-1751：MT5 time 是服务器时区纪元（UTC+2/+3），上游按 UTC 解释偏移 2-3 小时；equity 采样用本地 time.time()，两套口径并存。【已落实 2026-11-26 api 68a3305：新增 _server_tz_offset/_mt5_time_to_utc（NY DST 自动推断 + server_tz_offset_hours 可配）；fetch_rates K 线 time 与净值回放点统一换算真实 UTC；API_DOC 已更新时间口径】
 - **T10. config.ini 缺失静默用默认值/损坏时 SCM 假活** — settings.py:230-231 + win_service.py:187-189。（与部署链 B-F2 同根：config.ini 是关键机器资产）
 
 ### 低
