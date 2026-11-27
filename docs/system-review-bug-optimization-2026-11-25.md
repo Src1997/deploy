@@ -168,10 +168,10 @@
 - **X15. i18n 能力不对等**：web 完整 locales + "No hardcoded copy" 强制；admin 无 vue-i18n——若 C 端多语言则后台永远中文，需显式决策。
 
 **结构级**
-- **X16.** admin 路由单文件 368 行守卫内联无测试（web 已拆 modules+guards+测试）→ 照 web 模式拆，成本约半天。
-- **X17.** Pinia 两极分化：web 15 store 分层+审计脚本；admin 仅 1 store，741 行 UsersView 承载全部状态 → admin 重页面抽 composable。
-- **X18.** 样式：web 自建 SCSS token 7 层+审计脚本；admin 仅 2 个 css 直用 element-plus → admin 至少引用 web token 子集。
-- **X19.** 巨石组件仅 2 个：EaAccountSummaryFeed 1104 行、UsersView 741 行 → 拆子组件/抽 composable，其余无需处理。
+- **X16.** admin 路由单文件 368 行守卫内联无测试（web 已拆 modules+guards+测试）→ 照 web 模式拆，成本约半天。【已落实 2026-11-27 admin 43a7c5b：路由表拆 routes.ts、守卫拆 guards.ts（setupRouterGuards），新增 guards.spec.ts 7 例（无 token 重定向/公开路由/restoreSession 成败/capability 拦截/最长前缀继承）；vitest 136 过】
+- **X17.** Pinia 两极分化：web 15 store 分层+审计脚本；admin 仅 1 store，741 行 UsersView 承载全部状态 → admin 重页面抽 composable。【部分此前已落实（6 个 composables）；2026-11-27 admin 43a7c5b：UsersView 778 行 → 253 行，对话框/抽屉拆 5 子组件（UserFormDialog/UserDisableDialog/TempPasswordDialog/UserDetailDrawer/RolePermDialog，各自内聚 composable + defineExpose），纯展示辅助下沉 userTag.ts；实机回归 7/7 PASS】
+- **X18.** 样式：web 自建 SCSS token 7 层+审计脚本；admin 仅 2 个 css 直用 element-plus → admin 至少引用 web token 子集。【已落实 2026-11-27 admin 43a7c5b：新增 styles/tokens.css（字号/行高/间距/圆角/阴影/浅色语义色，镜像 web primitives + _default 浅色主题，头部注明手工同步约定），main.ts 先于 global.css 引入，admin-common.css 字号/间距/圆角全部换 token；--el-* 语义色维持】
+- **X19.** 巨石组件仅 2 个：EaAccountSummaryFeed 1104 行、UsersView 741 行 → 拆子组件/抽 composable，其余无需处理。【admin 侧 UsersView 已拆（43a7c5b，见 X17）；web 侧 EaAccountSummaryFeed 早前已抽 useEaDeals/useEaSummaryStats/useEaDealChart/chart.ts + 2 测试，index.vue 本体（~1235 行）拆分属 C 端生产行情组件，留待单独批次（不在 admin 重构范围）】
 - **X20. H5/PC 共存策略判定：单代码库响应式合理，不拆 H5 工程**（拆分将复制 shell/core 40+ 模块，成本远大于收益）。
 
 > 正面确认：两工程 any 密度极低（12/9 处）、路由全懒加载、web 的三个边界审计脚本体系是显著亮点。**monorepo 判定：仅契约层合并（contracts 包），业务代码不合并**——受众、UI 配置、迭代节奏不同。
