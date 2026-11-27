@@ -158,7 +158,7 @@
 **卫生**
 - **X10.【立即处理】mt5-bridge-service 不在 git 管控下**（not a git repository），config.ini.bak×3、accounts.json.bak 散落仓库目录 → 立即建库 + 清理 bak。【已落实 2026-11-25 api bf97002：并入 financial-api 仓库 mt5-bridge/ 子目录（32 文件），密钥/日志/bak 双 .gitignore 防线，bak 清除，原目录归档，deploy project.toml source_path 已改指新位置】
 - **X11.** api 153 个测试文件+CI 完整，但桥仅 9 个 ad-hoc 脚本无 CI；mypy 13 个 overrides 把行情核心链路豁免——类型检查对最关键代码失效。
-- **X12.** 孤儿目录：api/scripts_tmp/（10 个临时脚本）、web/scripts_tmp/（4 个诊断 cjs）、logs/、.worktrees/ 混仓库根。
+- **X12.** 孤儿目录：api/scripts_tmp/（10 个临时脚本）、web/scripts_tmp/（4 个诊断 cjs）、logs/、.worktrees/ 混仓库根。【已落实 2026-11-27 api 19e523e + web a5151b01：scripts_tmp 出库（可复用的 e2e_verify_v544.cjs / seed_deploy_incremental.py 迁 deploy/scripts/financial-verify/，deploy 76c2681），两端 /scripts_tmp 入 ignore；web .gitignore UTF-16 乱码行修复，web 空 scripts_tmp/logs/.worktrees 删除并入 ignore；api 空 logs/.worktrees 删除】
 
 ### 前端（financial-web + financial-admin）
 
