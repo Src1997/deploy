@@ -590,8 +590,12 @@ function channel_python_restart {
     $workerGuard = 'C:\deploy\scripts\win-worker-guard.ps1'
     if (Test-Path $workerGuard) {
         try {
+            # w4（2026-11-27）：守护带部署窗口豁免（90s 内有包文件写入则跳过）。
+            # 收尾触发时包复制已完成，写入 nowait 标记让守护本轮豁免 mtime 检查
+            # （守护脚本消费后即删除），否则刚解压完的包会被误判为 mid-deploy。
+            New-Item -ItemType File -Path 'C:\deploy\scripts\worker-guard.nowait' -Force | Out-Null
             & powershell -NoProfile -ExecutionPolicy Bypass -File $workerGuard | Out-Null
-            W-Info "worker 守护已触发（arq/streaming 存活检查 + 按需拉起）"
+            W-Info "worker 守护已触发（arq/streaming 存活检查 + 按需拉起，本轮豁免部署窗口检查）"
         } catch {
             W-Warn "worker 守护触发失败（不影响部署）: $($_.Exception.Message)"
         }
