@@ -100,3 +100,30 @@ http://192.168.31.200/api/health （应返回含 `"status":"ok"`）。
 - 每次部署自动备份到 `C:\wwwroot\project\backup\<组件id>\<时间戳>\`，默认留 5 份。
 - `.env`、`.venv`、`logs`、`data` 不在备份/清空范围（部署永不动它们）。
 - 数据库备份：宝塔面板 → 数据库 → 定期备份（如未配置建议开启）。
+
+## 8. Worker 守护任务（financial-workers-guard，2026-11-27）
+
+schtasks `\financial-workers-guard` 每 5 分钟跑 `C:\deploy\scripts\win-worker-guard.ps1`：
+
+- **arq worker**：进程存活检查，缺失即按需拉起（VM 重启后不再手工补）；
+- **streaming worker**：按 package `.env` 的 `APP_ROLE` / `CRAWLER_ENABLED` 决定启停
+  （api 形态按设计不运行，health 里显示 disabled 不算 degraded）；
+- **部署窗口豁免**：90s 内有包文件写入（`.venv`/`logs`/`*.pyc` 除外）→ 本轮跳过，
+  避免落在部署中间对半写包拉起 worker；部署收尾触发的守护经
+  `C:\deploy\scripts\worker-guard.nowait` 标记豁免该检查（守护消费后即删）。
+
+**运维三条铁律**：
+
+1. **手工恢复 worker 一律走 `schtasks /run /tn financial-workers-guard`**——
+   ssh 会话里直接跑守护/拉起的进程是 ssh 子进程，**ssh 断开即死**（实测两次踩坑）。
+2. **venv 双进程是正常结构**：`.venv\Scripts\python.exe`（启动器）+ 系统
+   `Python312\python.exe`（真实子进程，占端口的通常是他）——不要按
+   ExecutablePath 杀"非 venv 路径"进程（2026-11-27 误杀教训）。
+3. 排查顺序：`Get-CimInstance Win32_Process -Filter "Name='python.exe'"`
+   看命令行 → `logs\arq-worker.err.log` → `/api/health/detailed` 的 arq 字段。
+
+## 9. 已知探针陷阱
+
+- winvm 上 `Invoke-WebRequest http://127.0.0.1/` 落 **nginx 默认 server**（返回 640
+  字节默认页，不是站点）——web 验证必须用 `http://192.168.31.200/` 或
+  `Host: fin.local`（D-F1 口径，2026-11-27 再次踩到）。
