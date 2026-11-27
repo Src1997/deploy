@@ -448,16 +448,22 @@ function Start-UserSessionProc {
 }
 
 function Stop-UserSessionProc {
-    param([Parameter(Mandatory)][string]$Svc, [Parameter(Mandatory)][string]$PkgDir)
+    param([Parameter(Mandatory)][string]$Svc, [Parameter(Mandatory)][string]$PkgDir, [string]$Port)
     $pidFile = Join-Path (Join-Path $PkgDir 'logs') "$Svc.pid"
-    if (-not (Test-Path $pidFile)) { return $true }
-    $procId = [int](Read-TextFile $pidFile).Trim()
-    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-    if ($proc) {
-        Stop-Process -Id $procId -Force -Confirm:$false
-        W-Info "已停止 $Svc (PID=$procId)"
+    if (Test-Path $pidFile) {
+        $procId = [int](Read-TextFile $pidFile).Trim()
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($proc) {
+            Stop-Process -Id $procId -Force -Confirm:$false
+            W-Info "已停止 $Svc (PID=$procId)"
+        }
+        Remove-BuildFile $pidFile
     }
-    Remove-BuildFile $pidFile
+    # D5（2026-11-27 实际事故）：pidfile 过期时（守护 bat 拉起的进程不回写 pidfile），
+    # 旧实例不会被停掉 → 新实例绑不上端口静默退出 → 健康门误验旧进程 → 部署空转。
+    # 且该形态进程命令行多为相对路径（.venv\Scripts\python.exe svc_entry.py debug），
+    # 无法按 package 路径匹配——监听端口是唯一可靠特征，复用 D2 孤儿清理。
+    if ($Port) { Stop-PortOrphans -Port $Port }
     return $true
 }
 
@@ -530,7 +536,8 @@ function channel_python_restart {
     # 不会被执行（2026-11-25 实际发生）。service 形态无守护拉起，维持跳过。
     if ($NoRestart) {
         if ($hosting -eq 'user-session') {
-            Stop-UserSessionProc -Svc $Id -PkgDir $paths.PkgDir | Out-Null
+            $port0 = [string]$comp.process.port
+            Stop-UserSessionProc -Svc $Id -PkgDir $paths.PkgDir -Port $port0 | Out-Null
             W-Warn "-NoRestart：已停旧进程（user-session）——等待守护/计划任务拉起新版本"
         } else {
             W-Warn "跳过重启 (-NoRestart)"
@@ -542,7 +549,7 @@ function channel_python_restart {
     $port = [string]$comp.process.port
 
     if ($hosting -eq 'user-session') {
-        Stop-UserSessionProc -Svc $Id -PkgDir $paths.PkgDir | Out-Null
+        Stop-UserSessionProc -Svc $Id -PkgDir $paths.PkgDir -Port $port | Out-Null
         if ($port -and (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) {
             W-Warn "端口 $port 仍被占用，等待释放..."
             for ($i = 0; $i -lt 10; $i++) {
