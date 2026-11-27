@@ -151,7 +151,7 @@
 
 **结构级**
 - **X6.** resources/service.py 1003 行全仓最大 + 域根平铺，与 market/content 子包组织相反 → 拆子包。
-- **X7.** 桥 collector.py 1609 行 59 方法巨石（采集/验证/落库/发布全在一个类），db.py 631 行裸 SQL → 拆 verify-queue/persist/publish 模块。
+- **X7.** 桥 collector.py 1609 行 59 方法巨石（采集/验证/落库/发布全在一个类），db.py 631 行裸 SQL → 拆 verify-queue/persist/publish 模块。【collector 部分已落实 2026-11-27 api 7729a7f：collector.py 1895→1182 行，拆 VerifyQueueMixin（collector_verify）/MarketDataMixin（collector_market）/EquityEventsMixin（collector_equity）/PersistMixin（collector_persist），方法体逐字迁移；_collect_account 因 AccountSnapshot 运行时构造 + 测试 patch("app.collector.mt5") 依赖留在宿主；桥 60 测试过 + winvm 部署实测 health 200 / heartbeat accounts=2。db.py 裸 SQL 收敛留待后续批次】
 - **X8.** alembic upgrade_head 失败仅 warning 继续启动（db/migrate.py）——迁移失败 schema 静默落后 → prod fail-fast。【已落实 2026-11-25 api 91436dd：生产迁移失败抛出阻止启动（配合 D3 健康门自动回滚），非生产保持容错；3 例单测】
 - **X9.** core/shared 边界含糊（两处 i18n 命名不可区分）；runtime 配置三层叠加 + bridge 裸 SQL 直读 fin_data_source_configs（60s 缓存不一致窗口）。
 
