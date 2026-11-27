@@ -583,6 +583,19 @@ function channel_python_restart {
     }
     $ErrorActionPreference = $prev
     Start-Sleep -Seconds 2
+    # D6（2026-11-27 实际事故）：宝塔服务 stop/start 会连带杀掉同 package venv 的
+    # arq worker（BaoTa 按进程树/venv 清理）——worker 守护任务最长 5 分钟才兜底，
+    # 期间 /health/detailed 因 arq 心跳缺失 degraded。部署收尾立即触发一次
+    # worker 守护（幂等：进程存活则 no-op），消除该 degraded 窗口。
+    $workerGuard = 'C:\deploy\scripts\win-worker-guard.ps1'
+    if (Test-Path $workerGuard) {
+        try {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $workerGuard | Out-Null
+            W-Info "worker 守护已触发（arq/streaming 存活检查 + 按需拉起）"
+        } catch {
+            W-Warn "worker 守护触发失败（不影响部署）: $($_.Exception.Message)"
+        }
+    }
     return (channel_service_running -Svc $Id)
 }
 
