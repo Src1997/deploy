@@ -6,6 +6,13 @@
 > docker 与宝塔互斥（registry 强制告警）。**切换通道前必须清场**，
 > 把机器恢复到「初始状态」，再按新通道从零部署。
 
+> **★ 通道现状（2026-11-27）**：bash 链（native/baota/docker）处于**休眠态**——
+> Linux VM（192.168.31.166）已关机，现役唯一生产部署通道为 Windows 侧
+> `deploy-win-baota.ps1`（baota-win，winvm）。休眠期间 bash 链仅做静态维护
+> （语法检查 `bash -n scripts/**/*.sh` 全绿即可），**不做行为改动、不实机验证**；
+> Linux VM 复机重部署前先跑一遍语法检查 + 按 deploy-from-scratch.md 走冒烟。
+> Windows 误配通道时 registry.sh 会给出 baota-win 引导（不再「通道文件不存在」）。
+
 ## 1. 切换方向与脚本
 
 | 方向 | 清场脚本 | 说明 |
